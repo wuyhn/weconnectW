@@ -26,7 +26,6 @@ import retrofit2.Callback;
 import retrofit2.Response;
 
 public class ArchivePostsActivity extends AppCompatActivity {
-
     private ImageView ivBackArchive;
     private TextView tvArchiveTitle;
     private TextView tvArchiveEmpty;
