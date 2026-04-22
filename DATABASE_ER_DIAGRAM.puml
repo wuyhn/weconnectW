@@ -1,0 +1,169 @@
+@startuml WeConnect_Database_Schema
+
+!define PK <b>PK</b>
+!define FK <b>FK</b>
+
+skinparam linetype ortho
+skinparam linetype poly
+
+entity users {
+  PK userid
+  --
+  email
+  password
+  userName
+  avatar
+  birthDay
+  gender
+  --
+  isBlocked
+  role
+  reputationScore
+  averageRating
+}
+
+entity posts {
+  PK postid
+  --
+  FK authorid
+  --
+  content
+  interestTag
+  location
+  maxMembers
+  status
+  startTime
+  endTime
+  archived
+  createdAt
+}
+
+entity post_members {
+  PK id
+  --
+  FK postid
+  FK userid
+  --
+  status
+}
+
+entity user_reviews {
+  PK id
+  --
+  FK reviewerid
+  FK revieweduserid
+  --
+  activityName
+  reputationLabel
+  comment
+  createdAt
+}
+
+entity reports {
+  PK id
+  --
+  FK reporterid
+  FK reviewedby
+  --
+  targetType
+  targetid
+  reason
+  description
+  status
+  adminAction
+  createdAt
+  reviewedAt
+}
+
+entity friendships {
+  PK id
+  --
+  FK senderid
+  FK receiverid
+  --
+  status
+  createdAt
+}
+
+entity user_blocks {
+  PK id
+  --
+  FK blockerid
+  FK blockedid
+  --
+  createdAt
+}
+
+entity chat_rooms {
+  PK id
+  --
+  FK postid
+  FK ownerid
+  --
+  title
+  type
+  isActive
+  createdAt
+}
+
+entity chat_messages {
+  PK id
+  --
+  FK roomid
+  FK senderid
+  --
+  content
+  createdAt
+}
+
+entity chat_room_members {
+  PK id
+  --
+  FK roomid
+  FK userid
+  --
+  role
+}
+
+entity notifications {
+  PK id
+  --
+  FK userid
+  FK relatedpostid
+  FK relateduserid
+  --
+  type
+  message
+  relatedUsername
+  isRead
+  isActioned
+  createdAt
+}
+
+'' Users - Outgoing relationships
+users ||--o{ posts : creates (authorid)
+users ||--o{ post_members : participates (userid)
+users ||--o{ user_reviews : writes (reviewerid)
+users ||--o{ user_reviews : receives (revieweduserid)
+users ||--o{ reports : reports (reporterid)
+users ||--o{ reports : reviews_admin (reviewedby)
+users ||--o{ friendships : initiates (senderid)
+users ||--o{ friendships : receives (receiverid)
+users ||--o{ user_blocks : blocks (blockerid)
+users ||--o{ user_blocks : blocked_by (blockedid)
+users ||--o{ chat_rooms : owns (ownerid)
+users ||--o{ chat_messages : sends (senderid)
+users ||--o{ chat_room_members : members (userid)
+users ||--o{ notifications : receives (userid)
+
+'' Posts - Outgoing relationships
+posts ||--o{ post_members : members (postid)
+posts ||--o{ chat_rooms : activity_chat (postid)
+posts ||--o{ reports : reported (targetid)
+posts ||--o{ notifications : related (relatedpostid)
+
+'' Chat relationships
+chat_rooms ||--o{ chat_messages : contains (roomid)
+chat_rooms ||--o{ chat_room_members : members (roomid)
+
+@enduml

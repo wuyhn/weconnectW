@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">WeConnect</string>
+    <string name="title_new_post">Bài viết mới</string>
+    <string name="hint_post">Có gì mới?</string>
+    <string name="btn_post">Đăng</string>
+    <string name="desc_close">Đóng</string>
+    <string name="desc_avatar">Avatar</string>
+    <string name="desc_add_image">Thêm ảnh</string>
+    <string name="desc_add_location">Thêm vị trí</string>
+    <string name="desc_tag_interest">Gắn thẻ sở thích bài viết</string>
+</resources>

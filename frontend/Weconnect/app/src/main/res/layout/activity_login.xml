@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFF5F7"> <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp"
+    app:layout_constraintBottom_toBottomOf="parent"
+    app:layout_constraintTop_toTopOf="parent">
+
+    <TextView
+        android:id="@+id/tvLogo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="WeConnect"
+        android:textColor="#FF4D6D"
+        android:textSize="60sp"
+        android:fontFamily="cursive"
+        android:textStyle="bold"
+        android:shadowColor="#33E91E63"
+        android:shadowDx="10"
+        android:shadowDy="10"
+        android:shadowRadius="5"
+        android:layout_marginBottom="4dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="Connect with your soulmate"
+        android:textColor="#455A64"
+        android:textSize="14sp"
+        android:letterSpacing="0.05"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="40dp"/>
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="10dp"
+        app:cardCornerRadius="40dp"
+        app:cardElevation="15dp"
+        app:cardBackgroundColor="#FFFFFF">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="30dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Đăng nhập"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="#263238"
+                android:layout_gravity="center"
+                android:layout_marginBottom="30dp"/>
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="55dp"
+                app:cardCornerRadius="28dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="#F5F5F5">
+                <EditText
+                    android:id="@+id/etEmail"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@android:color/transparent"
+                    android:hint="Email"
+                    android:paddingStart="25dp"
+                    android:paddingEnd="25dp"
+                    android:textSize="16sp"
+                    android:textColor="#263238"
+                    android:inputType="textEmailAddress"/>
+            </androidx.cardview.widget.CardView>
+
+            <TextView
+                android:id="@+id/tvErrorEmail"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#E91E63"
+                android:textSize="12sp"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="20dp" />
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="55dp"
+                app:cardCornerRadius="28dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="#F5F5F5">
+                <EditText
+                    android:id="@+id/etPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@android:color/transparent"
+                    android:hint="Mật khẩu"
+                    android:paddingStart="25dp"
+                    android:paddingEnd="25dp"
+                    android:textSize="16sp"
+                    android:textColor="#263238"
+                    android:inputType="textPassword"/>
+            </androidx.cardview.widget.CardView>
+
+            <TextView
+                android:id="@+id/tvErrorPassword"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#E91E63"
+                android:textSize="12sp"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="20dp" />
+
+            <Button
+                android:id="@+id/btnLogin"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:text="Đăng nhập"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:background="@drawable/bg_button_premium_gradient"
+                android:textAllCaps="false"
+                app:backgroundTint="@null"
+                android:elevation="8dp" />
+
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <TextView
+        android:id="@+id/tvForgotPassword"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="20dp"
+        android:text="Quên mật khẩu?"
+        android:textColor="#E91E63"
+        android:textSize="14sp"
+        android:padding="6dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <View
+        android:layout_width="200dp"
+        android:layout_height="1dp"
+        android:layout_gravity="center"
+        android:layout_marginTop="10dp"
+        android:background="#E0E0E0" />
+
+    <TextView
+        android:id="@+id/tvRegister"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="10dp"
+        android:text="Chưa có tài khoản? Đăng ký ngay"
+        android:textColor="#E91E63"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:padding="10dp" />
+
+</LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

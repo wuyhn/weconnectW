@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:gravity="start"
+    android:orientation="horizontal"
+    android:paddingStart="0dp"
+    android:paddingEnd="52dp">
+
+    <!-- Sender avatar -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/cardMessageAvatar"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_marginTop="14dp"
+        app:cardCornerRadius="15dp"
+        app:cardElevation="0dp">
+
+        <ImageView
+            android:id="@+id/ivMessageAvatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_user_placeholder" />
+    </androidx.cardview.widget.CardView>
+
+    <!-- Message -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvMessageSender"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:text="Minh Hoang"
+            android:textColor="#BBAA9E"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvMessageContent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:background="@drawable/bg_message_incoming"
+            android:maxWidth="240dp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:text="Message"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:lineSpacingExtra="2dp" />
+
+        <TextView
+            android:id="@+id/tvMessageTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:layout_marginTop="2dp"
+            android:text="09:20"
+            android:textColor="#C8BDB5"
+            android:textSize="10sp" />
+    </LinearLayout>
+</LinearLayout>
