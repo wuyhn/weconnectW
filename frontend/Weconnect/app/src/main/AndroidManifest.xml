@@ -16,7 +16,7 @@
         android:usesCleartextTraffic="true">
 
         <activity
-            android:name="com.example.weconnect.activities.LoginActivity"
+            android:name="com.example.weconnect.auth.ui.LoginActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -25,31 +25,31 @@
         </activity>
 
         <activity
-            android:name="com.example.weconnect.activities.RegisterActivity"
+            android:name="com.example.weconnect.auth.ui.RegisterActivity"
             android:exported="false" />
 
         <activity
-            android:name="com.example.weconnect.activities.MainActivity"
+            android:name="com.example.weconnect.main.ui.MainActivity"
             android:exported="false" />
         <activity
-            android:name="com.example.weconnect.activities.CreatePostActivity"
+            android:name="com.example.weconnect.post.ui.CreatePostActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".activities.SearchActivity" />
-        <activity android:name=".activities.ArchivePostsActivity" />
-        <activity android:name=".activities.ChatListActivity" />
-        <activity android:name=".activities.ConversationActivity" />
-        <activity android:name=".activities.UserProfileActivity" />
-        <activity android:name=".activities.PostDetailActivity" />
-        <activity android:name=".activities.EditProfileActivity" />
-        <activity android:name=".activities.ChangePasswordActivity" />
-        <activity android:name=".activities.ParticipantsActivity" />
-        <activity android:name=".activities.NotificationsActivity" />
-        <activity android:name=".activities.OnboardingActivity" />
-        <activity android:name=".activities.ForgotPasswordActivity" />
-        <activity android:name=".activities.BlockedUsersActivity" />
-        <activity android:name=".activities.LegalActivity" />
-        <activity android:name=".activities.PendingListActivity" />
+        <activity android:name=".search.ui.SearchActivity" />
+        <activity android:name=".post.ui.ArchivePostsActivity" />
+        <activity android:name=".chat.ui.ChatListActivity" />
+        <activity android:name=".chat.ui.ConversationActivity" />
+        <activity android:name=".profile.ui.UserProfileActivity" />
+        <activity android:name=".post.ui.PostDetailActivity" />
+        <activity android:name=".profile.ui.EditProfileActivity" />
+        <activity android:name=".auth.ui.ChangePasswordActivity" />
+        <activity android:name=".social.ui.ParticipantsActivity" />
+        <activity android:name=".notification.ui.NotificationsActivity" />
+        <activity android:name=".main.ui.OnboardingActivity" />
+        <activity android:name=".auth.ui.ForgotPasswordActivity" />
+        <activity android:name=".social.ui.BlockedUsersActivity" />
+        <activity android:name=".main.ui.LegalActivity" />
+        <activity android:name=".social.ui.PendingListActivity" />
 
         <meta-data
             android:name="preloaded_fonts"
