@@ -1,6 +1,6 @@
 package com.example.weconnect.data;
 
-import com.example.weconnect.models.Post;
+import com.example.weconnect.domain.model.Post;
 import java.util.List;
 
 public interface SearchDataSource {
