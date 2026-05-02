@@ -11,45 +11,37 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.weconnect.R;
-import com.example.weconnect.api.ChatApiService;
-import com.example.weconnect.api.PostApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.models.ApiResponse;
-import com.example.weconnect.models.ChatRoomApiResponse;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestoreChatRepository;
+import com.example.weconnect.api.FirestorePostRepository;
 import com.example.weconnect.models.Post;
 import com.google.android.material.button.MaterialButton;
+import com.google.firebase.Timestamp;
 
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+import java.util.Map;
 
 public class PostDetailActivity extends AppCompatActivity {
 
     private ImageView ivBackPostDetail;
-    private TextView tvPostDetailUsername;
-    private TextView tvPostDetailContent;
-    private TextView tvPostDetailTag;
-    private TextView tvPostDetailLocation;
-    private TextView tvPostDetailMembers;
-    private TextView tvPostDetailTime;
-    private TextView tvPostDetailStatus;
+    private TextView tvPostDetailUsername, tvPostDetailContent, tvPostDetailTag;
+    private TextView tvPostDetailLocation, tvPostDetailMembers, tvPostDetailTime, tvPostDetailStatus;
     private MaterialButton btnOpenGroupChat;
+    private LinearLayout layoutPendingApproval, layoutApproveReject;
+    private TextView tvPendingLabel, tvApprovalResult;
+    private MaterialButton btnApproveJoin, btnRejectJoin;
 
-    // Pending approval views
-    private LinearLayout layoutPendingApproval;
-    private LinearLayout layoutApproveReject;
-    private TextView tvPendingLabel;
-    private TextView tvApprovalResult;
-    private MaterialButton btnApproveJoin;
-    private MaterialButton btnRejectJoin;
-
-    private String username;
+    private String authorUid;
     private Post post;
+    private FirestorePostRepository postRepo;
+    private FirestoreChatRepository chatRepo;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_post_detail);
+
+        postRepo = new FirestorePostRepository();
+        chatRepo = new FirestoreChatRepository();
 
         initViews();
         setupClickListeners();
@@ -58,46 +50,35 @@ public class PostDetailActivity extends AppCompatActivity {
     }
 
     private void initViews() {
-        ivBackPostDetail = findViewById(R.id.ivBackPostDetail);
+        ivBackPostDetail    = findViewById(R.id.ivBackPostDetail);
         tvPostDetailUsername = findViewById(R.id.tvPostDetailUsername);
-        tvPostDetailContent = findViewById(R.id.tvPostDetailContent);
-        tvPostDetailTag = findViewById(R.id.tvPostDetailTag);
+        tvPostDetailContent  = findViewById(R.id.tvPostDetailContent);
+        tvPostDetailTag      = findViewById(R.id.tvPostDetailTag);
         tvPostDetailLocation = findViewById(R.id.tvPostDetailLocation);
-        tvPostDetailMembers = findViewById(R.id.tvPostDetailMembers);
-        tvPostDetailTime = findViewById(R.id.tvPostDetailTime);
-        tvPostDetailStatus = findViewById(R.id.tvPostDetailStatus);
-        btnOpenGroupChat = findViewById(R.id.btnOpenGroupChat);
-
+        tvPostDetailMembers  = findViewById(R.id.tvPostDetailMembers);
+        tvPostDetailTime     = findViewById(R.id.tvPostDetailTime);
+        tvPostDetailStatus   = findViewById(R.id.tvPostDetailStatus);
+        btnOpenGroupChat     = findViewById(R.id.btnOpenGroupChat);
         layoutPendingApproval = findViewById(R.id.layoutPendingApproval);
-        layoutApproveReject = findViewById(R.id.layoutApproveReject);
-        tvPendingLabel = findViewById(R.id.tvPendingLabel);
+        layoutApproveReject   = findViewById(R.id.layoutApproveReject);
+        tvPendingLabel   = findViewById(R.id.tvPendingLabel);
         tvApprovalResult = findViewById(R.id.tvApprovalResult);
-        btnApproveJoin = findViewById(R.id.btnApproveJoin);
-        btnRejectJoin = findViewById(R.id.btnRejectJoin);
+        btnApproveJoin   = findViewById(R.id.btnApproveJoin);
+        btnRejectJoin    = findViewById(R.id.btnRejectJoin);
     }
 
     private void setupClickListeners() {
         ivBackPostDetail.setOnClickListener(v -> finish());
 
         tvPostDetailUsername.setOnClickListener(v -> {
-            Intent intent = new Intent(PostDetailActivity.this, UserProfileActivity.class);
-            intent.putExtra("username", username);
-            if (post != null) {
-                String currentUser = RetrofitClient.getUserName(this);
-                if (currentUser == null || !username.equalsIgnoreCase(currentUser)) {
-                    intent.putExtra("view_other", true);
-                    if (post.getAuthorId() > 0) {
-                        intent.putExtra("user_id", post.getAuthorId());
-                    }
-                }
-            }
+            Intent intent = new Intent(this, UserProfileActivity.class);
+            intent.putExtra("user_uid", authorUid);
             startActivity(intent);
         });
 
-        // Bấm vào thành viên → mở danh sách người tham gia
         tvPostDetailMembers.setOnClickListener(v -> {
             if (post != null) {
-                Intent intent = new Intent(PostDetailActivity.this, ParticipantsActivity.class);
+                Intent intent = new Intent(this, ParticipantsActivity.class);
                 intent.putExtra("post_id", post.getId());
                 intent.putExtra("post_author", post.getUsername());
                 intent.putExtra("member_count", post.getMemberCount());
@@ -111,181 +92,112 @@ public class PostDetailActivity extends AppCompatActivity {
 
     private void bindPostData() {
         post = (Post) getIntent().getSerializableExtra("post");
-        if (post == null) {
-            finish();
-            return;
-        }
+        if (post == null) { finish(); return; }
 
-        username = post.getUsername();
-        tvPostDetailUsername.setText(username);
+        authorUid = getIntent().getStringExtra("author_uid");
+        if (authorUid == null) authorUid = String.valueOf(post.getAuthorId());
+
+        tvPostDetailUsername.setText(post.getUsername());
         tvPostDetailContent.setText(post.getContent());
         tvPostDetailMembers.setText("Thành viên: " + post.getMemberCount() + "/" + post.getMaxMembers());
         tvPostDetailTime.setText("Đăng lúc: " + post.getTimeAgo());
         tvPostDetailStatus.setText("Trạng thái: " + post.getStatusLabel());
 
-        if (post.getInterestTag() != null && post.getInterestTag().length() > 0) {
+        if (post.getInterestTag() != null && !post.getInterestTag().isEmpty()) {
             tvPostDetailTag.setVisibility(View.VISIBLE);
             tvPostDetailTag.setText(post.getInterestTag());
-        } else {
-            tvPostDetailTag.setVisibility(View.GONE);
-        }
+        } else tvPostDetailTag.setVisibility(View.GONE);
 
-        if (post.getLocation() != null && post.getLocation().length() > 0) {
+        if (post.getLocation() != null && !post.getLocation().isEmpty()) {
             tvPostDetailLocation.setVisibility(View.VISIBLE);
             tvPostDetailLocation.setText("Địa điểm: " + post.getLocation());
-        } else {
-            tvPostDetailLocation.setVisibility(View.GONE);
-        }
+        } else tvPostDetailLocation.setVisibility(View.GONE);
 
-        // Show group chat and joined state
-        if (post.isJoined()) {
-            btnOpenGroupChat.setVisibility(View.VISIBLE);
-            btnOpenGroupChat.setText("💬 Mở nhóm chat");
-        } else {
-            btnOpenGroupChat.setVisibility(View.GONE);
-        }
+        btnOpenGroupChat.setVisibility(post.isJoined() ? View.VISIBLE : View.GONE);
+        if (post.isJoined()) btnOpenGroupChat.setText("💬 Mở nhóm chat");
     }
 
     private void handlePendingApproval() {
-        boolean showPending = getIntent().getBooleanExtra("show_pending_actions", false);
-        long pendingUserId = getIntent().getLongExtra("pending_user_id", -1);
-        String pendingUsername = getIntent().getStringExtra("pending_username");
+        boolean showPending  = getIntent().getBooleanExtra("show_pending_actions", false);
+        String pendingUserId = getIntent().getStringExtra("pending_user_uid");
+        String pendingName   = getIntent().getStringExtra("pending_username");
 
-        if (showPending && post != null && pendingUserId > 0) {
+        if (showPending && post != null && pendingUserId != null) {
             layoutPendingApproval.setVisibility(View.VISIBLE);
-            tvPendingLabel.setText("👤 " + (pendingUsername != null ? pendingUsername : "Người dùng")
+            tvPendingLabel.setText("👤 " + (pendingName != null ? pendingName : "Người dùng")
                     + " muốn tham gia hoạt động này");
 
-            btnApproveJoin.setOnClickListener(v -> {
-                approveUser(pendingUserId, pendingUsername);
-            });
-
-            btnRejectJoin.setOnClickListener(v -> {
-                rejectUser(pendingUserId, pendingUsername);
-            });
+            btnApproveJoin.setOnClickListener(v -> approveUser(pendingUserId, pendingName));
+            btnRejectJoin.setOnClickListener(v ->
+                new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("Xác nhận từ chối")
+                    .setMessage("Bạn có chắc chắn muốn từ chối " + pendingName + "?")
+                    .setPositiveButton("Từ chối", (d, w) -> rejectUser(pendingUserId, pendingName))
+                    .setNegativeButton("Huỷ", null)
+                    .show()
+            );
         } else {
-            if (layoutPendingApproval != null) {
-                layoutPendingApproval.setVisibility(View.GONE);
-            }
+            if (layoutPendingApproval != null) layoutPendingApproval.setVisibility(View.GONE);
         }
     }
 
-    private void approveUser(long userId, String userName) {
+    private void approveUser(String memberId, String memberName) {
         if (post == null) return;
-        long postId;
-        try {
-            postId = Long.parseLong(post.getId());
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        RetrofitClient.loadToken(this);
-        PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
-
-        postApi.approveMember(postId, userId).enqueue(new Callback<ApiResponse<Void>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                if (response.isSuccessful()) {
-                    layoutApproveReject.setVisibility(View.GONE);
-                    tvApprovalResult.setVisibility(View.VISIBLE);
-                    tvApprovalResult.setText("✅ Đã chấp nhận " + (userName != null ? userName : "người dùng"));
-
-                    // Backend PostService.approveMember() đã tự thêm member vào activity room rồi
-                    // Không cần gọi FakeChatRepository nữa
-
-                    new com.google.android.material.dialog.MaterialAlertDialogBuilder(PostDetailActivity.this)
+        String ownerId = FirebaseManager.getCurrentUserId();
+        postRepo.approveMember(post.getId(), memberId, ownerId,
+            new FirestorePostRepository.ActionCallback() {
+                @Override public void onSuccess(String msg) {
+                    runOnUiThread(() -> {
+                        layoutApproveReject.setVisibility(View.GONE);
+                        tvApprovalResult.setVisibility(View.VISIBLE);
+                        tvApprovalResult.setText("✅ Đã chấp nhận " + memberName);
+                        new com.google.android.material.dialog.MaterialAlertDialogBuilder(PostDetailActivity.this)
                             .setTitle("Đã duyệt!")
-                            .setMessage("Bạn đã duyệt " + (userName != null ? userName : "người dùng") + " tham gia hoạt động.")
+                            .setMessage("Bạn đã duyệt " + memberName + " tham gia hoạt động.")
                             .setPositiveButton("OK", null)
                             .show();
-                } else {
-                    Toast.makeText(PostDetailActivity.this, "Lỗi khi duyệt", Toast.LENGTH_SHORT).show();
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-            }
-        });
-    }
-
-    private void rejectUser(long userId, String userName) {
-        if (post == null) return;
-        long postId;
-        try {
-            postId = Long.parseLong(post.getId());
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-                .setTitle("Xác nhận từ chối")
-                .setMessage("Bạn có chắc chắn muốn từ chối " + (userName != null ? userName : "người dùng") + "?")
-                .setPositiveButton("Từ chối", (d, w) -> {
-                    RetrofitClient.loadToken(this);
-                    PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
-
-                    postApi.rejectMember(postId, userId).enqueue(new Callback<ApiResponse<Void>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                            if (response.isSuccessful()) {
-                                layoutApproveReject.setVisibility(View.GONE);
-                                tvApprovalResult.setVisibility(View.VISIBLE);
-                                tvApprovalResult.setText("❌ Đã từ chối " + (userName != null ? userName : "người dùng"));
-                            } else {
-                                Toast.makeText(PostDetailActivity.this, "Lỗi khi từ chối", Toast.LENGTH_SHORT).show();
-                            }
-                        }
-
-                        @Override
-                        public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                            Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                        }
                     });
-                })
-                .setNegativeButton("Huỷ", null)
-                .show();
+                }
+                @Override public void onError(String err) {
+                    runOnUiThread(() ->
+                        Toast.makeText(PostDetailActivity.this, "Lỗi: " + err, Toast.LENGTH_SHORT).show()
+                    );
+                }
+            });
     }
 
-    /**
-     * Mở nhóm chat liên kết với bài post, dùng API thay vì FakeChatRepository.
-     */
+    private void rejectUser(String memberId, String memberName) {
+        if (post == null) return;
+        String ownerId = FirebaseManager.getCurrentUserId();
+        postRepo.rejectMember(post.getId(), memberId, ownerId,
+            new FirestorePostRepository.ActionCallback() {
+                @Override public void onSuccess(String msg) {
+                    runOnUiThread(() -> {
+                        layoutApproveReject.setVisibility(View.GONE);
+                        tvApprovalResult.setVisibility(View.VISIBLE);
+                        tvApprovalResult.setText("❌ Đã từ chối " + memberName);
+                    });
+                }
+                @Override public void onError(String err) {
+                    runOnUiThread(() ->
+                        Toast.makeText(PostDetailActivity.this, "Lỗi: " + err, Toast.LENGTH_SHORT).show()
+                    );
+                }
+            });
+    }
+
     private void openRelatedGroupChat() {
         if (post == null) return;
-
-        long postId;
-        try {
-            postId = Long.parseLong(post.getId());
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        RetrofitClient.loadToken(this);
-        ChatApiService chatApi = RetrofitClient.getClient().create(ChatApiService.class);
-
-        chatApi.getRoomByPostId(postId).enqueue(new Callback<ApiResponse<ChatRoomApiResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<ChatRoomApiResponse>> call,
-                                   Response<ApiResponse<ChatRoomApiResponse>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    ChatRoomApiResponse room = response.body().getResult();
-                    Intent intent = new Intent(PostDetailActivity.this, ConversationActivity.class);
-                    intent.putExtra("room_id", String.valueOf(room.getId()));
-                    startActivity(intent);
-                } else {
-                    Toast.makeText(PostDetailActivity.this,
-                            "Không tìm thấy phòng chat cho hoạt động này", Toast.LENGTH_SHORT).show();
-                }
+        chatRepo.getRoomByPostId(post.getId(), new FirestoreChatRepository.RoomCallback() {
+            @Override public void onSuccess(Map<String, Object> room) {
+                String roomId = (String) room.get("id");
+                Intent intent = new Intent(PostDetailActivity.this, ConversationActivity.class);
+                intent.putExtra("room_id", roomId);
+                startActivity(intent);
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<ChatRoomApiResponse>> call, Throwable t) {
-                Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            @Override public void onError(String err) {
+                Toast.makeText(PostDetailActivity.this,
+                    "Không tìm thấy phòng chat cho hoạt động này", Toast.LENGTH_SHORT).show();
             }
         });
     }

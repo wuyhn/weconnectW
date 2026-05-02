@@ -45,14 +45,10 @@ public class ChatRoomAdapter extends RecyclerView.Adapter<ChatRoomAdapter.ChatRo
     public void onBindViewHolder(@NonNull ChatRoomViewHolder holder, int position) {
         ChatRoom room = rooms.get(position);
 
-        // Load avatar from server URL with Glide, fallback to resource
+        // Load avatar — Firebase Storage URL là HTTPS đầy đủ, dùng Glide trực tiếp
         if (room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
-            String avatarUrl = room.getAvatarUrl();
-            if (avatarUrl.startsWith("/")) {
-                avatarUrl = com.example.weconnect.api.RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-            }
             com.bumptech.glide.Glide.with(holder.itemView.getContext())
-                    .load(avatarUrl)
+                    .load(room.getAvatarUrl())
                     .placeholder(R.drawable.ic_user_placeholder)
                     .error(R.drawable.ic_user_placeholder)
                     .circleCrop()

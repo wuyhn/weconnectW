@@ -21,10 +21,21 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
 
     private final List<ChatMessage> messages = new ArrayList<>();
 
+    public List<ChatMessage> getCurrentList() {
+        return new ArrayList<>(messages);
+    }
+
     public void submitList(List<ChatMessage> newMessages) {
         messages.clear();
         messages.addAll(newMessages);
         notifyDataSetChanged();
+    }
+
+    public void submitList(List<ChatMessage> newMessages, Runnable commitCallback) {
+        submitList(newMessages);
+        if (commitCallback != null) {
+            commitCallback.run();
+        }
     }
 
     @Override

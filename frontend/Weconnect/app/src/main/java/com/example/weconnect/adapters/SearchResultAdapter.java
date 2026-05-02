@@ -16,7 +16,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
-import com.example.weconnect.data.FakePostRepository;
+import com.example.weconnect.api.FirebaseManager;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.SearchResultItem;
 import com.example.weconnect.activities.PostDetailActivity;
@@ -27,11 +27,9 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
         private final Context context;
         private final List<SearchResultItem> items = new ArrayList<>();
-        private final String currentUsername;
 
         public SearchResultAdapter(Context context) {
             this.context = context;
-            this.currentUsername = FakePostRepository.getInstance().getCurrentUsername();
         }
 
         public void submitList(List<SearchResultItem> newItems) {
@@ -70,12 +68,9 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
             ((SectionViewHolder) holder).tvSectionTitle.setText(item.getTitle());
         } else if (holder instanceof UserViewHolder) {
             ((UserViewHolder) holder).tvUserName.setText(item.getTitle());
-            // Load avatar from URL with Glide
+            // Firebase Storage URL là HTTPS đầy đủ — dùng Glide trực tiếp
             String avatarUrl = item.getAvatarUrl();
             if (avatarUrl != null && !avatarUrl.isEmpty()) {
-                if (avatarUrl.startsWith("/")) {
-                    avatarUrl = com.example.weconnect.api.RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                }
                 com.bumptech.glide.Glide.with(context)
                         .load(avatarUrl)
                         .placeholder(R.drawable.ic_user_placeholder)
@@ -89,11 +84,14 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
             holder.itemView.setOnClickListener(v -> {
                 Intent intent = new Intent(context, UserProfileActivity.class);
                 intent.putExtra("username", item.getTitle());
-                boolean isOwnProfile = currentUsername.equalsIgnoreCase(item.getTitle());
-                if (!isOwnProfile) {
+                // Dùng userUid (Firebase UID) thay userId cũ
+                String myUid = FirebaseManager.getCurrentUserId();
+                String itemUid = item.getUserUid();
+                boolean isOwn = myUid != null && myUid.equals(itemUid);
+                if (!isOwn) {
                     intent.putExtra("view_other", true);
-                    if (item.getUserId() > 0) {
-                        intent.putExtra("user_id", item.getUserId());
+                    if (itemUid != null && !itemUid.isEmpty()) {
+                        intent.putExtra("user_uid", itemUid);
                     }
                 }
                 context.startActivity(intent);
@@ -123,9 +121,10 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 });
 
                 // Join status button
-                boolean isOwnPost = currentUsername.equalsIgnoreCase(post.getUsername());
+                String currentUid = com.example.weconnect.api.FirebaseManager.getCurrentUserId();
+                boolean isOwnPost = currentUid != null && currentUid.equals(post.getAuthorUid());
                 if (isOwnPost) {
-                    ph.btnJoin.setVisibility(View.GONE);
+                    ph.btnJoin.setVisibility(android.view.View.GONE);
                 } else if (post.isJoined()) {
                     ph.btnJoin.setVisibility(View.VISIBLE);
                     ph.btnJoin.setText("✅ Đã tham gia");

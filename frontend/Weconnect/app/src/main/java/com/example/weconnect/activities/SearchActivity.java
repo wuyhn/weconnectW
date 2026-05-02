@@ -1,5 +1,6 @@
 package com.example.weconnect.activities;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -14,37 +15,28 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
 import com.example.weconnect.adapters.SearchResultAdapter;
-import com.example.weconnect.api.PostApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.api.UserApiService;
-import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestorePostRepository;
+import com.example.weconnect.api.FirestoreUserRepository;
 import com.example.weconnect.models.Post;
-import com.example.weconnect.models.PostResponse;
 import com.example.weconnect.models.SearchResultItem;
 import com.google.android.material.textfield.TextInputEditText;
+import com.google.firebase.Timestamp;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
-
 public class SearchActivity extends AppCompatActivity {
 
-    private ImageView ivBackSearch;
     private TextInputEditText etSearch;
-    private RecyclerView rvSearchResults;
-
     private SearchResultAdapter searchResultAdapter;
-    private PostApiService postApiService;
-    private UserApiService userApiService;
+    private FirestorePostRepository postRepo;
+    private FirestoreUserRepository userRepo;
 
     private final Handler searchHandler = new Handler(Looper.getMainLooper());
     private Runnable searchRunnable;
 
-    // Kết quả tạm lưu để merge
     private List<SearchResultItem> userResults = new ArrayList<>();
     private List<SearchResultItem> postResults = new ArrayList<>();
     private boolean usersLoaded, postsLoaded;
@@ -54,59 +46,34 @@ public class SearchActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_search);
 
-        initViews();
-        setupRecyclerView();
-        setupApi();
-        setupClickListeners();
-        setupSearchListener();
-        autoFocusSearch();
-    }
+        postRepo = new FirestorePostRepository();
+        userRepo = new FirestoreUserRepository();
 
-    private void initViews() {
-        ivBackSearch = findViewById(R.id.ivBackSearch);
-        etSearch = findViewById(R.id.etSearch);
-        rvSearchResults = findViewById(R.id.rvSearchResults);
-    }
+        ImageView ivBack   = findViewById(R.id.ivBackSearch);
+        etSearch           = findViewById(R.id.etSearch);
+        RecyclerView rv    = findViewById(R.id.rvSearchResults);
 
-    private void setupRecyclerView() {
         searchResultAdapter = new SearchResultAdapter(this);
-        rvSearchResults.setLayoutManager(new LinearLayoutManager(this));
-        rvSearchResults.setAdapter(searchResultAdapter);
-    }
+        rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(searchResultAdapter);
 
-    private void setupApi() {
-        RetrofitClient.loadToken(this);
-        postApiService = RetrofitClient.getClient().create(PostApiService.class);
-        userApiService = RetrofitClient.getClient().create(UserApiService.class);
-    }
+        ivBack.setOnClickListener(v -> finish());
 
-    private void setupClickListeners() {
-        ivBackSearch.setOnClickListener(v -> finish());
-    }
-
-    private void autoFocusSearch() {
+        // Auto focus
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
         etSearch.requestFocus();
-    }
 
-    private void setupSearchListener() {
         etSearch.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                // Debounce 300ms
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
                 searchRunnable = () -> performSearch(s.toString());
                 searchHandler.postDelayed(searchRunnable, 300);
             }
-
-            @Override
-            public void afterTextChanged(Editable s) { }
+            @Override public void afterTextChanged(Editable s) {}
         });
 
-        etSearch.setOnEditorActionListener((v, actionId, event) -> {
+        etSearch.setOnEditorActionListener((v, actionId, ev) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
                 performSearch(etSearch.getText().toString());
@@ -127,74 +94,65 @@ public class SearchActivity extends AppCompatActivity {
         usersLoaded = false;
         postsLoaded = false;
 
-        // Search users partial match
-        userApiService.searchUsersPartial(keyword.trim()).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<List<Map<String, Object>>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    List<Map<String, Object>> users = response.body().getResult();
+        String currentUid = FirebaseManager.getCurrentUserId();
+
+        // Tìm users
+        userRepo.searchUsers(keyword.trim(), currentUid != null ? currentUid : "",
+            new FirestoreUserRepository.UsersCallback() {
+                @Override public void onSuccess(List<Map<String, Object>> users) {
                     if (!users.isEmpty()) {
                         userResults.add(new SearchResultItem(
-                                SearchResultItem.TYPE_SECTION, "Người dùng", "", 0));
+                            SearchResultItem.TYPE_SECTION, "Người dùng", "", 0));
                         for (Map<String, Object> u : users) {
-                            String fullName = u.get("fullName") != null ? u.get("fullName").toString() : "";
-                            long userId = u.get("id") != null ? ((Number) u.get("id")).longValue() : 0;
+                            String name = u.get("fullName") != null ? u.get("fullName").toString() : "";
+                            String uid  = u.get("id") != null ? u.get("id").toString() : "";
                             SearchResultItem item = new SearchResultItem(
-                                    SearchResultItem.TYPE_USER, fullName, "", R.drawable.ic_user_placeholder);
-                            item.setUserId(userId);
+                                SearchResultItem.TYPE_USER, name, "", R.drawable.ic_user_placeholder);
+                            item.setUserUid(uid);
                             userResults.add(item);
                         }
                     }
+                    usersLoaded = true;
+                    mergeResults();
                 }
-                usersLoaded = true;
-                mergeResults();
-            }
+                @Override public void onError(String err) {
+                    usersLoaded = true;
+                    mergeResults();
+                }
+            });
 
-            @Override
-            public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                usersLoaded = true;
-                mergeResults();
-            }
-        });
+        // Tìm posts
+        postRepo.searchPosts(keyword.trim(), new FirestorePostRepository.PostsCallback() {
+            @Override public void onSuccess(List<Map<String, Object>> posts) {
+                if (!posts.isEmpty()) {
+                    postResults.add(new SearchResultItem(
+                        SearchResultItem.TYPE_SECTION, "Bài viết", "", 0));
+                    for (Map<String, Object> p : posts) {
+                        String content  = (String) p.get("content");
+                        String location = (String) p.get("location");
+                        String authorName = (String) p.get("authorName");
+                        String tag = (String) p.get("interestTag");
+                        int max = p.get("maxMembers") instanceof Number ? ((Number)p.get("maxMembers")).intValue() : 10;
+                        int cnt = p.get("memberCount") instanceof Number ? ((Number)p.get("memberCount")).intValue() : 1;
+                        Timestamp endTs = (Timestamp) p.get("endTime");
+                        long endMs = endTs != null ? endTs.toDate().getTime() : 0;
+                        String postId = (String) p.get("id");
 
-        // Search posts
-        postApiService.searchPosts(keyword.trim()).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
-                                   Response<ApiResponse<List<PostResponse>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    List<PostResponse> posts = response.body().getResult();
-                    if (!posts.isEmpty()) {
+                        String subtitle = location != null && !location.isEmpty() ?
+                            "📍 " + location : (authorName != null ? authorName : "");
+
+                        Post postObj = new Post(postId, authorName, "", content, tag, location,
+                            0, 0, cnt, 0, 0, max, false, System.currentTimeMillis(), endMs, false);
+
                         postResults.add(new SearchResultItem(
-                                SearchResultItem.TYPE_SECTION, "Bài viết", "", 0));
-                        for (PostResponse pr : posts) {
-                            Post post = pr.toPost();
-                            String subtitle;
-                            if (post.getLocation() != null && post.getLocation().length() > 0) {
-                                subtitle = "📍 " + post.getLocation();
-                            } else if (post.getUsername() != null && post.getUsername().length() > 0) {
-                                subtitle = post.getUsername();
-                            } else {
-                                subtitle = "";
-                            }
-                            postResults.add(new SearchResultItem(
-                                    SearchResultItem.TYPE_POST,
-                                    post.getContent(), subtitle, 0,
-                                    post.getUsername(), post.getContent(),
-                                    post.getInterestTag(), post.getLocation(),
-                                    post.getMemberCount(), post.getMaxMembers(), post));
-                        }
+                            SearchResultItem.TYPE_POST, content, subtitle, 0,
+                            authorName, content, tag, location, cnt, max, postObj));
                     }
                 }
                 postsLoaded = true;
                 mergeResults();
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
+            @Override public void onError(String err) {
                 postsLoaded = true;
                 mergeResults();
             }
@@ -203,10 +161,9 @@ public class SearchActivity extends AppCompatActivity {
 
     private void mergeResults() {
         if (!usersLoaded || !postsLoaded) return;
-
         List<SearchResultItem> merged = new ArrayList<>();
         merged.addAll(userResults);
         merged.addAll(postResults);
-        searchResultAdapter.submitList(merged);
+        runOnUiThread(() -> searchResultAdapter.submitList(merged));
     }
 }

@@ -26,31 +26,24 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.example.weconnect.R;
 import com.example.weconnect.adapters.PostAdapter;
 import com.example.weconnect.adapters.UserReviewAdapter;
-import com.example.weconnect.api.PostApiService;
-import com.example.weconnect.api.ReviewApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.data.FakePostRepository;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestorePostRepository;
+import com.example.weconnect.api.FirestoreUserRepository;
+import com.example.weconnect.api.FirebaseFriendService;
 import com.example.weconnect.data.FakeSocialRepository;
-import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.UserProfile;
 import com.example.weconnect.models.Post;
-import com.example.weconnect.models.PostResponse;
 import com.example.weconnect.models.UserReview;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
 
 public class UserProfileActivity extends AppCompatActivity {
 
@@ -92,12 +85,11 @@ public class UserProfileActivity extends AppCompatActivity {
     private TextView tvNoRelatedPosts;
     private RecyclerView rvRelatedPosts;
 
-    private String username;
-    private long viewedUserId = -1; // ID của user đang xem (dùng cho friend API)
+    private String viewedUserUid = null; // Firebase UID của user đang xem
     private FakeSocialRepository socialRepository;
-    private PostApiService postApiService;
-    private ReviewApiService reviewApiService;
-    private com.example.weconnect.api.FriendApiService friendApiService;
+    private FirestorePostRepository postRepo;
+    private FirestoreUserRepository userRepo;
+    private FirebaseFriendService friendService;
     private ActivityResultLauncher<Intent> createPostLauncher;
 
     @Override
@@ -106,20 +98,19 @@ public class UserProfileActivity extends AppCompatActivity {
         setContentView(R.layout.activity_user_profile);
 
         socialRepository = FakeSocialRepository.getInstance();
-        RetrofitClient.loadToken(this);
-        postApiService = RetrofitClient.getClient().create(PostApiService.class);
-        reviewApiService = RetrofitClient.getClient().create(ReviewApiService.class);
-        friendApiService = RetrofitClient.getClient().create(com.example.weconnect.api.FriendApiService.class);
+        postRepo    = new FirestorePostRepository();
+        userRepo    = new FirestoreUserRepository();
+        friendService = new FirebaseFriendService();
+
         setupCreatePostLauncher();
         initViews();
-        bindFakeUserProfile();
+        bindUserProfile();
         setupClickListeners();
         bindSocialState();
         setupDrawerMenu();
         setupProfileTabs();
         bindActivePosts();
         loadMyActivities();
-        // Ẩn phần gợi ý bài viết (chỉ giữ gợi ý user)
         hideRelatedPosts();
     }
 
@@ -129,132 +120,76 @@ public class UserProfileActivity extends AppCompatActivity {
                 result -> {
                     if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                         Intent data = result.getData();
-                        String content = data.getStringExtra("post_content");
-                        String tag = data.getStringExtra("post_tag");
+                        String content  = data.getStringExtra("post_content");
+                        String tag      = data.getStringExtra("post_tag");
                         String location = data.getStringExtra("post_location");
-                        int maxMembers = data.getIntExtra("post_max_members", 10);
+                        int maxMembers  = data.getIntExtra("post_max_members", 10);
                         String imageUri = data.getStringExtra("post_image_uri");
-                        long endTimeMillis = data.getLongExtra("post_end_time",
+                        long endTimeMs  = data.getLongExtra("post_end_time",
                                 System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
-                        createPostViaApi(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                        createPostViaFirebase(content, tag, location, maxMembers, imageUri, endTimeMs);
                     }
                 }
         );
     }
 
-    private void createPostViaApi(String content, String tag, String location,
-                                  int maxMembers, String imageUri, long endTimeMillis) {
-        if (imageUri != null) {
-            // Upload image first, then create post with server URL
-            uploadImageThenCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
-        } else {
-            sendCreatePostProfile(content, tag, location, maxMembers, null, endTimeMillis);
-        }
-    }
+    /** Tạo post mới trực tiếp vào Firestore (có kèm upload ảnh Firebase Storage nếu có) */
+    private void createPostViaFirebase(String content, String tag, String location,
+                                       int maxMembers, String imageUri, long endTimeMs) {
+        String uid  = FirebaseManager.getCurrentUserId();
+        String name = FirebaseManager.getUserName(this);
+        if (uid == null) { Toast.makeText(this, "Chưa đăng nhập", Toast.LENGTH_SHORT).show(); return; }
 
-    private void uploadImageThenCreatePost(String content, String tag, String location,
-                                           int maxMembers, String imageUri, long endTimeMillis) {
-        try {
+        com.google.firebase.Timestamp endTs =
+            new com.google.firebase.Timestamp(new Date(endTimeMs));
+
+        if (imageUri != null && !imageUri.startsWith("http")) {
+            // Upload ảnh lên Firebase Storage trước
             android.net.Uri uri = android.net.Uri.parse(imageUri);
-            java.io.InputStream inputStream = getContentResolver().openInputStream(uri);
-            if (inputStream == null) {
-                sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
-                return;
-            }
-            byte[] bytes = readAllBytesProfile(inputStream);
-            inputStream.close();
-
-            String mimeType = getContentResolver().getType(uri);
-            if (mimeType == null) mimeType = "image/jpeg";
-            String ext = mimeType.contains("png") ? ".png" : mimeType.contains("webp") ? ".webp" : ".jpg";
-            String fileName = "post_image_" + System.currentTimeMillis() + ext;
-
-            okhttp3.RequestBody requestBody = okhttp3.RequestBody.create(
-                    okhttp3.MediaType.parse(mimeType), bytes);
-            okhttp3.MultipartBody.Part filePart =
-                    okhttp3.MultipartBody.Part.createFormData("file", fileName, requestBody);
-
-            postApiService.uploadImage(filePart).enqueue(new Callback<ApiResponse<String>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> response) {
-                    String serverUrl = imageUri;
-                    if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                        serverUrl = response.body().getResult();
-                    }
-                    sendCreatePostProfile(content, tag, location, maxMembers, serverUrl, endTimeMillis);
-                }
-                @Override
-                public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
-                    sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
-                }
-            });
-        } catch (Exception e) {
-            sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
+            String path = "post_images/" + uid + "_" + System.currentTimeMillis() + ".jpg";
+            com.google.firebase.storage.FirebaseStorage.getInstance()
+                .getReference(path).putFile(uri)
+                .addOnSuccessListener(snap -> snap.getStorage().getDownloadUrl()
+                    .addOnSuccessListener(downloadUri -> postRepo.createPost(
+                        uid, name != null ? name : "User", null,
+                        content, tag, location, downloadUri.toString(),
+                        maxMembers, null, endTs, createPostCallback())))
+                .addOnFailureListener(e -> postRepo.createPost(
+                    uid, name != null ? name : "User", null,
+                    content, tag, location, null,
+                    maxMembers, null, endTs, createPostCallback()));
+        } else {
+            postRepo.createPost(uid, name != null ? name : "User", null,
+                content, tag, location, imageUri,
+                maxMembers, null, endTs, createPostCallback());
         }
     }
 
-    private byte[] readAllBytesProfile(java.io.InputStream is) throws java.io.IOException {
-        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
-        byte[] data = new byte[4096];
-        int nRead;
-        while ((nRead = is.read(data, 0, data.length)) != -1) {
-            buffer.write(data, 0, nRead);
-        }
-        return buffer.toByteArray();
-    }
-
-    private void sendCreatePostProfile(String content, String tag, String location,
-                                       int maxMembers, String imageUrl, long endTimeMillis) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("content", content);
-        body.put("interestTag", tag);
-        body.put("location", location);
-        body.put("maxMembers", maxMembers);
-        if (imageUrl != null) {
-            body.put("imageUrl", imageUrl);
-        }
-        SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
-        body.put("startTime", isoFormat.format(new Date()));
-        body.put("endTime", isoFormat.format(new Date(endTimeMillis)));
-
-        postApiService.createPost(body).enqueue(new Callback<ApiResponse<PostResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<PostResponse>> call,
-                                   Response<ApiResponse<PostResponse>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
+    private FirestorePostRepository.ActionCallback createPostCallback() {
+        return new FirestorePostRepository.ActionCallback() {
+            @Override public void onSuccess(String msg) {
+                runOnUiThread(() -> {
                     Toast.makeText(UserProfileActivity.this, "Đã tạo bài đăng!", Toast.LENGTH_SHORT).show();
                     bindActivePosts();
-                } else {
-                    String errorMsg = "Không thể tạo bài đăng";
-                    if (response.body() != null && response.body().getMessage() != null) {
-                        errorMsg = response.body().getMessage();
-                    }
-                    Toast.makeText(UserProfileActivity.this, errorMsg, Toast.LENGTH_SHORT).show();
-                }
+                });
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<PostResponse>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
+            @Override public void onError(String err) {
+                runOnUiThread(() ->
+                    Toast.makeText(UserProfileActivity.this, "Lỗi: " + err, Toast.LENGTH_SHORT).show());
             }
-        });
+        };
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // Refresh state khi quay lại (vd: sau khi chấp nhận kết bạn từ thông báo)
         bindSocialState();
-        // Refresh bài viết khi quay lại (vd: sau khi tạo bài mới)
         bindActivePosts();
         loadMyActivities();
-        // Ẩn phần gợi ý bài viết (chỉ giữ gợi ý user)
         hideRelatedPosts();
-        // Refresh profile data từ API (sau khi chỉnh sửa profile)
+        // Refresh profile sau khi edit
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-        if (!viewOther) {
-            loadOwnProfileName();
-        }
+        if (!viewOther) loadProfileFromFirestore(FirebaseManager.getCurrentUserId());
     }
 
     private void initViews() {
@@ -326,40 +261,27 @@ public class UserProfileActivity extends AppCompatActivity {
         ivBackUserProfile.setOnClickListener(v -> finish());
 
         btnViewArchive.setOnClickListener(v -> {
+            String uid = viewedUserUid != null ? viewedUserUid : FirebaseManager.getCurrentUserId();
             Intent intent = new Intent(this, ArchivePostsActivity.class);
             intent.putExtra("username", tvUserProfileName.getText().toString());
-            long archiveUserId = getIntent().getLongExtra("user_id", -1);
-            if (archiveUserId <= 0) {
-                android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-                archiveUserId = prefs.getLong("user_id", -1);
-            }
-            intent.putExtra("user_id", archiveUserId);
+            if (uid != null) intent.putExtra("user_uid", uid);
             startActivity(intent);
         });
 
-        // Bottom navigation click listeners
+        // Bottom navigation
         View btnHome = findViewById(R.id.btnHomeProfile);
         View btnMessages = findViewById(R.id.btnMessagesProfile);
         View btnNotifications = findViewById(R.id.btnNotificationsProfile);
 
-        if (btnHome != null) {
-            btnHome.setOnClickListener(v -> {
-                Intent intent = new Intent(this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(intent);
-            });
-        }
-        if (btnMessages != null) {
-            btnMessages.setOnClickListener(v -> {
-                Intent intent = new Intent(this, ChatListActivity.class);
-                startActivity(intent);
-            });
-        }
-        if (btnNotifications != null) {
-            btnNotifications.setOnClickListener(v -> {
-                startActivity(new Intent(this, NotificationsActivity.class));
-            });
-        }
+        if (btnHome != null) btnHome.setOnClickListener(v -> {
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(intent);
+        });
+        if (btnMessages != null) btnMessages.setOnClickListener(v ->
+            startActivity(new Intent(this, ChatListActivity.class)));
+        if (btnNotifications != null) btnNotifications.setOnClickListener(v ->
+            startActivity(new Intent(this, NotificationsActivity.class)));
     }
 
     private void setupDrawerMenu() {
@@ -391,11 +313,9 @@ public class UserProfileActivity extends AppCompatActivity {
                     .setTitle("Đăng xuất")
                     .setMessage("Bạn có chắc muốn đăng xuất?")
                     .setPositiveButton("Đăng xuất", (d, w) -> {
-                        // Clear session & reset all fake repos
-                        RetrofitClient.clearSession(this);
-                        FakeSocialRepository.resetInstance();
-                        com.example.weconnect.data.FakePostRepository.resetInstance();
-                        com.example.weconnect.data.FakeNotificationRepository.resetInstance();
+                        // Clear session Firebase
+                        FirebaseManager.clearSession(this);
+                        com.google.firebase.auth.FirebaseAuth.getInstance().signOut();
                         Intent intent = new Intent(this, LoginActivity.class);
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                         startActivity(intent);
@@ -420,39 +340,28 @@ public class UserProfileActivity extends AppCompatActivity {
 
     private void showDeleteAccountDialog() {
         new AlertDialog.Builder(this)
-                .setTitle("Xoá tài khoản")
-                .setMessage("Bạn có chắc chắn muốn xoá tài khoản? Hành động này không thể hoàn tác.")
-                .setPositiveButton("Xoá", (dialog, which) -> {
-                    RetrofitClient.loadToken(this);
-                    com.example.weconnect.api.UserApiService userApi =
-                            RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-                    userApi.deleteAccount().enqueue(new Callback<ApiResponse<Void>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<Void>> call,
-                                               Response<ApiResponse<Void>> response) {
-                            if (response.isSuccessful()) {
-                                Toast.makeText(UserProfileActivity.this,
-                                        "Đã xoá tài khoản thành công!", Toast.LENGTH_SHORT).show();
-                                // Clear session & reset all fake repos
-                                RetrofitClient.clearSession(UserProfileActivity.this);
-                                FakeSocialRepository.resetInstance();
-                                com.example.weconnect.data.FakePostRepository.resetInstance();
-                                com.example.weconnect.data.FakeNotificationRepository.resetInstance();
-                                // Navigate to login
-                                Intent intent = new Intent(UserProfileActivity.this, LoginActivity.class);
-                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                                startActivity(intent);
-                                finish();
-                            } else {
-                                Toast.makeText(UserProfileActivity.this,
-                                        "Không thể xoá tài khoản. Thử lại sau.", Toast.LENGTH_SHORT).show();
-                            }
+                .setTitle("Xoà tài khoản")
+                .setMessage("Bạn có chắc chẫn muốn xoà tài khoản? Hành động này không thể hoàn tác.")
+                .setPositiveButton("Xoà", (dialog, which) -> {
+                    String uid = FirebaseManager.getCurrentUserId();
+                    if (uid == null) return;
+                    // Xoà Firestore data
+                    userRepo.deleteAccount(uid, new FirestoreUserRepository.ActionCallback() {
+                        @Override public void onSuccess(String msg) {
+                            // Xoà Firebase Auth user
+                            com.google.firebase.auth.FirebaseAuth.getInstance()
+                                .getCurrentUser().delete()
+                                .addOnCompleteListener(task -> runOnUiThread(() -> {
+                                    FirebaseManager.clearSession(UserProfileActivity.this);
+                                    Intent intent = new Intent(UserProfileActivity.this, LoginActivity.class);
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                                    startActivity(intent);
+                                    finish();
+                                }));
                         }
-
-                        @Override
-                        public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this,
-                                    "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
+                        @Override public void onError(String err) {
+                            runOnUiThread(() -> Toast.makeText(UserProfileActivity.this,
+                                    "Không thể xoà tài khoản.", Toast.LENGTH_SHORT).show());
                         }
                     });
                 })
@@ -460,263 +369,110 @@ public class UserProfileActivity extends AppCompatActivity {
                 .show();
     }
 
-    private void bindFakeUserProfile() {
-        username = getIntent().getStringExtra("username");
+    /** [FIREBASE] Điểm vào cho việc load profile — thấy intent UID hay dùng UID của mình */
+    private void bindUserProfile() {
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        viewedUserId = targetUserId;
-        
-        if (username == null || username.isEmpty()) {
-            if (targetUserId > 0) {
-                username = "Người dùng #" + targetUserId;
-            } else {
-                // Load tên thật từ SharedPreferences (đã lưu khi đăng nhập/đăng ký)
-                String savedName = RetrofitClient.getUserName(this);
-                username = (savedName != null && !savedName.isEmpty())
-                        ? savedName : socialRepository.getCurrentUsername();
-            }
-        }
+        String intentUid  = getIntent().getStringExtra("user_uid");
+        String myUid      = FirebaseManager.getCurrentUserId();
 
-        ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
-        tvUserProfileName.setText(username);
-        tvUserReputation.setText("0");
-        
-        rvUserReviews.setLayoutManager(new LinearLayoutManager(this));
-        // Load reviews from backend
-        loadReviewsFromBackend();
-
-        // Load interests from backend
-        loadInterestsFromBackend();
-
-        // Load tên thật từ backend
-        if (viewOther && viewedUserId > 0) {
-            // Xem profile người khác: load tên thật từ API
-            loadOtherUserProfile(viewedUserId);
+        if (viewOther && intentUid != null && !intentUid.isEmpty()) {
+            viewedUserUid = intentUid;
         } else {
-            loadOwnProfileName();
+            viewedUserUid = myUid;
         }
+
+        // Hiển thị tên tạm từ SharedPreferences trong khi chờ Firestore
+        String tmpName = FirebaseManager.getUserName(this);
+        tvUserProfileName.setText(tmpName != null ? tmpName : "WeConnect User");
+        ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        tvUserReputation.setText("0");
+
+        rvUserReviews.setLayoutManager(new LinearLayoutManager(this));
+        loadProfileFromFirestore(viewedUserUid);
+        loadReviewsFromFirestore(viewedUserUid);
+        loadInterestsFromFirestore(viewedUserUid);
     }
 
-    private void loadOtherUserProfile(long userId) {
-        com.example.weconnect.api.UserApiService userApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
-        userApi.getUserProfile(userId).enqueue(new Callback<ApiResponse<java.util.Map<String, Object>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<java.util.Map<String, Object>>> call,
-                                   Response<ApiResponse<java.util.Map<String, Object>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    java.util.Map<String, Object> profile = response.body().getResult();
-                    String fullName = profile.get("fullName") != null
-                            ? profile.get("fullName").toString() : null;
-                    if (fullName != null && !fullName.isEmpty()) {
-                        username = fullName;
-                        tvUserProfileName.setText(fullName);
-                    }
-                    // Load avatar with Glide
-                    String avatarUrl = profile.get("avatarUrl") != null
-                            ? profile.get("avatarUrl").toString() : null;
-                    if (avatarUrl != null && !avatarUrl.isEmpty()) {
-                        if (avatarUrl.startsWith("/")) {
-                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                        }
-                        com.bumptech.glide.Glide.with(UserProfileActivity.this)
-                                .load(avatarUrl)
-                                .placeholder(R.drawable.ic_user_placeholder)
-                                .error(R.drawable.ic_user_placeholder)
-                                .circleCrop()
-                                .into(ivUserProfileAvatar);
-                    }
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
-                // Giữ tên từ intent
-            }
-        });
-    }
-
-    private void loadOwnProfileName() {
-        boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-        if (viewOther) return;
-
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId > 0) return; // Đang xem profile người khác
-
-        RetrofitClient.loadToken(this);
-        long myId = RetrofitClient.getUserId(this);
-        if (myId <= 0) return;
-
-        com.example.weconnect.api.UserApiService userApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
-        userApi.getUserProfile(myId).enqueue(new Callback<ApiResponse<java.util.Map<String, Object>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<java.util.Map<String, Object>>> call,
-                                   Response<ApiResponse<java.util.Map<String, Object>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    java.util.Map<String, Object> profile = response.body().getResult();
-
+    /** Load profile từ Firestore users/{uid} */
+    private void loadProfileFromFirestore(String uid) {
+        if (uid == null) return;
+        userRepo.getUserProfile(uid, new FirestoreUserRepository.UserCallback() {
+            @Override public void onSuccess(Map<String, Object> profile) {
+                runOnUiThread(() -> {
                     // Tên
-                    String fullName = profile.get("fullName") != null
-                            ? profile.get("fullName").toString() : null;
+                    String fullName = profile.get("fullName") != null ? profile.get("fullName").toString() : null;
                     if (fullName != null && !fullName.isEmpty()) {
-                        username = fullName;
                         tvUserProfileName.setText(fullName);
-                        RetrofitClient.saveUserName(UserProfileActivity.this, fullName);
-                        socialRepository.setCurrentUsername(fullName);
+                        FirebaseManager.saveUserName(UserProfileActivity.this, fullName);
                     }
-
                     // Bio
-                    String bio = profile.get("bio") != null
-                            ? profile.get("bio").toString() : "";
+                    String bio = profile.get("bio") != null ? profile.get("bio").toString() : "";
                     if (tvUserBio != null) {
-                        tvUserBio.setText(bio.isEmpty() ? "" : bio);
+                        tvUserBio.setText(bio);
                         tvUserBio.setVisibility(bio.isEmpty() ? View.GONE : View.VISIBLE);
                     }
-
                     // Gender
-                    String gender = profile.get("gender") != null
-                            ? profile.get("gender").toString() : "";
+                    String gender = profile.get("gender") != null ? profile.get("gender").toString() : "";
                     if (tvUserGender != null) {
                         tvUserGender.setText(gender.isEmpty() ? "" : "Giới tính: " + gender);
                         tvUserGender.setVisibility(gender.isEmpty() ? View.GONE : View.VISIBLE);
                     }
-
                     // Birthday
-                    String birthday = profile.get("birthday") != null
-                            ? profile.get("birthday").toString() : "";
+                    String birthday = profile.get("birthday") != null ? profile.get("birthday").toString() : "";
                     if (tvUserBirthday != null) {
                         tvUserBirthday.setText(birthday.isEmpty() ? "" : "🎂 " + birthday);
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
-
-                    // Reputation (từ API thay vì hardcode)
+                    // Reputation
                     Object repObj = profile.get("reputationScore");
-                    if (repObj != null && tvUserReputation != null) {
-                        int rep = ((Number) repObj).intValue();
-                        tvUserReputation.setText(String.valueOf(rep));
+                    if (repObj instanceof Number && tvUserReputation != null) {
+                        tvUserReputation.setText(String.valueOf(((Number) repObj).intValue()));
                     }
-
-                    // Load avatar with Glide
-                    String avatarUrl = profile.get("avatarUrl") != null
-                            ? profile.get("avatarUrl").toString() : null;
+                    // Avatar
+                    String avatarUrl = profile.get("avatarUrl") != null ? profile.get("avatarUrl").toString() : null;
                     if (avatarUrl != null && !avatarUrl.isEmpty()) {
-                        if (avatarUrl.startsWith("/")) {
-                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                        }
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
-                                .load(avatarUrl)
-                                .placeholder(R.drawable.ic_user_placeholder)
-                                .error(R.drawable.ic_user_placeholder)
-                                .circleCrop()
-                                .into(ivUserProfileAvatar);
+                            .load(avatarUrl)
+                            .placeholder(R.drawable.ic_user_placeholder)
+                            .error(R.drawable.ic_user_placeholder)
+                            .circleCrop()
+                            .into(ivUserProfileAvatar);
                     }
-
-                    // Interests
-                    String interestTags = profile.get("interestTags") != null
-                            ? profile.get("interestTags").toString() : "";
-                    if (!interestTags.isEmpty() && chipGroupUserInterests != null) {
-                        chipGroupUserInterests.removeAllViews();
-                        String[] tags = interestTags.split(",");
-                        for (String tag : tags) {
-                            String trimmed = tag.trim();
-                            if (!trimmed.isEmpty()) {
-                                com.google.android.material.chip.Chip chip =
-                                        new com.google.android.material.chip.Chip(UserProfileActivity.this);
-                                chip.setText(trimmed);
-                                chip.setClickable(false);
-                                chip.setCheckable(false);
-                                chipGroupUserInterests.addView(chip);
-                            }
-                        }
-                    }
-                }
+                });
             }
+            @Override public void onError(String err) { /* giữ placeholder */ }
+        });
+    }
 
-            @Override
-            public void onFailure(Call<ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
-                // Giữ tên từ SharedPreferences
+    /** Load reviews từ Firestore userReviews */
+
+    /** Load interests từ Firestore users/{uid}.interestTags */
+    private void loadInterestsFromFirestore(String uid) {
+        if (uid == null) return;
+        userRepo.getInterests(uid, new FirestoreUserRepository.InterestsCallback() {
+            @Override public void onSuccess(java.util.List<String> interests) {
+                // Có thể fallback từ SharedPreferences nếu rỗng
+                if (interests.isEmpty()) {
+                    android.content.SharedPreferences prefs =
+                        getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
+                    String saved = prefs.getString("user_interests", "");
+                    if (!saved.isEmpty())
+                        interests = java.util.Arrays.asList(saved.split(","));
+                }
+                displayInterests(interests);
+            }
+            @Override public void onError(String err) {
+                // Fallback SharedPreferences
+                android.content.SharedPreferences prefs =
+                    getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
+                String saved = prefs.getString("user_interests", "");
+                if (!saved.isEmpty())
+                    displayInterests(java.util.Arrays.asList(saved.split(",")));
             }
         });
     }
 
-    private void loadInterestsFromBackend() {
-        com.example.weconnect.api.RetrofitClient.loadToken(this);
-        String token = com.example.weconnect.api.RetrofitClient.getAuthToken();
-
-        if (token == null) {
-            // Fallback: load from SharedPreferences
-            loadInterestsFromLocal();
-            return;
-        }
-
-        com.example.weconnect.api.UserApiService apiService = 
-                com.example.weconnect.api.RetrofitClient.getClient()
-                        .create(com.example.weconnect.api.UserApiService.class);
-
-        // Determine if viewing own profile or someone else's
-        boolean isOwnProfile = socialRepository.getCurrentUsername().equalsIgnoreCase(username);
-
-        if (isOwnProfile) {
-            apiService.getInterests().enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<java.util.List<String>>>() {
-                @Override
-                public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.List<String>>> call,
-                                       retrofit2.Response<com.example.weconnect.models.ApiResponse<java.util.List<String>>> response) {
-                    if (response.isSuccessful() && response.body() != null
-                            && response.body().getResult() != null) {
-                        displayInterests(response.body().getResult());
-                    } else {
-                        loadInterestsFromLocal();
-                    }
-                }
-
-                @Override
-                public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.List<String>>> call, Throwable t) {
-                    loadInterestsFromLocal();
-                }
-            });
-        } else {
-            // For other users, try to load from their profile
-            long targetUserId = getIntent().getLongExtra("user_id", -1);
-            if (targetUserId > 0) {
-                apiService.getUserProfile(targetUserId).enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>>() {
-                    @Override
-                    public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> call,
-                                           retrofit2.Response<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> response) {
-                        if (response.isSuccessful() && response.body() != null
-                                && response.body().getResult() != null) {
-                            java.util.Map<String, Object> profile = response.body().getResult();
-                            String interestTags = profile.get("interestTags") != null
-                                    ? profile.get("interestTags").toString() : "";
-                            if (!interestTags.isEmpty()) {
-                                displayInterests(java.util.Arrays.asList(interestTags.split(",")));
-                            } else {
-                                displayInterests(new ArrayList<>());
-                            }
-                            // Update profile info
-                            String fullName = profile.get("fullName") != null
-                                    ? profile.get("fullName").toString() : username;
-                            tvUserProfileName.setText(fullName);
-                        } else {
-                            loadInterestsFromLocal();
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
-                        loadInterestsFromLocal();
-                    }
-                });
-            } else {
-                loadInterestsFromLocal();
-            }
-        }
-    }
-
+    // Legacy methods removed — replaced by loadProfileFromFirestore() / loadInterestsFromFirestore()
     private void loadInterestsFromLocal() {
         android.content.SharedPreferences prefs =
                 getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
@@ -751,44 +507,21 @@ public class UserProfileActivity extends AppCompatActivity {
         }
     }
 
+    /** [FIREBASE] Load bài viết của user từ Firestore */
     private void bindActivePosts() {
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId <= 0) {
-            // Own profile - load from shared prefs
-            android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-            targetUserId = prefs.getLong("user_id", -1);
-        }
-
-        if (targetUserId <= 0) {
-            // Fallback to fake data
-            showActivePosts(FakePostRepository.getInstance().getActivePostsForUser(username));
-            return;
-        }
-
-        final long userId = targetUserId;
-        // Backend getUserActivePosts đã lọc sẵn: archived=false AND endTime > now
-        // Không cần lọc lại ở frontend
-        postApiService.getUserPosts(userId).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
-                                   Response<ApiResponse<List<PostResponse>>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    List<PostResponse> allResponses = response.body().getResult();
-                    List<Post> userPosts = new ArrayList<>();
-                    if (allResponses != null) {
-                        for (PostResponse pr : allResponses) {
-                            userPosts.add(pr.toPost());
-                        }
-                    }
-                    showActivePosts(userPosts);
-                } else {
-                    showActivePosts(FakePostRepository.getInstance().getActivePostsForUser(username));
+        String uid = viewedUserUid != null ? viewedUserUid : FirebaseManager.getCurrentUserId();
+        if (uid == null) { showActivePosts(new ArrayList<>()); return; }
+        postRepo.getUserPosts(uid, new FirestorePostRepository.PostsCallback() {
+            @Override public void onSuccess(java.util.List<Map<String, Object>> posts) {
+                java.util.List<Post> result = new java.util.ArrayList<>();
+                for (Map<String, Object> p : posts) {
+                    Post post = mapToPost(p);
+                    if (post != null) result.add(post);
                 }
+                runOnUiThread(() -> showActivePosts(result));
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
-                showActivePosts(FakePostRepository.getInstance().getActivePostsForUser(username));
+            @Override public void onError(String err) {
+                runOnUiThread(() -> showActivePosts(new ArrayList<>()));
             }
         });
     }
@@ -813,66 +546,23 @@ public class UserProfileActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Load hoạt động đã tham gia: cho cả profile mình và profile người khác
-     */
+    /** [FIREBASE] Load hoạt động đã tham gia từ Firestore */
     private void loadMyActivities() {
-        boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-
-        RetrofitClient.loadToken(this);
-
-        if (viewOther && targetUserId > 0) {
-            // Xem profile người khác → load activities của họ (CTA resolve theo viewer)
-            postApiService.getUserActivities(targetUserId).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
-                                       Response<ApiResponse<List<PostResponse>>> response) {
-                    if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                        List<PostResponse> responses = response.body().getResult();
-                        List<Post> activities = new ArrayList<>();
-                        if (responses != null) {
-                            for (PostResponse pr : responses) {
-                                activities.add(pr.toPost());
-                            }
-                        }
-                        showMyActivities(activities);
-                    } else {
-                        showMyActivities(new ArrayList<>());
-                    }
+        String uid = viewedUserUid != null ? viewedUserUid : FirebaseManager.getCurrentUserId();
+        if (uid == null) { showMyActivities(new ArrayList<>()); return; }
+        postRepo.getMyActivities(uid, new FirestorePostRepository.PostsCallback() {
+            @Override public void onSuccess(java.util.List<Map<String, Object>> posts) {
+                java.util.List<Post> result = new java.util.ArrayList<>();
+                for (Map<String, Object> p : posts) {
+                    Post post = mapToPost(p);
+                    if (post != null) result.add(post);
                 }
-
-                @Override
-                public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
-                    showMyActivities(new ArrayList<>());
-                }
-            });
-        } else {
-            // Profile của mình
-            postApiService.getMyActivities().enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
-                                       Response<ApiResponse<List<PostResponse>>> response) {
-                    if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                        List<PostResponse> responses = response.body().getResult();
-                        List<Post> myActivities = new ArrayList<>();
-                        if (responses != null) {
-                            for (PostResponse pr : responses) {
-                                myActivities.add(pr.toPost());
-                            }
-                        }
-                        showMyActivities(myActivities);
-                    } else {
-                        showMyActivities(new ArrayList<>());
-                    }
-                }
-
-                @Override
-                public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
-                    showMyActivities(new ArrayList<>());
-                }
-            });
-        }
+                runOnUiThread(() -> showMyActivities(result));
+            }
+            @Override public void onError(String err) {
+                runOnUiThread(() -> showMyActivities(new ArrayList<>()));
+            }
+        });
     }
 
     private void showMyActivities(List<Post> activities) {
@@ -915,101 +605,92 @@ public class UserProfileActivity extends AppCompatActivity {
         return set;
     }
 
+    private Post mapToPost(Map<String, Object> p) {
+        try {
+            String id = (String) p.get("id");
+            String authorName = (String) p.get("authorName");
+            String content = (String) p.get("content");
+            String tag = (String) p.get("interestTag");
+            String location = (String) p.get("location");
+            String imageUrl = (String) p.get("imageUrl");
+            String authorAvatarUrl = (String) p.get("authorAvatarUrl");
+            int maxMembers = p.get("maxMembers") instanceof Number ? ((Number) p.get("maxMembers")).intValue() : 10;
+            int memberCount = p.get("memberCount") instanceof Number ? ((Number) p.get("memberCount")).intValue() : 1;
+            boolean archived = Boolean.TRUE.equals(p.get("archived"));
+
+            com.google.firebase.Timestamp endTs  = (com.google.firebase.Timestamp) p.get("endTime");
+            com.google.firebase.Timestamp startTs = (com.google.firebase.Timestamp) p.get("startTime");
+            long endMillis   = endTs != null ? endTs.toDate().getTime() : System.currentTimeMillis() + 86400000L;
+            long startMillis = startTs != null ? startTs.toDate().getTime() : System.currentTimeMillis();
+
+            String currentUid = FirebaseManager.getCurrentUserId();
+            String authorId = (String) p.get("authorId");
+            boolean isMyPost = currentUid != null && currentUid.equals(authorId);
+
+            Post post = new Post(id, authorName, "vừa xong", content, tag, location,
+                    0, 0, memberCount, 0, 0, maxMembers, isMyPost,
+                    startMillis, endMillis, archived);
+            post.setAuthorId(authorId != null ? authorId.hashCode() : 0);
+            post.setAuthorUid(authorId);
+            post.setAvatarUrl(authorAvatarUrl);
+            if (imageUrl != null && !imageUrl.isEmpty()) post.setPostImageUri(imageUrl);
+            return post;
+        } catch (Exception e) {
+            android.util.Log.e("UserProfile", "mapToPost error: " + e.getMessage());
+            return null;
+        }
+    }
+
     /**
-     * Load bài viết gợi ý từ người dùng khác dựa trên sở thích chung.
-     * Gọi API getActivePosts rồi lọc: cùng tag sở thích, khác tác giả.
+     * [FIREBASE] Load bài viết gợi ý dựa trên sở thích chung.
      */
     private void loadRelatedPosts() {
-        // Lấy sở thích của user hiện tại
-        android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-        String savedInterests = prefs.getString("user_interests", "");
+        String uid = FirebaseManager.getCurrentUserId();
+        if (uid == null) { hideRelatedPosts(); return; }
 
-        if (savedInterests.isEmpty()) {
-            // Thử load từ API trước
-            RetrofitClient.loadToken(this);
-            com.example.weconnect.api.UserApiService userApi =
-                    RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-            userApi.getInterests().enqueue(new retrofit2.Callback<ApiResponse<java.util.List<String>>>() {
-                @Override
-                public void onResponse(retrofit2.Call<ApiResponse<java.util.List<String>>> call,
-                                       retrofit2.Response<ApiResponse<java.util.List<String>>> response) {
-                    if (response.isSuccessful() && response.body() != null
-                            && response.body().getResult() != null
-                            && !response.body().getResult().isEmpty()) {
-                        java.util.List<String> interests = response.body().getResult();
-                        prefs.edit().putString("user_interests", String.join(",", interests)).apply();
-                        fetchAndFilterRelatedPosts(interests);
-                    } else {
-                        hideRelatedPosts();
-                    }
-                }
-
-                @Override
-                public void onFailure(retrofit2.Call<ApiResponse<java.util.List<String>>> call, Throwable t) {
-                    hideRelatedPosts();
-                }
-            });
-            return;
-        }
-
-        java.util.List<String> interests = java.util.Arrays.asList(savedInterests.split(","));
-        fetchAndFilterRelatedPosts(interests);
+        userRepo.getInterests(uid, new FirestoreUserRepository.InterestsCallback() {
+            @Override public void onSuccess(java.util.List<String> interests) {
+                if (interests == null || interests.isEmpty()) { runOnUiThread(() -> hideRelatedPosts()); return; }
+                fetchAndFilterRelatedPosts(interests);
+            }
+            @Override public void onError(String err) { runOnUiThread(() -> hideRelatedPosts()); }
+        });
     }
 
     private void fetchAndFilterRelatedPosts(java.util.List<String> userInterests) {
-        // Tạo set sở thích để so sánh nhanh
         java.util.Set<String> interestSet = new java.util.HashSet<>();
         for (String tag : userInterests) {
-            String trimmed = tag.trim();
-            if (!trimmed.isEmpty()) interestSet.add(trimmed.toLowerCase());
+            String t = tag.trim();
+            if (!t.isEmpty()) interestSet.add(t.toLowerCase());
         }
+        if (interestSet.isEmpty()) { runOnUiThread(() -> hideRelatedPosts()); return; }
 
-        if (interestSet.isEmpty()) {
-            hideRelatedPosts();
-            return;
-        }
-
-        // Lấy tên user hiện tại để loại bỏ bài của chính mình
-        String currentUserName = RetrofitClient.getUserName(this);
-
-        // Dùng username của profile đang xem để loại bỏ bài của chính họ
-        postApiService.getActivePosts().enqueue(new Callback<ApiResponse<java.util.List<PostResponse>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<java.util.List<PostResponse>>> call,
-                                   Response<ApiResponse<java.util.List<PostResponse>>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    java.util.List<PostResponse> allPosts = response.body().getResult();
-                    java.util.List<Post> related = new ArrayList<>();
-                    if (allPosts != null) {
-                        for (PostResponse pr : allPosts) {
-                            // Bỏ qua bài của chính user đang xem profile
-                            if (pr.getAuthorName() != null
-                                    && pr.getAuthorName().equalsIgnoreCase(username)) {
-                                continue;
-                            }
-                            // Bỏ qua bài của chính mình (người đang đăng nhập)
-                            if (currentUserName != null && pr.getAuthorName() != null
-                                    && pr.getAuthorName().equalsIgnoreCase(currentUserName)) {
-                                continue;
-                            }
-                            // Lọc bài có tag trùng sở thích
-                            if (pr.getInterestTag() != null
-                                    && interestSet.contains(pr.getInterestTag().trim().toLowerCase())) {
-                                related.add(pr.toPost());
-                            }
-                        }
+        String myUid = FirebaseManager.getCurrentUserId();
+        postRepo.getActivePosts(new FirestorePostRepository.PostsCallback() {
+            @Override public void onSuccess(java.util.List<Map<String, Object>> posts) {
+                java.util.List<Post> related = new java.util.ArrayList<>();
+                for (Map<String, Object> p : posts) {
+                    String authorUid = p.get("authorUid") != null ? p.get("authorUid").toString() : null;
+                    if (myUid != null && myUid.equals(authorUid)) continue;
+                    if (viewedUserUid != null && viewedUserUid.equals(authorUid)) continue;
+                    String tag = p.get("interestTag") != null ? p.get("interestTag").toString().trim().toLowerCase() : "";
+                    if (interestSet.contains(tag)) {
+                        Post post = mapToPost(p);
+                        if (post != null) related.add(post);
                     }
-                    showRelatedPosts(related);
-                } else {
-                    hideRelatedPosts();
                 }
+                runOnUiThread(() -> showRelatedPosts(related));
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<java.util.List<PostResponse>>> call, Throwable t) {
-                hideRelatedPosts();
-            }
+            @Override public void onError(String err) { runOnUiThread(() -> hideRelatedPosts()); }
         });
+    }
+
+    /**
+     * [FIREBASE] loadSuggestedUsers — gợi ý user có sở thích chung.
+     * Hiện tại disabled (tạm ẩn), chỉ để compile clean.
+     */
+    private void loadSuggestedUsers() {
+        // Disabled — feature sẽ được implement sau khi có Firestore index cho interests
     }
 
     private void showRelatedPosts(java.util.List<Post> relatedPosts) {
@@ -1028,37 +709,6 @@ public class UserProfileActivity extends AppCompatActivity {
         tvRelatedPostsTitle.setVisibility(View.GONE);
         tvNoRelatedPosts.setVisibility(View.GONE);
         rvRelatedPosts.setVisibility(View.GONE);
-    }
-
-    /**
-     * Load gợi ý user có sở thích chung.
-     * Hiển thị danh sách ngang: avatar + tên + nút "Thêm bạn bè".
-     * Chỉ hiện khi xem profile người khác.
-     */
-    private void loadSuggestedUsers() {
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId <= 0) return;
-
-        RetrofitClient.loadToken(this);
-        com.example.weconnect.api.UserApiService userApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
-        userApi.getSuggestions(targetUserId).enqueue(new Callback<ApiResponse<java.util.List<Map<String, Object>>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<java.util.List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<java.util.List<Map<String, Object>>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null
-                        && !response.body().getResult().isEmpty()) {
-                    showSuggestedUsersUI(response.body().getResult());
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<java.util.List<Map<String, Object>>>> call, Throwable t) {
-                // Không hiện nếu lỗi
-            }
-        });
     }
 
     private void showSuggestedUsersUI(java.util.List<Map<String, Object>> suggestions) {
@@ -1192,11 +842,11 @@ public class UserProfileActivity extends AppCompatActivity {
 
     private void bindSocialState() {
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-        long myUserId = RetrofitClient.getUserId(this);
-        boolean isOwnProfile = !viewOther && (viewedUserId == -1 || viewedUserId == myUserId);
+        String myUid = FirebaseManager.getCurrentUserId();
+        boolean isOwnProfile = !viewOther || viewedUserUid == null
+                || (myUid != null && myUid.equals(viewedUserUid));
 
         if (isOwnProfile) {
-            // === Hồ sơ của mình ===
             ivBackUserProfile.setVisibility(View.GONE);
             ivMenuProfile.setVisibility(View.VISIBLE);
             tvFriendCount.setVisibility(View.VISIBLE);
@@ -1206,32 +856,27 @@ public class UserProfileActivity extends AppCompatActivity {
             footerNavigationProfile.setVisibility(View.VISIBLE);
 
             ivUserProfileAvatar.setOnClickListener(v -> showAvatarOptionsSheet());
-
-            // Load ảnh đại diện đã lưu từ SharedPreferences
             loadSavedAvatar();
             cardCreatePostProfile.setVisibility(View.VISIBLE);
-            cardCreatePostProfile.setOnClickListener(v -> {
-                Intent intent = new Intent(this, CreatePostActivity.class);
-                createPostLauncher.launch(intent);
-            });
+            cardCreatePostProfile.setOnClickListener(v -> createPostLauncher.launch(
+                    new Intent(this, CreatePostActivity.class)));
 
             tvInterestsTitle.setVisibility(View.VISIBLE);
             chipGroupUserInterests.setVisibility(View.VISIBLE);
             rvActivePostsProfile.setVisibility(View.VISIBLE);
 
-            // Load số bạn bè từ backend
-            loadFriendCountFromApi();
+            loadFriendCountFromFirebase(myUid);
             return;
         }
 
-        // === Hồ sơ người khác ===
+        // Hồ sơ người khác
         ivBackUserProfile.setVisibility(View.VISIBLE);
-        ivMenuProfile.setVisibility(View.VISIBLE); // 3-dots menu ở góc phải header
+        ivMenuProfile.setVisibility(View.VISIBLE);
         tvFriendCount.setVisibility(View.GONE);
         btnViewArchive.setVisibility(View.GONE);
         layoutSocialButtons.setVisibility(View.VISIBLE);
         layoutRateReport.setVisibility(View.VISIBLE);
-        btnReportUser.setVisibility(View.GONE); // Ẩn nút Report cũ, dùng menu 3 chấm thay
+        if (btnReportUser != null) btnReportUser.setVisibility(View.GONE);
         footerNavigationProfile.setVisibility(View.GONE);
         cardCreatePostProfile.setVisibility(View.GONE);
 
@@ -1241,22 +886,15 @@ public class UserProfileActivity extends AppCompatActivity {
         tvReviewsTitle.setVisibility(View.VISIBLE);
         rvUserReviews.setVisibility(View.VISIBLE);
 
-        // loadSuggestedUsers(); // Tạm ẩn phần "Gợi ý cho bạn"
         btnRateUser.setOnClickListener(v -> showRateUserDialog());
 
-        // 3-dots menu ở header (ivMenuProfile) cho profile người khác
         ivMenuProfile.setOnClickListener(v -> {
             android.widget.PopupMenu popup = new android.widget.PopupMenu(this, ivMenuProfile);
             popup.getMenu().add(0, 1, 0, "🚫 Chặn người dùng");
             popup.getMenu().add(0, 2, 1, "⚠️ Báo cáo");
             popup.setOnMenuItemClickListener(item -> {
-                if (item.getItemId() == 1) {
-                    showBlockUserConfirmDialog();
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    showReportUserDialog();
-                    return true;
-                }
+                if (item.getItemId() == 1) { showBlockUserConfirmDialog(); return true; }
+                if (item.getItemId() == 2) { showReportUserDialog(); return true; }
                 return false;
             });
             popup.show();
@@ -1265,89 +903,27 @@ public class UserProfileActivity extends AppCompatActivity {
         ivUserProfileAvatar.setOnClickListener(null);
         ivUserProfileAvatar.setClickable(false);
 
-        // Load trạng thái bạn bè từ backend
-        if (viewedUserId > 0) {
-            loadFriendStatusFromApi(viewedUserId);
-        } else if (username != null && !username.isEmpty()) {
-            // Fallback: resolve user_id từ username qua API
-            lookupUserIdByName(username);
+        if (myUid != null && viewedUserUid != null) {
+            friendService.getFriendStatus(myUid, viewedUserUid, status -> runOnUiThread(() -> setupFriendButton(status)));
         } else {
             setupFriendButton("NONE");
         }
     }
 
-    private void loadFriendCountFromApi() {
-        friendApiService.getFriendCount().enqueue(new Callback<ApiResponse<Integer>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Integer>> call, Response<ApiResponse<Integer>> response) {
-                int count = 0;
-                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
-                    count = response.body().getResult();
-                }
-                int finalCount = count;
-                tvFriendCount.setText("👥 Bạn bè: " + finalCount);
-                tvFriendCount.setOnClickListener(v -> showFriendListDialog());
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Integer>> call, Throwable t) {
-                tvFriendCount.setText("👥 Bạn bè: 0");
-                tvFriendCount.setOnClickListener(v -> showFriendListDialog());
-            }
-        });
+    private void loadFriendCountFromFirebase(String uid) {
+        if (uid == null) { tvFriendCount.setText("👥 Bạn bè: 0"); return; }
+        friendService.getFriendCount(uid, count -> runOnUiThread(() -> {
+            tvFriendCount.setText("👥 Bạn bè: " + count);
+            tvFriendCount.setOnClickListener(v -> showFriendListDialog());
+        }));
     }
 
-    private void loadFriendStatusFromApi(long otherUserId) {
-        friendApiService.getFriendStatus(otherUserId).enqueue(new Callback<ApiResponse<String>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> response) {
-                String status = "NONE";
-                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
-                    // Gson type erasure: result could be any object, force toString and clean
-                    status = String.valueOf(response.body().getResult())
-                            .trim().replace("\"", "");
-                }
-                android.util.Log.d("UserProfile", "Friend status for userId=" + otherUserId + ": [" + status + "]");
-                setupFriendButton(status);
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
-                android.util.Log.e("UserProfile", "getFriendStatus failed", t);
-                setupFriendButton("NONE");
-            }
-        });
-    }
-
-    private void lookupUserIdByName(String name) {
-        com.example.weconnect.api.UserApiService userApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
-        userApi.searchByName(name).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
-                                   Response<ApiResponse<Map<String, Object>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    Map<String, Object> data = response.body().getResult();
-                    if (data.get("id") != null) {
-                        viewedUserId = ((Number) data.get("id")).longValue();
-                        android.util.Log.d("UserProfile", "Resolved userId=" + viewedUserId + " from name=" + name);
-                        loadFriendStatusFromApi(viewedUserId);
-                        return;
-                    }
-                }
-                android.util.Log.w("UserProfile", "Could not resolve userId for name=" + name);
-                setupFriendButton("NONE");
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
-                android.util.Log.e("UserProfile", "searchByName failed", t);
-                setupFriendButton("NONE");
-            }
-        });
-    }
+    // loadFriendStatusFromApi and lookupUserIdByName replaced by Firebase getFriendStatus in bindSocialState
+    // These stubs are kept to avoid any remaining references compiling cleanly
+    @SuppressWarnings("unused")
+    private void loadFriendStatusFromApi(long ignored) { setupFriendButton("NONE"); }
+    @SuppressWarnings("unused")
+    private void lookupUserIdByName(String name) { setupFriendButton("NONE"); }
 
     private void setupFriendButton(String status) {
         switch (status) {
@@ -1371,38 +947,48 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnMessage.setVisibility(View.VISIBLE);
                 btnAddFriend.setOnClickListener(v -> showFriendOptionsMenu());
                 btnMessage.setOnClickListener(v -> {
-                    if (viewedUserId <= 0) {
+                    if (viewedUserUid == null) {
                         Toast.makeText(this, "Không thể nhắn tin", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    // Gọi API lấy hoặc tạo phòng DM
-                    RetrofitClient.loadToken(this);
-                    com.example.weconnect.api.ChatApiService chatApi =
-                            RetrofitClient.getClient().create(com.example.weconnect.api.ChatApiService.class);
-                    chatApi.getDirectRoom(viewedUserId).enqueue(new Callback<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call,
-                                               Response<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> response) {
-                            if (response.isSuccessful() && response.body() != null
-                                    && response.body().getResult() != null) {
-                                com.example.weconnect.models.ChatRoomApiResponse room = response.body().getResult();
+                    String myUid = FirebaseManager.getCurrentUserId();
+                    String chatName = tvUserProfileName.getText().toString();
+                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        .collection("chatRooms")
+                        .whereEqualTo("type", "direct")
+                        .whereArrayContains("memberIds", myUid)
+                        .get()
+                        .addOnSuccessListener(snaps -> {
+                            String roomId = null;
+                            for (com.google.firebase.firestore.QueryDocumentSnapshot doc : snaps) {
+                                Object members = doc.get("memberIds");
+                                if (members instanceof java.util.List
+                                        && ((java.util.List<?>) members).contains(viewedUserUid)) {
+                                    roomId = doc.getId();
+                                    break;
+                                }
+                            }
+                            if (roomId != null) {
                                 Intent intent = new Intent(UserProfileActivity.this, ConversationActivity.class);
-                                intent.putExtra("room_id", room.getId());
-                                intent.putExtra("chat_name", username);
+                                intent.putExtra("room_id", roomId);
+                                intent.putExtra("chat_name", chatName);
                                 startActivity(intent);
                             } else {
-                                String msg = "Không thể mở phòng chat";
-                                if (response.body() != null && response.body().getMessage() != null) {
-                                    msg = response.body().getMessage();
-                                }
-                                Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
+                                java.util.Map<String, Object> room = new java.util.HashMap<>();
+                                room.put("type", "direct");
+                                room.put("memberIds", java.util.Arrays.asList(myUid, viewedUserUid));
+                                room.put("title", chatName);
+                                room.put("createdAt", com.google.firebase.firestore.FieldValue.serverTimestamp());
+                                com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                    .collection("chatRooms").add(room)
+                                    .addOnSuccessListener(ref -> {
+                                        Intent intent = new Intent(UserProfileActivity.this, ConversationActivity.class);
+                                        intent.putExtra("room_id", ref.getId());
+                                        intent.putExtra("chat_name", chatName);
+                                        startActivity(intent);
+                                    });
                             }
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                        });
                 });
                 break;
 
@@ -1412,20 +998,20 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnAddFriend.setAlpha(0.8f);
                 btnMessage.setVisibility(View.GONE);
                 btnAddFriend.setOnClickListener(v -> {
-                    // Hủy lời mời đã gửi
-                    friendApiService.cancelFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                            if (response.isSuccessful()) {
-                                Toast.makeText(UserProfileActivity.this, "Đã hủy lời mời", Toast.LENGTH_SHORT).show();
-                                setupFriendButton("NONE");
+                    String myUid = FirebaseManager.getCurrentUserId();
+                    if (myUid == null || viewedUserUid == null) return;
+                    friendService.cancelFriendRequest(myUid, viewedUserUid,
+                        new FirebaseFriendService.ActionCallback() {
+                            @Override public void onSuccess(String msg) {
+                                runOnUiThread(() -> {
+                                    Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
+                                    setupFriendButton("NONE");
+                                });
                             }
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                            @Override public void onError(String err) {
+                                runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                            }
+                        });
                 });
                 break;
 
@@ -1443,34 +1029,23 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnAddFriend.setAlpha(1.0f);
                 btnMessage.setVisibility(View.GONE);
                 btnAddFriend.setOnClickListener(v -> {
-                    if (viewedUserId <= 0) {
+                    String myUid = FirebaseManager.getCurrentUserId();
+                    if (myUid == null || viewedUserUid == null) {
                         Toast.makeText(this, "Không thể thêm bạn bè", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    friendApiService.sendFriendRequest(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                            if (response.isSuccessful()) {
-                                Toast.makeText(UserProfileActivity.this, "Đã gửi lời mời kết bạn", Toast.LENGTH_SHORT).show();
-                                setupFriendButton("PENDING_SENT");
-                            } else {
-                                String errorMsg = "Không thể gửi lời mời kết bạn";
-                                try {
-                                    String errorBody = response.errorBody() != null ? response.errorBody().string() : "";
-                                    android.util.Log.e("UserProfile", "sendFriendRequest error: code=" + response.code() + " body=" + errorBody);
-                                    org.json.JSONObject json = new org.json.JSONObject(errorBody);
-                                    if (json.has("message")) {
-                                        errorMsg = json.getString("message");
-                                    }
-                                } catch (Exception ignored) {}
-                                Toast.makeText(UserProfileActivity.this, errorMsg, Toast.LENGTH_SHORT).show();
+                    friendService.sendFriendRequest(myUid, viewedUserUid,
+                        new FirebaseFriendService.ActionCallback() {
+                            @Override public void onSuccess(String msg) {
+                                runOnUiThread(() -> {
+                                    Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
+                                    setupFriendButton("PENDING_SENT");
+                                });
                             }
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                            @Override public void onError(String err) {
+                                runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                            }
+                        });
                 });
                 break;
         }
@@ -1513,14 +1088,13 @@ public class UserProfileActivity extends AppCompatActivity {
     sheet.setContentView(root);
     sheet.show();
 
-    // Load từ backend
-    friendApiService.getFriends().enqueue(new Callback<ApiResponse<java.util.List<java.util.Map<String, Object>>>>() {
-        @Override
-        public void onResponse(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call,
-                               Response<ApiResponse<java.util.List<java.util.Map<String, Object>>>> response) {
-            root.removeView(tvLoading);
-            if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
-                java.util.List<java.util.Map<String, Object>> friendsList = response.body().getResult();
+    // Load từ Firebase
+    String uid = FirebaseManager.getCurrentUserId();
+    if (uid == null) { root.removeView(tvLoading); return; }
+    friendService.getFriends(uid, new FirebaseFriendService.FriendsCallback() {
+        @Override public void onSuccess(java.util.List<java.util.Map<String, Object>> friendsList) {
+            runOnUiThread(() -> {
+                root.removeView(tvLoading);
                 if (friendsList.isEmpty()) {
                     TextView tvEmpty = new TextView(UserProfileActivity.this);
                     tvEmpty.setText("Bạn chưa có bạn bè nào");
@@ -1533,11 +1107,7 @@ public class UserProfileActivity extends AppCompatActivity {
                     for (java.util.Map<String, Object> friend : friendsList) {
                         String friendName = friend.get("fullName") != null
                                 ? friend.get("fullName").toString() : "Người dùng";
-                        long friendId = -1;
-                        try {
-                            if (friend.get("userId") != null)
-                                friendId = ((Number) friend.get("userId")).longValue();
-                        } catch (Exception ignored) {}
+                        String friendUid = friend.get("id") != null ? friend.get("id").toString() : null;
 
                         LinearLayout row = new LinearLayout(UserProfileActivity.this);
                         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -1548,7 +1118,7 @@ public class UserProfileActivity extends AppCompatActivity {
                         row.setFocusable(true);
 
                         TextView tvIcon = new TextView(UserProfileActivity.this);
-                        tvIcon.setText("👤");
+                        tvIcon.setText("\uD83D\uDC64");
                         tvIcon.setTextSize(22);
                         row.addView(tvIcon);
 
@@ -1560,14 +1130,13 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvName.setPadding(32, 0, 0, 0);
                         row.addView(tvName);
 
-                        final long fId = friendId;
+                        final String fUid = friendUid;
                         final String fName = friendName;
                         row.setOnClickListener(v -> {
                             sheet.dismiss();
                             Intent intent = new Intent(UserProfileActivity.this, UserProfileActivity.class);
-                            intent.putExtra("username", fName);
-                            intent.putExtra("user_id", fId);
                             intent.putExtra("view_other", true);
+                            if (fUid != null) intent.putExtra("user_uid", fUid);
                             startActivity(intent);
                         });
                         root.addView(row);
@@ -1579,15 +1148,10 @@ public class UserProfileActivity extends AppCompatActivity {
                         root.addView(sep);
                     }
                 }
-            } else {
-                tvLoading.setText("Không thể tải danh sách bạn bè");
-                root.addView(tvLoading);
-            }
+            });
         }
-
-        @Override
-        public void onFailure(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call, Throwable t) {
-            tvLoading.setText("Lỗi kết nối");
+        @Override public void onError(String err) {
+            runOnUiThread(() -> tvLoading.setText("Lỗi: " + err));
         }
     });
     }
@@ -1620,29 +1184,30 @@ public class UserProfileActivity extends AppCompatActivity {
 
         // Unfriend option
         android.widget.LinearLayout unfriendRow = createOptionRow(
-                "👋", "Huỷ kết bạn", "Xoá " + username + " khỏi danh sách bạn bè",
+                "👋", "Huỷ kết bạn", "Xoá " + tvUserProfileName.getText().toString() + " khỏi danh sách bạn bè",
                 getResources().getColor(R.color.text_primary, null));
         unfriendRow.setOnClickListener(v -> {
             sheet.dismiss();
+            String userName = tvUserProfileName.getText().toString();
             new AlertDialog.Builder(this)
                     .setTitle("Huỷ kết bạn")
-                    .setMessage("Bạn có chắc muốn huỷ kết bạn với " + username + "?")
+                    .setMessage("Bạn có chắc muốn huỷ kết bạn với " + userName + "?")
                     .setPositiveButton("Huỷ kết bạn", (d, w) -> {
-                        if (viewedUserId > 0) {
-                        friendApiService.unfriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                            @Override
-                            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                                if (response.isSuccessful()) {
-                                    Toast.makeText(UserProfileActivity.this, "Đã huỷ kết bạn", Toast.LENGTH_SHORT).show();
-                                    setupFriendButton("NONE");
-                                }
-                            }
-                            @Override
-                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                            }
-                        });
-                    }
+                        String myUid = FirebaseManager.getCurrentUserId();
+                        if (myUid != null && viewedUserUid != null) {
+                            friendService.unfriend(myUid, viewedUserUid,
+                                new FirebaseFriendService.ActionCallback() {
+                                    @Override public void onSuccess(String msg) {
+                                        runOnUiThread(() -> {
+                                            Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
+                                            setupFriendButton("NONE");
+                                        });
+                                    }
+                                    @Override public void onError(String err) {
+                                        runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                                    }
+                                });
+                        }
                     })
                     .setNegativeButton("Không", null)
                     .show();
@@ -1658,29 +1223,30 @@ public class UserProfileActivity extends AppCompatActivity {
 
         // Block option
         android.widget.LinearLayout blockRow = createOptionRow(
-                "🚫", "Chặn người dùng", username + " sẽ không thể liên hệ với bạn",
+                "🚫", "Chặn người dùng", tvUserProfileName.getText().toString() + " sẽ không thể liên hệ với bạn",
                 0xFFFF4D6D);
         blockRow.setOnClickListener(v -> {
             sheet.dismiss();
+            String userName = tvUserProfileName.getText().toString();
             new AlertDialog.Builder(this)
                     .setTitle("Chặn người dùng")
-                    .setMessage("Bạn có chắc muốn chặn " + username + "? Người này sẽ không thể liên hệ với bạn.")
+                    .setMessage("Bạn có chắc muốn chặn " + userName + "? Người này sẽ không thể liên hệ với bạn.")
                     .setPositiveButton("Chặn", (d, w) -> {
-                        if (viewedUserId > 0) {
-                        friendApiService.blockUser(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                            @Override
-                            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                                if (response.isSuccessful()) {
-                                    Toast.makeText(UserProfileActivity.this, "Đã chặn người dùng", Toast.LENGTH_SHORT).show();
-                                    setupFriendButton("BLOCKED");
-                                }
-                            }
-                            @Override
-                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                            }
-                        });
-                    }
+                        String myUid = FirebaseManager.getCurrentUserId();
+                        if (myUid != null && viewedUserUid != null) {
+                            friendService.blockUser(myUid, viewedUserUid,
+                                new FirebaseFriendService.ActionCallback() {
+                                    @Override public void onSuccess(String msg) {
+                                        runOnUiThread(() -> {
+                                            Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
+                                            setupFriendButton("BLOCKED");
+                                        });
+                                    }
+                                    @Override public void onError(String err) {
+                                        runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                                    }
+                                });
+                        }
                     })
                     .setNegativeButton("Không", null)
                     .show();
@@ -1725,50 +1291,39 @@ public class UserProfileActivity extends AppCompatActivity {
         return row;
     }
 
+    // [FIREBASE] Load common activities từ Firestore
     private void showRateUserDialog() {
-        long targetId = getIntent().getLongExtra("user_id", -1);
-        if (targetId <= 0) {
+        if (viewedUserUid == null) {
             Toast.makeText(this, "Không thể đánh giá người dùng này", Toast.LENGTH_SHORT).show();
             return;
         }
-
-        // Fetch common activities trước, rồi show dialog
+        String myUid = FirebaseManager.getCurrentUserId();
+        if (myUid == null) return;
         Toast.makeText(this, "Đang tải hoạt động chung...", Toast.LENGTH_SHORT).show();
 
-        reviewApiService.getCommonActivities(targetId).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<List<Map<String, Object>>>> response) {
-                List<String> activityNames = new ArrayList<>();
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    for (Map<String, Object> item : response.body().getResult()) {
-                        String name = item.get("activityName") != null
-                                ? item.get("activityName").toString() : "";
-                        String tag = item.get("interestTag") != null
-                                ? item.get("interestTag").toString() : "";
-                        // Ghép tag + content cho rõ ràng
-                        String display = tag.isEmpty() ? name : "[" + tag + "] " + name;
-                        if (!display.isEmpty()) {
-                            activityNames.add(display);
-                        }
+        FirebaseManager.getFirestore().collection("posts")
+            .whereArrayContains("approvedMembers", myUid)
+            .get()
+            .addOnSuccessListener(snaps -> {
+                java.util.List<String> activityNames = new java.util.ArrayList<>();
+                for (com.google.firebase.firestore.QueryDocumentSnapshot doc : snaps) {
+                    Object members = doc.get("approvedMembers");
+                    if (members instanceof java.util.List
+                            && ((java.util.List<?>) members).contains(viewedUserUid)) {
+                        String content = doc.getString("content");
+                        String tag     = doc.getString("interestTag");
+                        String display = (tag != null && !tag.isEmpty()) ? "[" + tag + "] " + content : content;
+                        if (display != null && !display.isEmpty()) activityNames.add(display);
                     }
                 }
-
-                if (activityNames.isEmpty()) {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Không tìm thấy hoạt động chung", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-
-                showRateUserDialogWithActivities(activityNames);
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-            }
-        });
+                if (activityNames.isEmpty()) activityNames.add("Hoạt động chung");
+                java.util.List<String> finalList = activityNames;
+                runOnUiThread(() -> showRateUserDialogWithActivities(finalList));
+            })
+            .addOnFailureListener(e -> runOnUiThread(() -> {
+                java.util.List<String> fallback = java.util.Arrays.asList("Hoạt động chung");
+                showRateUserDialogWithActivities(fallback);
+            }));
     }
 
     private void showRateUserDialogWithActivities(List<String> activityNames) {
@@ -1782,7 +1337,7 @@ public class UserProfileActivity extends AppCompatActivity {
 
         // Header
         TextView header = new TextView(this);
-        header.setText("⭐ Đánh giá " + username);
+        header.setText("⭐ Đánh giá " + tvUserProfileName.getText().toString());
         header.setTextSize(20);
         header.setTextColor(getResources().getColor(R.color.primary_pink, null));
         header.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -1865,91 +1420,63 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void submitReviewToBackend(int stars, String comment, String activityName) {
-        long reviewedUserId = getIntent().getLongExtra("user_id", -1);
-        if (reviewedUserId <= 0) {
+        if (viewedUserUid == null) {
             Toast.makeText(this, "Không thể gửi đánh giá", Toast.LENGTH_SHORT).show();
             return;
         }
+        String myUid  = FirebaseManager.getCurrentUserId();
+        String myName = FirebaseManager.getUserName(this);
+        if (myUid == null) return;
 
-        // Map stars to reputation label
         String[] labels = {"Cần cải thiện", "Trung bình", "Tích cực", "Đáng tin cậy", "Xuất sắc"};
         String reputationLabel = labels[Math.min(stars - 1, labels.length - 1)];
 
-        Map<String, Object> body = new HashMap<>();
-        body.put("reviewedUserId", reviewedUserId);
-        body.put("activityName", activityName);
-        body.put("reputationLabel", reputationLabel);
-        body.put("comment", comment.isEmpty() ? "Đánh giá " + stars + " sao" : comment);
+        Map<String, Object> review = new HashMap<>();
+        review.put("actorUid",        myUid);
+        review.put("actorName",       myName != null ? myName : "Người dùng");
+        review.put("reviewedUid",     viewedUserUid);
+        review.put("activityName",    activityName);
+        review.put("reputationLabel", reputationLabel);
+        review.put("comment",         comment.isEmpty() ? "Đánh giá " + stars + " sao" : comment);
+        review.put("rating",          stars);
+        review.put("createdAt",       com.google.firebase.firestore.FieldValue.serverTimestamp());
 
-        reviewApiService.createReview(body).enqueue(new Callback<ApiResponse<Void>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                if (response.isSuccessful()) {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Đã gửi đánh giá " + stars + " sao cho " + username,
-                            Toast.LENGTH_SHORT).show();
-                    // Refresh reviews
-                    loadReviewsFromBackend();
-                } else {
-                    String errorMsg = "Không thể gửi đánh giá";
-                    try {
-                        if (response.errorBody() != null) {
-                            String errorJson = response.errorBody().string();
-                            org.json.JSONObject json = new org.json.JSONObject(errorJson);
-                            if (json.has("message")) {
-                                errorMsg = json.getString("message");
-                            }
-                        }
-                    } catch (Exception ignored) {}
-                    Toast.makeText(UserProfileActivity.this, errorMsg, Toast.LENGTH_SHORT).show();
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-            }
-        });
+        FirebaseManager.getFirestore()
+            .collection("userReviews").add(review)
+            .addOnSuccessListener(ref -> runOnUiThread(() -> {
+                Toast.makeText(this, "Đã gửi đánh giá " + stars + " sao!", Toast.LENGTH_SHORT).show();
+                loadReviewsFromFirestore(viewedUserUid);
+            }))
+            .addOnFailureListener(e -> runOnUiThread(() ->
+                Toast.makeText(this, "Không thể gửi đánh giá: " + e.getMessage(), Toast.LENGTH_SHORT).show()));
     }
 
     private void loadReviewsFromBackend() {
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId <= 0) {
-            android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-            targetUserId = prefs.getLong("user_id", -1);
-        }
-        if (targetUserId <= 0) {
-            // Fallback: show empty
+        loadReviewsFromFirestore(viewedUserUid != null ? viewedUserUid : FirebaseManager.getCurrentUserId());
+    }
+
+    private void loadReviewsFromFirestore(String targetUid) {
+        if (targetUid == null) {
             rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
             return;
         }
-
-        reviewApiService.getReviews(targetUserId).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<List<Map<String, Object>>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    List<Map<String, Object>> reviewMaps = response.body().getResult();
-                    List<UserReview> reviews = new ArrayList<>();
-                    for (Map<String, Object> map : reviewMaps) {
-                        String reviewerName = map.get("reviewerName") != null ? map.get("reviewerName").toString() : "Ẩn danh";
-                        String activityName = map.get("activityName") != null ? map.get("activityName").toString() : "";
-                        String reputationLabel = map.get("reputationLabel") != null ? map.get("reputationLabel").toString() : "";
-                        String reviewComment = map.get("comment") != null ? map.get("comment").toString() : "";
-                        reviews.add(new UserReview(reviewerName, activityName, reputationLabel, reviewComment));
-                    }
-                    rvUserReviews.setAdapter(new UserReviewAdapter(reviews));
-                } else {
-                    rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
+        FirebaseManager.getFirestore()
+            .collection("userReviews")
+            .whereEqualTo("reviewedUid", targetUid)
+            .get()
+            .addOnSuccessListener(snaps -> {
+                List<UserReview> reviews = new ArrayList<>();
+                for (com.google.firebase.firestore.QueryDocumentSnapshot doc : snaps) {
+                    String reviewerName    = doc.getString("actorName")       != null ? doc.getString("actorName")       : "Ẩn danh";
+                    String activityName    = doc.getString("activityName")    != null ? doc.getString("activityName")    : "";
+                    String reputationLabel = doc.getString("reputationLabel") != null ? doc.getString("reputationLabel") : "";
+                    String reviewComment   = doc.getString("comment")         != null ? doc.getString("comment")         : "";
+                    reviews.add(new UserReview(reviewerName, activityName, reputationLabel, reviewComment));
                 }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
-            }
-        });
+                runOnUiThread(() -> rvUserReviews.setAdapter(new UserReviewAdapter(reviews)));
+            })
+            .addOnFailureListener(e -> runOnUiThread(() ->
+                rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()))));
     }
 
     private void showFriendResponseDialog() {
@@ -1983,19 +1510,18 @@ public class UserProfileActivity extends AppCompatActivity {
                 "Chấp nhận lời mời kết bạn", getResources().getColor(R.color.text_primary, null));
         rowAccept.setOnClickListener(v -> {
             sheet.dismiss();
-            friendApiService.acceptFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                    if (response.isSuccessful()) {
-                        Toast.makeText(UserProfileActivity.this, "Đã chấp nhận kết bạn!", Toast.LENGTH_SHORT).show();
-                        setupFriendButton("FRIEND");
-                    }
-                }
-                @Override
-                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                    Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                }
-            });
+            String myUid = FirebaseManager.getCurrentUserId();
+            if (myUid != null && viewedUserUid != null) {
+                friendService.acceptFriendRequest(viewedUserUid, myUid,
+                    new FirebaseFriendService.ActionCallback() {
+                        @Override public void onSuccess(String msg) {
+                            runOnUiThread(() -> { Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show(); setupFriendButton("FRIEND"); });
+                        }
+                        @Override public void onError(String err) {
+                            runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                        }
+                    });
+            }
         });
         root.addView(rowAccept);
 
@@ -2004,19 +1530,18 @@ public class UserProfileActivity extends AppCompatActivity {
                 "Từ chối lời mời kết bạn", getResources().getColor(R.color.danger_red, null));
         rowDecline.setOnClickListener(v -> {
             sheet.dismiss();
-            friendApiService.declineFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                    if (response.isSuccessful()) {
-                        Toast.makeText(UserProfileActivity.this, "Đã từ chối lời mời", Toast.LENGTH_SHORT).show();
-                        setupFriendButton("NONE");
-                    }
-                }
-                @Override
-                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                    Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                }
-            });
+            String myUid = FirebaseManager.getCurrentUserId();
+            if (myUid != null && viewedUserUid != null) {
+                friendService.declineFriendRequest(viewedUserUid, myUid,
+                    new FirebaseFriendService.ActionCallback() {
+                        @Override public void onSuccess(String msg) {
+                            runOnUiThread(() -> { Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show(); setupFriendButton("NONE"); });
+                        }
+                        @Override public void onError(String err) {
+                            runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, err, Toast.LENGTH_SHORT).show());
+                        }
+                    });
+            }
         });
         root.addView(rowDecline);
 
@@ -2025,29 +1550,25 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void showBlockUserConfirmDialog() {
+        String userName = tvUserProfileName.getText().toString();
         new AlertDialog.Builder(this)
                 .setTitle("Chặn người dùng")
-                .setMessage("Bạn có chắc muốn chặn " + username + "? Người này sẽ không thể nhắn tin hoặc xem bài viết của bạn.")
+                .setMessage("Bạn có chắc muốn chặn " + userName + "? Người này sẽ không thể nhắn tin hoặc xem bài viết của bạn.")
                 .setPositiveButton("Chặn", (d, w) -> {
-                    if (viewedUserId <= 0) {
+                    String myUid = FirebaseManager.getCurrentUserId();
+                    if (myUid == null || viewedUserUid == null) {
                         Toast.makeText(this, "Không thể chặn người dùng này", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    friendApiService.blockUser(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                            if (response.isSuccessful()) {
-                                Toast.makeText(UserProfileActivity.this, "Đã chặn " + username, Toast.LENGTH_SHORT).show();
-                                setupFriendButton("BLOCKED");
-                            } else {
-                                Toast.makeText(UserProfileActivity.this, "Không thể chặn người dùng", Toast.LENGTH_SHORT).show();
+                    friendService.blockUser(myUid, viewedUserUid,
+                        new FirebaseFriendService.ActionCallback() {
+                            @Override public void onSuccess(String msg) {
+                                runOnUiThread(() -> { Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show(); setupFriendButton("BLOCKED"); });
                             }
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                            @Override public void onError(String err) {
+                                runOnUiThread(() -> Toast.makeText(UserProfileActivity.this, "Không thể chặn người dùng", Toast.LENGTH_SHORT).show());
+                            }
+                        });
                 })
                 .setNegativeButton("Huỷ", null)
                 .show();
@@ -2064,7 +1585,7 @@ public class UserProfileActivity extends AppCompatActivity {
 
         // Header
         TextView header = new TextView(this);
-        header.setText("🚩 Báo cáo " + username);
+        header.setText("🚩 Báo cáo " + tvUserProfileName.getText().toString());
         header.setTextSize(20);
         header.setTextColor(getResources().getColor(R.color.danger_red, null));
         header.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -2110,7 +1631,6 @@ public class UserProfileActivity extends AppCompatActivity {
             tvReason.setLayoutParams(reasonParams);
 
             tvReason.setOnClickListener(v -> {
-                // Deselect previous
                 if (selectedIndex[0] >= 0) {
                     reasonViews[selectedIndex[0]].setTextColor(getResources().getColor(R.color.text_primary, null));
                     reasonViews[selectedIndex[0]].setTypeface(null, android.graphics.Typeface.NORMAL);
@@ -2164,7 +1684,7 @@ public class UserProfileActivity extends AppCompatActivity {
                 return;
             }
             sheet.dismiss();
-            submitReportToBackend("USER", viewedUserId, reasons[selectedIndex[0]],
+            submitReportToFirestore(viewedUserUid, reasons[selectedIndex[0]],
                     etDescription.getText().toString().trim());
         });
         root.addView(btnSubmit);
@@ -2173,36 +1693,20 @@ public class UserProfileActivity extends AppCompatActivity {
         sheet.show();
     }
 
-    private void submitReportToBackend(String targetType, long targetId,
-                                        String reason, String description) {
-        RetrofitClient.loadToken(this);
-        com.example.weconnect.api.ReportApiService reportApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.ReportApiService.class);
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("targetType", targetType);
-        body.put("targetId", targetId);
-        body.put("reason", reason);
-        body.put("description", description);
-
-        reportApi.createReport(body).enqueue(new Callback<ApiResponse<Void>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                if (response.isSuccessful()) {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Đã gửi báo cáo. Cảm ơn bạn!", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Không thể gửi báo cáo. Thử lại sau.", Toast.LENGTH_SHORT).show();
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this,
-                        "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
-            }
-        });
+    private void submitReportToFirestore(String targetUid, String reason, String description) {
+        String myUid = FirebaseManager.getCurrentUserId();
+        Map<String, Object> report = new HashMap<>();
+        report.put("reporterUid", myUid);
+        report.put("targetUid",   targetUid);
+        report.put("reason",      reason);
+        report.put("description", description);
+        report.put("targetType",  "USER");
+        report.put("createdAt",   com.google.firebase.firestore.FieldValue.serverTimestamp());
+        FirebaseManager.getFirestore().collection("reports").add(report)
+            .addOnSuccessListener(ref -> runOnUiThread(() ->
+                Toast.makeText(this, "Đã gửi báo cáo. Cảm ơn bạn!", Toast.LENGTH_SHORT).show()))
+            .addOnFailureListener(e -> runOnUiThread(() ->
+                Toast.makeText(this, "Không thể gửi báo cáo. Thử lại sau.", Toast.LENGTH_SHORT).show()));
     }
 
     private void loadSavedAvatar() {
@@ -2343,74 +1847,45 @@ public class UserProfileActivity extends AppCompatActivity {
         if (imageUri != null && imageUri.startsWith("content://")) {
             try {
                 android.net.Uri uri = android.net.Uri.parse(imageUri);
-                java.io.InputStream inputStream = getContentResolver().openInputStream(uri);
-                if (inputStream != null) {
-                    byte[] bytes = readAllBytesProfile(inputStream);
-                    inputStream.close();
-                    String mimeType = getContentResolver().getType(uri);
-                    if (mimeType == null) mimeType = "image/jpeg";
-                    String ext = mimeType.contains("png") ? ".png" : mimeType.contains("webp") ? ".webp" : ".jpg";
-                    String fileName = "post_image_" + System.currentTimeMillis() + ext;
-                    okhttp3.RequestBody requestBody = okhttp3.RequestBody.create(
-                            okhttp3.MediaType.parse(mimeType), bytes);
-                    okhttp3.MultipartBody.Part filePart =
-                            okhttp3.MultipartBody.Part.createFormData("file", fileName, requestBody);
+                String mimeType = getContentResolver().getType(uri);
+                if (mimeType == null) mimeType = "image/jpeg";
+                String ext = mimeType.contains("png") ? ".png" : mimeType.contains("webp") ? ".webp" : ".jpg";
+                String fileName = "post_images/" + System.currentTimeMillis() + ext;
 
-                    postApiService.uploadImage(filePart).enqueue(new Callback<ApiResponse<String>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> response) {
-                            String serverUrl = null;
-                            if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                                serverUrl = response.body().getResult();
-                            }
-                            sendUpdatePostProfile(postId, data, serverUrl);
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
-                            sendUpdatePostProfile(postId, data, null);
-                        }
-                    });
-                    return;
-                }
+                com.google.firebase.storage.FirebaseStorage storage = com.google.firebase.storage.FirebaseStorage.getInstance();
+                com.google.firebase.storage.StorageReference ref = storage.getReference().child(fileName);
+                ref.putFile(uri).continueWithTask(task -> {
+                    if (!task.isSuccessful() && task.getException() != null) throw task.getException();
+                    return ref.getDownloadUrl();
+                }).addOnCompleteListener(task -> {
+                    String downloadUrl = task.isSuccessful() && task.getResult() != null ? task.getResult().toString() : null;
+                    sendUpdatePostFirestore(postId, data, downloadUrl);
+                });
+                return;
             } catch (Exception e) {
                 android.util.Log.e("UPLOAD_IMAGE", "Error: " + e.getMessage());
             }
         }
-        sendUpdatePostProfile(postId, data, imageUri);
+        sendUpdatePostFirestore(postId, data, imageUri);
     }
 
-    private void sendUpdatePostProfile(long postId, Intent data, String imageUrl) {
-        java.util.Map<String, Object> body = new java.util.HashMap<>();
-        body.put("content", data.getStringExtra("post_content"));
-        body.put("interestTag", data.getStringExtra("post_tag"));
-        body.put("location", data.getStringExtra("post_location"));
-        body.put("maxMembers", data.getIntExtra("post_max_members", 10));
-        if (imageUrl != null) body.put("imageUrl", imageUrl);
+    private void sendUpdatePostFirestore(long postId, Intent data, String imageUrl) {
+        String postDocId = String.valueOf(postId);
+        java.util.Map<String, Object> update = new java.util.HashMap<>();
+        update.put("content",    data.getStringExtra("post_content"));
+        update.put("interestTag",data.getStringExtra("post_tag"));
+        update.put("location",   data.getStringExtra("post_location"));
+        update.put("maxMembers", data.getIntExtra("post_max_members", 10));
+        if (imageUrl != null) update.put("imageUrl", imageUrl);
+        update.put("updatedAt",  com.google.firebase.firestore.FieldValue.serverTimestamp());
 
-        long endTimeMillis = data.getLongExtra("post_end_time", System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
-        java.text.SimpleDateFormat isoFormat = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
-        body.put("startTime", isoFormat.format(new java.util.Date()));
-        body.put("endTime", isoFormat.format(new java.util.Date(endTimeMillis)));
-
-        RetrofitClient.loadToken(this);
-        com.example.weconnect.api.PostApiService postApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.PostApiService.class);
-        postApi.updatePost(postId, body).enqueue(new Callback<ApiResponse<com.example.weconnect.models.PostResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<com.example.weconnect.models.PostResponse>> call,
-                                   Response<ApiResponse<com.example.weconnect.models.PostResponse>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    Toast.makeText(UserProfileActivity.this, "Đã cập nhật bài viết!", Toast.LENGTH_SHORT).show();
-                    bindActivePosts();
-                } else {
-                    Toast.makeText(UserProfileActivity.this, "Không thể cập nhật bài viết", Toast.LENGTH_SHORT).show();
-                }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<com.example.weconnect.models.PostResponse>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
-            }
-        });
+        FirebaseManager.getFirestore().collection("posts").document(postDocId)
+            .update(update)
+            .addOnSuccessListener(v -> runOnUiThread(() -> {
+                Toast.makeText(this, "Đã cập nhật bài viết!", Toast.LENGTH_SHORT).show();
+                bindActivePosts();
+            }))
+            .addOnFailureListener(e -> runOnUiThread(() ->
+                Toast.makeText(this, "Không thể cập nhật bài viết", Toast.LENGTH_SHORT).show()));
     }
 }

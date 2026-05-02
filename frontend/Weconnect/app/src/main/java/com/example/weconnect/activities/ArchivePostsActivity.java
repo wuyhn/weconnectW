@@ -11,99 +11,84 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
 import com.example.weconnect.adapters.PostAdapter;
-import com.example.weconnect.api.PostApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.data.FakePostRepository;
-import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestorePostRepository;
 import com.example.weconnect.models.Post;
-import com.example.weconnect.models.PostResponse;
+import com.google.firebase.Timestamp;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+import java.util.Map;
 
 public class ArchivePostsActivity extends AppCompatActivity {
-    private ImageView ivBackArchive;
-    private TextView tvArchiveTitle;
+
     private TextView tvArchiveEmpty;
     private RecyclerView rvArchivedPosts;
-    private PostApiService postApiService;
+    private FirestorePostRepository postRepo;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_archive_posts);
 
-        postApiService = RetrofitClient.getClient().create(PostApiService.class);
-        initViews();
-        setupClickListeners();
-        bindArchivePosts();
+        postRepo = new FirestorePostRepository();
+
+        ImageView ivBack   = findViewById(R.id.ivBackArchive);
+        TextView tvTitle   = findViewById(R.id.tvArchiveTitle);
+        tvArchiveEmpty     = findViewById(R.id.tvArchiveEmpty);
+        rvArchivedPosts    = findViewById(R.id.rvArchivedPosts);
+
+        tvTitle.setText("Kho lưu trữ");
+        ivBack.setOnClickListener(v -> finish());
+
+        loadArchivedPosts();
     }
 
-    private void initViews() {
-        ivBackArchive = findViewById(R.id.ivBackArchive);
-        tvArchiveTitle = findViewById(R.id.tvArchiveTitle);
-        tvArchiveEmpty = findViewById(R.id.tvArchiveEmpty);
-        rvArchivedPosts = findViewById(R.id.rvArchivedPosts);
-    }
+    private void loadArchivedPosts() {
+        // Lấy uid từ intent, hoặc dùng uid hiện tại
+        String uid = getIntent().getStringExtra("user_uid");
+        if (uid == null) uid = FirebaseManager.getCurrentUserId();
+        if (uid == null) { showEmpty(); return; }
 
-    private void setupClickListeners() {
-        ivBackArchive.setOnClickListener(v -> finish());
-    }
-
-    private void bindArchivePosts() {
-        String username = getIntent().getStringExtra("username");
-        if (username == null || username.trim().isEmpty()) {
-            username = FakePostRepository.getInstance().getCurrentUsername();
-        }
-        tvArchiveTitle.setText("Kho lưu trữ");
-
-        long userId = getIntent().getLongExtra("user_id", -1);
-        if (userId <= 0) {
-            // Fallback: try shared prefs
-            android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-            userId = prefs.getLong("user_id", -1);
-        }
-
-        if (userId <= 0) {
-            // No valid user ID, fallback to fake data
-            showArchivedPosts(FakePostRepository.getInstance().getArchivedPostsForUser(username));
-            return;
-        }
-
-        final String finalUsername = username;
-        postApiService.getUserArchivedPosts(userId).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
-                                   Response<ApiResponse<List<PostResponse>>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    List<PostResponse> responses = response.body().getResult();
-                    List<Post> archivedPosts = new ArrayList<>();
-                    if (responses != null) {
-                        for (PostResponse pr : responses) {
-                            archivedPosts.add(pr.toPost());
-                        }
-                    }
-                    showArchivedPosts(archivedPosts);
-                } else {
-                    showArchivedPosts(FakePostRepository.getInstance().getArchivedPostsForUser(finalUsername));
+        final String finalUid = uid;
+        postRepo.getUserArchivedPosts(finalUid, new FirestorePostRepository.PostsCallback() {
+            @Override public void onSuccess(List<Map<String, Object>> posts) {
+                List<Post> list = new ArrayList<>();
+                Timestamp now = Timestamp.now();
+                for (Map<String, Object> p : posts) {
+                    try {
+                        String id = (String) p.get("id");
+                        String name = (String) p.get("authorName");
+                        String content = (String) p.get("content");
+                        String tag = (String) p.get("interestTag");
+                        String location = (String) p.get("location");
+                        int max = p.get("maxMembers") instanceof Number ? ((Number)p.get("maxMembers")).intValue() : 10;
+                        int cnt = p.get("memberCount") instanceof Number ? ((Number)p.get("memberCount")).intValue() : 1;
+                        Timestamp endTs = (Timestamp) p.get("endTime");
+                        long endMs = endTs != null ? endTs.toDate().getTime() : 0;
+                        boolean archived = Boolean.TRUE.equals(p.get("archived"));
+                        list.add(new Post(id, name, "", content, tag, location,
+                                0, 0, cnt, 0, 0, max, false,
+                                System.currentTimeMillis(), endMs, archived));
+                    } catch (Exception ignored) {}
                 }
+                runOnUiThread(() -> showPosts(list));
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
-                showArchivedPosts(FakePostRepository.getInstance().getArchivedPostsForUser(finalUsername));
+            @Override public void onError(String err) {
+                runOnUiThread(() -> showEmpty());
             }
         });
     }
 
-    private void showArchivedPosts(List<Post> archivedPosts) {
+    private void showPosts(List<Post> posts) {
         rvArchivedPosts.setLayoutManager(new LinearLayoutManager(this));
-        rvArchivedPosts.setAdapter(new PostAdapter(this, archivedPosts));
-        tvArchiveEmpty.setVisibility(archivedPosts.isEmpty() ? View.VISIBLE : View.GONE);
-        rvArchivedPosts.setVisibility(archivedPosts.isEmpty() ? View.GONE : View.VISIBLE);
+        rvArchivedPosts.setAdapter(new PostAdapter(this, posts));
+        tvArchiveEmpty.setVisibility(posts.isEmpty() ? View.VISIBLE : View.GONE);
+        rvArchivedPosts.setVisibility(posts.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void showEmpty() {
+        tvArchiveEmpty.setVisibility(View.VISIBLE);
+        rvArchivedPosts.setVisibility(View.GONE);
     }
 }

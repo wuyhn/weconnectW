@@ -14,17 +14,15 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
+
 import com.example.weconnect.R;
-import com.example.weconnect.api.AuthApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.models.ApiResponse;
-import com.example.weconnect.models.AuthResponse;
-import com.example.weconnect.models.LoginRequest;
-import com.example.weconnect.models.User;
+import com.example.weconnect.api.FirebaseManager;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.firestore.FirebaseFirestore;
+
 import java.util.Calendar;
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+import java.util.HashMap;
+import java.util.Map;
 
 public class RegisterActivity extends AppCompatActivity {
 
@@ -32,8 +30,6 @@ public class RegisterActivity extends AppCompatActivity {
     private TextView tvErrorName, tvErrorBirthday, tvErrorEmail, tvErrorPassword, tvErrorGender, tvBackToLogin;
     private RadioGroup rgGender;
     private Button btnRegister;
-
-    private AuthApiService apiService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,12 +39,8 @@ public class RegisterActivity extends AppCompatActivity {
         initViews();
         setupSmartValidation();
 
-        // Dùng RetrofitClient chung
-        apiService = RetrofitClient.getClient().create(AuthApiService.class);
-
         btnRegister.setOnClickListener(v -> {
             checkFieldsOnSubmit();
-
             if (validateAllFields()) {
                 registerUser();
             } else {
@@ -59,8 +51,12 @@ public class RegisterActivity extends AppCompatActivity {
         tvBackToLogin.setOnClickListener(v -> finish());
     }
 
+    // =====================================================================
+    // Firebase Auth Register + Firestore user document
+    // =====================================================================
+
     private void registerUser() {
-        String email = etEmail.getText().toString().trim();
+        String email    = etEmail.getText().toString().trim();
         String password = etPassword.getText().toString().trim();
         String fullName = etFullName.getText().toString().trim();
         String birthday = etBirthday.getText().toString().trim();
@@ -69,63 +65,71 @@ public class RegisterActivity extends AppCompatActivity {
         RadioButton radioButton = findViewById(selectedId);
         String gender = radioButton.getText().toString();
 
-        User newUser = new User();
-        newUser.setEmail(email);
-        newUser.setPassword(password);
-        newUser.setFullName(fullName);
-        newUser.setBirthday(birthday);
-        newUser.setGender(gender);
+        btnRegister.setEnabled(false);
+        btnRegister.setText("Đang đăng ký...");
 
-        apiService.register(newUser).enqueue(new Callback<ApiResponse<Void>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    Toast.makeText(RegisterActivity.this, "Đăng ký thành công!", Toast.LENGTH_LONG).show();
-                    // Lưu tên user để dùng làm nickname trong app
-                    RetrofitClient.saveUserName(RegisterActivity.this, fullName);
-                    // Tự động đăng nhập để lấy JWT token
-                    autoLogin(email, password);
+        // Bước 1: Tạo Firebase Auth account
+        FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, password)
+            .addOnSuccessListener(authResult -> {
+                String uid = authResult.getUser().getUid();
+                // Bước 2: Tạo document users/{uid} trong Firestore
+                createFirestoreUserProfile(uid, email, fullName, birthday, gender);
+            })
+            .addOnFailureListener(e -> {
+                btnRegister.setEnabled(true);
+                btnRegister.setText("Đăng ký");
+
+                String msg = e.getMessage();
+                Log.e("REGISTER_ERROR", msg != null ? msg : "unknown");
+
+                if (msg != null && msg.contains("email address is already in use")) {
+                    showError(tvErrorEmail, "Email này đã được sử dụng");
+                } else if (msg != null && msg.contains("badly formatted")) {
+                    showError(tvErrorEmail, "Email không đúng định dạng");
+                } else if (msg != null && msg.contains("weak-password")) {
+                    showError(tvErrorPassword, "Mật khẩu quá yếu (tối thiểu 8 ký tự)");
                 } else {
-                    String error = "Đăng ký thất bại";
-                    if (response.body() != null) {
-                        error = response.body().getMessage();
-                    }
-                    Toast.makeText(RegisterActivity.this, error, Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "Đăng ký thất bại: " + msg, Toast.LENGTH_LONG).show();
                 }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                Log.e("API_ERROR", t.getMessage());
-                Toast.makeText(RegisterActivity.this, "Lỗi kết nối Server!", Toast.LENGTH_SHORT).show();
-            }
-        });
+            });
     }
 
-    // Tự động đăng nhập sau khi đăng ký để lấy JWT token
-    private void autoLogin(String email, String password) {
-        LoginRequest loginRequest = new LoginRequest(email, password);
-        apiService.login(loginRequest).enqueue(new Callback<ApiResponse<AuthResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<AuthResponse>> call,
-                                   Response<ApiResponse<AuthResponse>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    AuthResponse authResult = response.body().getResult();
-                    // Lưu JWT token và thông tin user
-                    RetrofitClient.saveToken(RegisterActivity.this, authResult.getToken());
-                    RetrofitClient.saveUserId(RegisterActivity.this, authResult.getId());
-                    RetrofitClient.saveUserName(RegisterActivity.this, authResult.getFullName());
-                }
-                // Chuyển sang Onboarding dù login thành công hay không
-                goToOnboarding();
-            }
+    /** Tạo document users/{uid} trong Firestore với đầy đủ thông tin */
+    private void createFirestoreUserProfile(String uid, String email, String fullName,
+                                             String birthday, String gender) {
+        Map<String, Object> userDoc = new HashMap<>();
+        userDoc.put("email", email);
+        userDoc.put("fullName", fullName);
+        userDoc.put("birthday", birthday);
+        userDoc.put("gender", gender);
+        userDoc.put("avatarUrl", "");
+        userDoc.put("bio", "");
+        userDoc.put("interestTags", "");
+        userDoc.put("averageRating", 0.0f);
+        userDoc.put("reputationScore", 0);
+        userDoc.put("isBlocked", false);
+        userDoc.put("role", 0); // 0 = user thường
+        userDoc.put("createdAt", com.google.firebase.firestore.FieldValue.serverTimestamp());
 
-            @Override
-            public void onFailure(Call<ApiResponse<AuthResponse>> call, Throwable t) {
-                // Nếu auto-login lỗi, vẫn chuyển sang Onboarding
+        FirebaseFirestore.getInstance()
+            .collection("users")
+            .document(uid)
+            .set(userDoc)
+            .addOnSuccessListener(aVoid -> {
+                // Lưu session
+                FirebaseManager.saveUserId(this, uid);
+                FirebaseManager.saveUserName(this, fullName);
+
+                Toast.makeText(this, "Đăng ký thành công!", Toast.LENGTH_SHORT).show();
                 goToOnboarding();
-            }
-        });
+            })
+            .addOnFailureListener(e -> {
+                // Auth đã tạo nhưng Firestore lỗi → vẫn cho vào Onboarding
+                Log.e("FIRESTORE_ERROR", "Không tạo được profile: " + e.getMessage());
+                FirebaseManager.saveUserId(this, uid);
+                FirebaseManager.saveUserName(this, fullName);
+                goToOnboarding();
+            });
     }
 
     private void goToOnboarding() {
@@ -134,8 +138,12 @@ public class RegisterActivity extends AppCompatActivity {
         startActivity(intent);
         finish();
     }
+
+    // =====================================================================
+    // Validation (giữ nguyên logic cũ)
+    // =====================================================================
+
     private void setupSmartValidation() {
-        // 1. Kiểm tra Tên
         etFullName.addTextChangedListener(new SimpleTextWatcher(s -> {
             if (s.length() == 0) {
                 showError(tvErrorName, "Họ tên không được để trống");
@@ -146,7 +154,6 @@ public class RegisterActivity extends AppCompatActivity {
             }
         }));
 
-        // 2. Kiểm tra Ngày sinh (Tự thêm / và check tuổi)
         etBirthday.addTextChangedListener(new TextWatcher() {
             private String current = "";
             @Override
@@ -175,7 +182,6 @@ public class RegisterActivity extends AppCompatActivity {
             @Override public void afterTextChanged(Editable s) {}
         });
 
-        // 3. Kiểm tra Email
         etEmail.addTextChangedListener(new SimpleTextWatcher(s -> {
             String email = s.toString().trim();
             if (email.isEmpty()) {
@@ -187,7 +193,6 @@ public class RegisterActivity extends AppCompatActivity {
             }
         }));
 
-        // 4. Kiểm tra Mật khẩu
         etPassword.addTextChangedListener(new SimpleTextWatcher(s -> {
             if (s.length() == 0) {
                 showError(tvErrorPassword, "Mật khẩu không được để trống");
@@ -198,7 +203,6 @@ public class RegisterActivity extends AppCompatActivity {
             }
         }));
 
-        // 5. Giới tính
         rgGender.setOnCheckedChangeListener((group, checkedId) -> tvErrorGender.setVisibility(View.GONE));
     }
 
@@ -216,7 +220,6 @@ public class RegisterActivity extends AppCompatActivity {
     }
 
     private boolean validateAllFields() {
-        // Đảm bảo giới tính đã chọn
         return tvErrorName.getVisibility() == View.GONE &&
                 tvErrorBirthday.getVisibility() == View.GONE &&
                 tvErrorEmail.getVisibility() == View.GONE &&
@@ -239,22 +242,23 @@ public class RegisterActivity extends AppCompatActivity {
     }
 
     private void initViews() {
-        etFullName = findViewById(R.id.etFullName);
-        etBirthday = findViewById(R.id.etBirthday);
-        etEmail = findViewById(R.id.etEmail);
-        etPassword = findViewById(R.id.etPassword);
-        tvErrorName = findViewById(R.id.tvErrorName);
+        etFullName  = findViewById(R.id.etFullName);
+        etBirthday  = findViewById(R.id.etBirthday);
+        etEmail     = findViewById(R.id.etEmail);
+        etPassword  = findViewById(R.id.etPassword);
+        tvErrorName     = findViewById(R.id.tvErrorName);
         tvErrorBirthday = findViewById(R.id.tvErrorBirthday);
-        tvErrorEmail = findViewById(R.id.tvErrorEmail);
+        tvErrorEmail    = findViewById(R.id.tvErrorEmail);
         tvErrorPassword = findViewById(R.id.tvErrorPassword);
-        tvErrorGender = findViewById(R.id.tvErrorGender);
-        rgGender = findViewById(R.id.rgGender);
+        tvErrorGender   = findViewById(R.id.tvErrorGender);
+        rgGender    = findViewById(R.id.rgGender);
         btnRegister = findViewById(R.id.btnRegister);
         tvBackToLogin = findViewById(R.id.tvBackToLogin);
     }
+
     interface TextChangedListener { void onTextChanged(CharSequence s); }
     class SimpleTextWatcher implements TextWatcher {
-        private TextChangedListener listener;
+        private final TextChangedListener listener;
         public SimpleTextWatcher(TextChangedListener l) { this.listener = l; }
         @Override public void onTextChanged(CharSequence s, int start, int before, int count) { listener.onTextChanged(s); }
         @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}

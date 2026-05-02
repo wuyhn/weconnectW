@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "740097941894",
+    "project_id": "weconnect-5a63c",
+    "storage_bucket": "weconnect-5a63c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:740097941894:android:cd789f21d5c12a7bd60c07",
+        "android_client_info": {
+          "package_name": "com.example.weconnect"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "740097941894-1n259vb301n30bs027igrrbn1vv7basl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.weconnect",
+            "certificate_hash": "274f317210fd30478ab9819870de8b4025d43304"
+          }
+        },
+        {
+          "client_id": "740097941894-gvel64cv456tl90tanco3llk0pgpa007.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD27nR4SQBMBIXXY3hGdSoZL75qBsDndkg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "740097941894-gvel64cv456tl90tanco3llk0pgpa007.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

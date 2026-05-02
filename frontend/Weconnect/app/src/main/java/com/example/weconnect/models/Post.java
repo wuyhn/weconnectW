@@ -19,7 +19,10 @@ public class Post implements java.io.Serializable {
     private long endTimeMillis;
     private boolean archived;
     private long authorId;
+    private String authorUid;
     private int expirationHours;
+    
+    public Post() {}
 
     public Post(String id, String username, String timeAgo, String content, String interestTag, String location,
                 int avatarResId, int imageResId, int memberCount, int likesCount,
@@ -52,12 +55,16 @@ public class Post implements java.io.Serializable {
     }
 
     public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
     public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
     public String getTimeAgo() { return timeAgo; }
     public String getContent() { return content; }
     public String getInterestTag() { return interestTag; }
     public String getLocation() { return location; }
     public int getAvatarResId() { return avatarResId; }
+    public String getAuthorUid() { return authorUid; }
+    public void setAuthorUid(String authorUid) { this.authorUid = authorUid; }
     public int getImageResId() { return imageResId; }
     public int getMemberCount() { return memberCount; }
     public int getLikesCount() { return likesCount; }

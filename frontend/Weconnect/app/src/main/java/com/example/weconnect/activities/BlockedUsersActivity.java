@@ -10,28 +10,26 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.weconnect.R;
-import com.example.weconnect.api.FriendApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestoreUserRepository;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.List;
 import java.util.Map;
 
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
-
 public class BlockedUsersActivity extends AppCompatActivity {
 
     private LinearLayout contentContainer;
-    private FriendApiService friendApi;
+    private FirestoreUserRepository userRepo;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        androidx.constraintlayout.widget.ConstraintLayout root = new androidx.constraintlayout.widget.ConstraintLayout(this);
+        userRepo = new FirestoreUserRepository();
+
+        androidx.constraintlayout.widget.ConstraintLayout root =
+            new androidx.constraintlayout.widget.ConstraintLayout(this);
         root.setBackgroundColor(getResources().getColor(R.color.soft_beige, null));
         root.setFitsSystemWindows(true);
         setContentView(root);
@@ -48,36 +46,30 @@ public class BlockedUsersActivity extends AppCompatActivity {
         ivBack.setPadding(24, 24, 24, 24);
         ivBack.setOnClickListener(v -> finish());
         ivBack.setColorFilter(getResources().getColor(R.color.primary_pink, null));
-        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(96, 96);
-        ivBack.setLayoutParams(backLp);
+        ivBack.setLayoutParams(new LinearLayout.LayoutParams(96, 96));
         header.addView(ivBack);
 
-        TextView title = new TextView(this);
-        title.setText("Danh sách chặn");
-        title.setTextSize(20);
-        title.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setPadding(24, 0, 0, 0);
-        header.addView(title);
-
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("Danh sách chặn");
+        tvTitle.setTextSize(20);
+        tvTitle.setTextColor(getResources().getColor(R.color.primary_pink, null));
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTitle.setPadding(24, 0, 0, 0);
+        header.addView(tvTitle);
         root.addView(header);
 
         // Content
         contentContainer = new LinearLayout(this);
         contentContainer.setOrientation(LinearLayout.VERTICAL);
         contentContainer.setPadding(48, 0, 48, 48);
-        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams contentLp =
-                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
-                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
-        contentLp.topToBottom = header.getId();
-        contentLp.topMargin = 16;
-        contentContainer.setLayoutParams(contentLp);
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams lp =
+            new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
+        lp.topToBottom = header.getId();
+        lp.topMargin = 16;
+        contentContainer.setLayoutParams(lp);
         root.addView(contentContainer);
-
-        // Init API
-        RetrofitClient.loadToken(this);
-        friendApi = RetrofitClient.getClient().create(FriendApiService.class);
 
         loadBlockedUsers();
     }
@@ -85,7 +77,6 @@ public class BlockedUsersActivity extends AppCompatActivity {
     private void loadBlockedUsers() {
         contentContainer.removeAllViews();
 
-        // Loading state
         TextView loading = new TextView(this);
         loading.setText("Đang tải...");
         loading.setTextSize(15);
@@ -94,67 +85,54 @@ public class BlockedUsersActivity extends AppCompatActivity {
         loading.setPadding(0, 120, 0, 0);
         contentContainer.addView(loading);
 
-        friendApi.getBlockedUsers().enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<List<Map<String, Object>>>> response) {
-                contentContainer.removeAllViews();
+        String uid = FirebaseManager.getCurrentUserId();
+        if (uid == null) { showEmptyState(); return; }
 
-                if (!response.isSuccessful() || response.body() == null
-                        || response.body().getResult() == null
-                        || response.body().getResult().isEmpty()) {
-                    showEmptyState();
-                    return;
-                }
-
-                List<Map<String, Object>> blockedList = response.body().getResult();
-                for (Map<String, Object> blocked : blockedList) {
-                    String name = blocked.get("fullName") != null
-                            ? blocked.get("fullName").toString() : "Người dùng";
-                    long userId = -1;
-                    try {
-                        if (blocked.get("id") != null)
-                            userId = ((Number) blocked.get("id")).longValue();
-                    } catch (Exception ignored) {}
-
-                    addBlockedUserRow(name, userId);
-                }
+        userRepo.getBlockedUsers(uid, new FirestoreUserRepository.UsersCallback() {
+            @Override public void onSuccess(List<Map<String, Object>> blocked) {
+                runOnUiThread(() -> {
+                    contentContainer.removeAllViews();
+                    if (blocked.isEmpty()) { showEmptyState(); return; }
+                    for (Map<String, Object> u : blocked) {
+                        String name  = u.get("fullName") != null ? u.get("fullName").toString() : "Người dùng";
+                        String bUid  = u.get("id") != null ? u.get("id").toString() : "";
+                        addBlockedUserRow(name, bUid);
+                    }
+                });
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                contentContainer.removeAllViews();
-                TextView error = new TextView(BlockedUsersActivity.this);
-                error.setText("Lỗi kết nối. Vui lòng thử lại.");
-                error.setTextSize(15);
-                error.setTextColor(getResources().getColor(R.color.text_secondary, null));
-                error.setGravity(Gravity.CENTER);
-                error.setPadding(0, 120, 0, 0);
-                contentContainer.addView(error);
+            @Override public void onError(String err) {
+                runOnUiThread(() -> {
+                    contentContainer.removeAllViews();
+                    TextView tv = new TextView(BlockedUsersActivity.this);
+                    tv.setText("Lỗi kết nối. Vui lòng thử lại.");
+                    tv.setGravity(Gravity.CENTER);
+                    tv.setPadding(0, 120, 0, 0);
+                    contentContainer.addView(tv);
+                });
             }
         });
     }
 
     private void showEmptyState() {
-        TextView empty = new TextView(this);
-        empty.setText("Bạn chưa chặn ai");
-        empty.setTextSize(15);
-        empty.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        empty.setGravity(Gravity.CENTER);
-        empty.setPadding(0, 120, 0, 0);
-        contentContainer.addView(empty);
+        TextView tv = new TextView(this);
+        tv.setText("Bạn chưa chặn ai");
+        tv.setTextSize(15);
+        tv.setTextColor(getResources().getColor(R.color.text_secondary, null));
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(0, 120, 0, 0);
+        contentContainer.addView(tv);
     }
 
-    private void addBlockedUserRow(String name, long userId) {
-        com.google.android.material.card.MaterialCardView card = new com.google.android.material.card.MaterialCardView(this);
+    private void addBlockedUserRow(String name, String blockedUid) {
+        com.google.android.material.card.MaterialCardView card =
+            new com.google.android.material.card.MaterialCardView(this);
         LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         cardLp.bottomMargin = 24;
         card.setLayoutParams(cardLp);
         card.setCardBackgroundColor(getResources().getColor(R.color.card_surface, null));
         card.setRadius(48f);
         card.setCardElevation(6f);
-        card.setStrokeWidth(0);
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -163,8 +141,7 @@ public class BlockedUsersActivity extends AppCompatActivity {
 
         ImageView avatar = new ImageView(this);
         avatar.setImageResource(R.drawable.ic_user_placeholder);
-        LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(96, 96);
-        avatar.setLayoutParams(avatarLp);
+        avatar.setLayoutParams(new LinearLayout.LayoutParams(96, 96));
         avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         row.addView(avatar);
 
@@ -185,46 +162,36 @@ public class BlockedUsersActivity extends AppCompatActivity {
         btnUnblock.setCornerRadius(60);
         btnUnblock.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFFF4D6D));
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, 84);
+            LinearLayout.LayoutParams.WRAP_CONTENT, 84);
         btnUnblock.setLayoutParams(btnLp);
-        btnUnblock.setInsetTop(0);
-        btnUnblock.setInsetBottom(0);
-        btnUnblock.setMinWidth(0);
-        btnUnblock.setMinimumWidth(0);
+        btnUnblock.setInsetTop(0); btnUnblock.setInsetBottom(0);
+        btnUnblock.setMinWidth(0); btnUnblock.setMinimumWidth(0);
         btnUnblock.setPadding(40, 0, 40, 0);
         btnUnblock.setOnClickListener(v -> {
-            if (userId <= 0) {
+            String myUid = FirebaseManager.getCurrentUserId();
+            if (myUid == null || blockedUid.isEmpty()) {
                 Toast.makeText(this, "Không thể bỏ chặn", Toast.LENGTH_SHORT).show();
                 return;
             }
             btnUnblock.setEnabled(false);
             btnUnblock.setText("...");
-            friendApi.unblockUser(userId).enqueue(new Callback<ApiResponse<Void>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                    if (response.isSuccessful()) {
-                        Toast.makeText(BlockedUsersActivity.this,
-                                "Đã bỏ chặn " + name, Toast.LENGTH_SHORT).show();
-                        loadBlockedUsers(); // Refresh list
-                    } else {
-                        Toast.makeText(BlockedUsersActivity.this,
-                                "Không thể bỏ chặn", Toast.LENGTH_SHORT).show();
+            userRepo.unblockUser(myUid, blockedUid, new FirestoreUserRepository.ActionCallback() {
+                @Override public void onSuccess(String msg) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(BlockedUsersActivity.this, "Đã bỏ chặn " + name, Toast.LENGTH_SHORT).show();
+                        loadBlockedUsers();
+                    });
+                }
+                @Override public void onError(String err) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(BlockedUsersActivity.this, "Không thể bỏ chặn", Toast.LENGTH_SHORT).show();
                         btnUnblock.setEnabled(true);
                         btnUnblock.setText("Bỏ chặn");
-                    }
-                }
-
-                @Override
-                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                    Toast.makeText(BlockedUsersActivity.this,
-                            "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                    btnUnblock.setEnabled(true);
-                    btnUnblock.setText("Bỏ chặn");
+                    });
                 }
             });
         });
         row.addView(btnUnblock);
-
         card.addView(row);
         contentContainer.addView(card);
     }

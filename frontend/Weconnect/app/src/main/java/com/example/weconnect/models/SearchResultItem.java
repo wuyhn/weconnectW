@@ -99,4 +99,9 @@ public class SearchResultItem {
     private String avatarUrl;
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    // Firebase UID (String) — thay thế cho Long userId cũ
+    private String userUid;
+    public String getUserUid() { return userUid; }
+    public void setUserUid(String userUid) { this.userUid = userUid; }
 }

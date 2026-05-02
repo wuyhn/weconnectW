@@ -17,7 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import com.example.weconnect.R;
-import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.api.FirebaseManager;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.chip.Chip;
@@ -61,8 +61,8 @@ public class CreatePostActivity extends AppCompatActivity {
         ivClose = findViewById(R.id.ivClose);
         etPostContent = findViewById(R.id.etPostContent);
         tvUserName = findViewById(R.id.tvUserName);
-        // Hiển thị tên user thật
-        String savedName = RetrofitClient.getUserName(this);
+        // Hiển thị tên user thật từ Firebase
+        String savedName = FirebaseManager.getUserName(this);
         if (savedName != null && !savedName.isEmpty()) {
             tvUserName.setText(savedName);
         }
@@ -450,45 +450,37 @@ public class CreatePostActivity extends AppCompatActivity {
     }
 
     private void showTagDialog() {
-        // Lấy sở thích đã lưu từ SharedPreferences
         android.content.SharedPreferences prefs =
                 getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
         String savedInterests = prefs.getString("user_interests", "");
 
         if (savedInterests.isEmpty()) {
-            // SharedPreferences trống → thử load từ backend API
-            RetrofitClient.loadToken(this);
-            com.example.weconnect.api.UserApiService userApi =
-                    RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
-            userApi.getInterests().enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<java.util.List<String>>>() {
-                @Override
-                public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.List<String>>> call,
-                                       retrofit2.Response<com.example.weconnect.models.ApiResponse<java.util.List<String>>> response) {
-                    if (response.isSuccessful() && response.body() != null
-                            && response.body().getResult() != null
-                            && !response.body().getResult().isEmpty()) {
-                        java.util.List<String> interests = response.body().getResult();
-                        // Lưu vào SharedPreferences để lần sau không cần gọi API
+            // Fallback: tải từ Firestore
+            String uid = FirebaseManager.getCurrentUserId();
+            if (uid == null) {
+                Toast.makeText(this, "Bạn chưa đăng nhập", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            new com.example.weconnect.api.FirestoreUserRepository().getInterests(uid,
+                new com.example.weconnect.api.FirestoreUserRepository.InterestsCallback() {
+                    @Override public void onSuccess(java.util.List<String> interests) {
+                        if (interests.isEmpty()) {
+                            Toast.makeText(CreatePostActivity.this,
+                                    "Bạn chưa chọn sở thích! Vui lòng vào trang cá nhân cập nhật.",
+                                    Toast.LENGTH_LONG).show();
+                            return;
+                        }
                         prefs.edit().putString("user_interests", String.join(",", interests)).apply();
-                        // Hiển thị dialog
-                        showTagDialogWithInterests(interests.toArray(new String[0]));
-                    } else {
-                        Toast.makeText(CreatePostActivity.this,
-                                "Bạn chưa chọn sở thích! Vui lòng vào trang cá nhân để cập nhật.",
-                                Toast.LENGTH_LONG).show();
+                        runOnUiThread(() -> showTagDialogWithInterests(interests.toArray(new String[0])));
                     }
-                }
-
-                @Override
-                public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.List<String>>> call, Throwable t) {
-                    Toast.makeText(CreatePostActivity.this,
-                            "Không thể tải sở thích. Vui lòng kiểm tra kết nối mạng.",
-                            Toast.LENGTH_LONG).show();
-                }
-            });
+                    @Override public void onError(String err) {
+                        runOnUiThread(() ->
+                            Toast.makeText(CreatePostActivity.this,
+                                    "Không thể tải sở thích.", Toast.LENGTH_LONG).show()
+                        );
+                    }
+                });
         } else {
-            // Đã có sở thích trong SharedPreferences
             showTagDialogWithInterests(savedInterests.split(","));
         }
     }

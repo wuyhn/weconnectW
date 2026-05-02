@@ -13,23 +13,15 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.example.weconnect.R;
-import com.example.weconnect.api.AuthApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.models.ApiResponse;
-import com.example.weconnect.models.AuthResponse;
-import com.example.weconnect.models.LoginRequest;
-
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+import com.example.weconnect.api.FirebaseManager;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.firestore.FirebaseFirestore;
 
 public class LoginActivity extends AppCompatActivity {
 
     private EditText etEmail, etPassword;
     private TextView tvErrorEmail, tvErrorPassword, tvRegister;
     private Button btnLogin;
-
-    private AuthApiService apiService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,8 +31,11 @@ public class LoginActivity extends AppCompatActivity {
         initViews();
         setupSmartValidation();
 
-        // Dùng RetrofitClient chung
-        apiService = RetrofitClient.getClient().create(AuthApiService.class);
+        // Nếu đã đăng nhập rồi → vào thẳng MainActivity
+        if (FirebaseManager.isLoggedIn()) {
+            startMainActivity();
+            return;
+        }
 
         // Hiệu ứng nảy cho nút Đăng nhập
         btnLogin.setOnTouchListener((v, event) -> {
@@ -52,79 +47,104 @@ public class LoginActivity extends AppCompatActivity {
             return false;
         });
 
-        // Xử lý sự kiện bấm nút Đăng nhập
         btnLogin.setOnClickListener(v -> {
             checkFieldsOnSubmit();
-
             if (validateAllFields()) {
                 String email = etEmail.getText().toString().trim();
                 String password = etPassword.getText().toString().trim();
-
-                loginWithBackend(email, password);
+                loginWithFirebase(email, password);
             } else {
                 Toast.makeText(this, "Vui lòng hoàn thiện đúng thông tin", Toast.LENGTH_SHORT).show();
             }
         });
 
-        tvRegister.setOnClickListener(v -> {
-            Intent intent = new Intent(LoginActivity.this, RegisterActivity.class);
-            startActivity(intent);
-        });
+        tvRegister.setOnClickListener(v ->
+            startActivity(new Intent(LoginActivity.this, RegisterActivity.class))
+        );
 
         TextView tvForgotPassword = findViewById(R.id.tvForgotPassword);
-        tvForgotPassword.setOnClickListener(v -> {
-            startActivity(new Intent(LoginActivity.this, ForgotPasswordActivity.class));
-        });
+        tvForgotPassword.setOnClickListener(v ->
+            startActivity(new Intent(LoginActivity.this, ForgotPasswordActivity.class))
+        );
     }
 
-    // Gọi API login mới - nhận JWT token
-    private void loginWithBackend(String email, String password) {
-        LoginRequest loginRequest = new LoginRequest(email, password);
+    // =====================================================================
+    // Firebase Auth Login
+    // =====================================================================
 
-        apiService.login(loginRequest).enqueue(new Callback<ApiResponse<AuthResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<AuthResponse>> call,
-                                   Response<ApiResponse<AuthResponse>> response) {
-                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                    AuthResponse authResult = response.body().getResult();
+    private void loginWithFirebase(String email, String password) {
+        btnLogin.setEnabled(false);
+        btnLogin.setText("Đang đăng nhập...");
 
-                    // Lưu JWT token và thông tin user
-                    RetrofitClient.saveToken(LoginActivity.this, authResult.getToken());
-                    RetrofitClient.saveUserId(LoginActivity.this, authResult.getId());
-                    RetrofitClient.saveUserName(LoginActivity.this, authResult.getFullName());
+        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
+            .addOnSuccessListener(authResult -> {
+                String uid = authResult.getUser().getUid();
+                loadUserProfileAndProceed(uid);
+            })
+            .addOnFailureListener(e -> {
+                btnLogin.setEnabled(true);
+                btnLogin.setText("Đăng nhập");
 
-                    // Reset tất cả fake repos để tránh trộn dữ liệu giữa các tài khoản
-                    com.example.weconnect.data.FakePostRepository.resetInstance();
-                    com.example.weconnect.data.FakeSocialRepository.resetInstance();
-                    com.example.weconnect.data.FakeNotificationRepository.resetInstance();
-                    // Set username cho fake repos
-                    com.example.weconnect.data.FakePostRepository.getInstance()
-                            .setCurrentUsername(authResult.getFullName());
-                    com.example.weconnect.data.FakeSocialRepository.getInstance()
-                            .setCurrentUsername(authResult.getFullName());
-
-                    Toast.makeText(LoginActivity.this, "Đăng nhập thành công!", Toast.LENGTH_SHORT).show();
-                    Intent intent = new Intent(LoginActivity.this, MainActivity.class);
-                    startActivity(intent);
-                    finish();
+                String msg = e.getMessage();
+                if (msg != null && (msg.contains("password") || msg.contains("credential") || msg.contains("INVALID"))) {
+                    showError(tvErrorPassword, "Sai email hoặc mật khẩu");
+                } else if (msg != null && msg.contains("no user")) {
+                    showError(tvErrorEmail, "Tài khoản không tồn tại");
                 } else {
-                    // Lỗi từ backend
-                    String errorMsg = "Sai email hoặc mật khẩu";
-                    if (response.body() != null) {
-                        errorMsg = response.body().getMessage();
-                    }
-                    showError(tvErrorPassword, errorMsg);
+                    Toast.makeText(this, "Đăng nhập thất bại: " + msg, Toast.LENGTH_LONG).show();
                 }
-            }
-
-            @Override
-            public void onFailure(Call<ApiResponse<AuthResponse>> call, Throwable t) {
-                Toast.makeText(LoginActivity.this,
-                        "Không thể kết nối Server. Hãy kiểm tra Backend!",
-                        Toast.LENGTH_LONG).show();
-            }
-        });
+            });
     }
+
+    /** Sau khi login thành công → đọc users/{uid} để lấy fullName, kiểm tra isBlocked */
+    private void loadUserProfileAndProceed(String uid) {
+        FirebaseFirestore.getInstance()
+            .collection("users")
+            .document(uid)
+            .get()
+            .addOnSuccessListener(doc -> {
+                if (!doc.exists()) {
+                    // Profile chưa tạo → vẫn cho vào app
+                    FirebaseManager.saveUserId(this, uid);
+                    FirebaseManager.saveUserName(this, "");
+                    startMainActivity();
+                    return;
+                }
+
+                // Kiểm tra tài khoản bị khóa
+                Boolean isBlocked = doc.getBoolean("isBlocked");
+                if (Boolean.TRUE.equals(isBlocked)) {
+                    FirebaseAuth.getInstance().signOut();
+                    btnLogin.setEnabled(true);
+                    btnLogin.setText("Đăng nhập");
+                    showError(tvErrorPassword, "Tài khoản của bạn hiện đang bị khóa");
+                    return;
+                }
+
+                String fullName = doc.getString("fullName");
+                FirebaseManager.saveUserId(this, uid);
+                FirebaseManager.saveUserName(this, fullName != null ? fullName : "");
+
+                Toast.makeText(this, "Đăng nhập thành công!", Toast.LENGTH_SHORT).show();
+                startMainActivity();
+            })
+            .addOnFailureListener(e -> {
+                // Lỗi đọc Firestore, nhưng Auth đã oke → vẫn vào app
+                FirebaseManager.saveUserId(this, uid);
+                startMainActivity();
+            });
+    }
+
+    private void startMainActivity() {
+        Intent intent = new Intent(LoginActivity.this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
+    }
+
+    // =====================================================================
+    // Validation (giữ nguyên logic cũ)
+    // =====================================================================
 
     private void setupSmartValidation() {
         etEmail.addTextChangedListener(new SimpleTextWatcher(s -> {
@@ -167,17 +187,17 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void initViews() {
-        etEmail = findViewById(R.id.etEmail);
+        etEmail    = findViewById(R.id.etEmail);
         etPassword = findViewById(R.id.etPassword);
-        tvErrorEmail = findViewById(R.id.tvErrorEmail);
+        tvErrorEmail    = findViewById(R.id.tvErrorEmail);
         tvErrorPassword = findViewById(R.id.tvErrorPassword);
-        btnLogin = findViewById(R.id.btnLogin);
+        btnLogin   = findViewById(R.id.btnLogin);
         tvRegister = findViewById(R.id.tvRegister);
     }
 
     interface TextChangedListener { void onTextChanged(CharSequence s); }
     class SimpleTextWatcher implements TextWatcher {
-        private TextChangedListener listener;
+        private final TextChangedListener listener;
         public SimpleTextWatcher(TextChangedListener l) { this.listener = l; }
         @Override public void onTextChanged(CharSequence s, int start, int before, int count) { listener.onTextChanged(s); }
         @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}

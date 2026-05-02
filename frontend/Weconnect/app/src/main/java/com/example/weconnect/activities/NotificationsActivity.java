@@ -14,41 +14,35 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
 import com.example.weconnect.adapters.NotificationAdapter;
-import com.example.weconnect.api.NotificationApiService;
-import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.data.FakeNotificationRepository;
-import com.example.weconnect.data.FakePostRepository;
-import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.api.FirebaseManager;
+import com.example.weconnect.api.FirestoreNotificationRepository;
 import com.example.weconnect.models.NotificationItem;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+import java.util.Map;
 
 public class NotificationsActivity extends AppCompatActivity {
 
     private RecyclerView rvNotifications;
     private NotificationAdapter adapter;
     private TextView tvEmpty;
+    private FirestoreNotificationRepository notifRepo;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_notifications);
 
+        notifRepo = new FirestoreNotificationRepository();
+
         rvNotifications = findViewById(R.id.rvNotifications);
-        tvEmpty = findViewById(R.id.tvNoNotifications);
-        ImageView ivMarkAllRead = findViewById(R.id.ivMarkAllRead);
+        tvEmpty         = findViewById(R.id.tvNoNotifications);
+        ImageView ivMark = findViewById(R.id.ivMarkAllRead);
 
-        loadNotifications();
-
-        // Mark all as read
-        ivMarkAllRead.setOnClickListener(v -> markAllAsRead());
-
+        ivMark.setOnClickListener(v -> markAllAsRead());
         setupBottomNavigation();
+        loadNotifications();
     }
 
     @Override
@@ -58,142 +52,89 @@ public class NotificationsActivity extends AppCompatActivity {
     }
 
     private void loadNotifications() {
-        RetrofitClient.loadToken(this);
-        String token = RetrofitClient.getAuthToken();
+        String uid = FirebaseManager.getCurrentUserId();
+        if (uid == null) { showEmpty(); return; }
 
-        if (token == null) {
-            // Fallback to fake data
-            loadFakeNotifications();
-            return;
-        }
-
-        NotificationApiService apiService = RetrofitClient.getClient()
-                .create(NotificationApiService.class);
-
-        apiService.getNotifications().enqueue(new Callback<ApiResponse<List<NotificationItem>>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<List<NotificationItem>>> call,
-                                   Response<ApiResponse<List<NotificationItem>>> response) {
-                if (response.isSuccessful() && response.body() != null
-                        && response.body().getResult() != null) {
-                    List<NotificationItem> notifications = response.body().getResult();
-                    displayNotifications(notifications);
-                } else {
-                    loadFakeNotifications();
+        notifRepo.getNotifications(uid, new FirestoreNotificationRepository.NotificationsCallback() {
+            @Override public void onSuccess(List<Map<String, Object>> notifs) {
+                // Convert Map → NotificationItem
+                List<NotificationItem> items = new ArrayList<>();
+                for (Map<String, Object> n : notifs) {
+                    NotificationItem item = new NotificationItem();
+                    item.setId(n.containsKey("id") ? String.valueOf(n.get("id")) : "");
+                    item.setMessage(n.containsKey("message") ? (String) n.get("message") : "");
+                    item.setType(n.containsKey("type") ? (String) n.get("type") : "");
+                    item.setActorName(n.containsKey("actorName") ? (String) n.get("actorName") : "");
+                    item.setRead(Boolean.TRUE.equals(n.get("read")));
+                    com.google.firebase.Timestamp ts = (com.google.firebase.Timestamp) n.get("createdAt");
+                    if (ts != null) item.setCreatedAt(ts.toDate().toString());
+                    items.add(item);
                 }
+                runOnUiThread(() -> displayNotifications(items));
             }
-
-            @Override
-            public void onFailure(Call<ApiResponse<List<NotificationItem>>> call, Throwable t) {
-                loadFakeNotifications();
+            @Override public void onError(String err) {
+                runOnUiThread(() -> showEmpty());
             }
         });
     }
 
-    private void displayNotifications(List<NotificationItem> notifications) {
-        if (notifications.isEmpty()) {
-            tvEmpty.setVisibility(View.VISIBLE);
-            rvNotifications.setVisibility(View.GONE);
+    private void displayNotifications(List<NotificationItem> items) {
+        if (items.isEmpty()) {
+            showEmpty();
         } else {
             tvEmpty.setVisibility(View.GONE);
             rvNotifications.setVisibility(View.VISIBLE);
-
-            List<Object> groupedItems = NotificationAdapter.groupByDate(notifications);
-            adapter = new NotificationAdapter(this, groupedItems);
+            List<Object> grouped = NotificationAdapter.groupByDate(items);
+            adapter = new NotificationAdapter(this, grouped);
             rvNotifications.setLayoutManager(new LinearLayoutManager(this));
             rvNotifications.setAdapter(adapter);
         }
     }
 
-    private void loadFakeNotifications() {
-        List<FakeNotificationRepository.NotificationItem> fakeNotifs =
-                FakeNotificationRepository.getInstance().getNotifications();
-
-        // Convert fake notifications to real model
-        List<NotificationItem> converted = new ArrayList<>();
-        // Show empty if no fake data
-        if (fakeNotifs.isEmpty()) {
-            tvEmpty.setVisibility(View.VISIBLE);
-            rvNotifications.setVisibility(View.GONE);
-        } else {
-            tvEmpty.setVisibility(View.GONE);
-            rvNotifications.setVisibility(View.VISIBLE);
-
-            List<Object> groupedItems = com.example.weconnect.adapters.NotificationAdapter
-                    .groupByDateFake(fakeNotifs);
-            adapter = new NotificationAdapter(this, groupedItems);
-            rvNotifications.setLayoutManager(new LinearLayoutManager(this));
-            rvNotifications.setAdapter(adapter);
-        }
+    private void showEmpty() {
+        tvEmpty.setVisibility(View.VISIBLE);
+        rvNotifications.setVisibility(View.GONE);
     }
 
     private void markAllAsRead() {
-        RetrofitClient.loadToken(this);
-        String token = RetrofitClient.getAuthToken();
+        String uid = FirebaseManager.getCurrentUserId();
+        if (uid == null) return;
 
-        if (token != null) {
-            NotificationApiService apiService = RetrofitClient.getClient()
-                    .create(NotificationApiService.class);
-
-            apiService.markAllAsRead().enqueue(new Callback<ApiResponse<Void>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<Void>> call,
-                                       Response<ApiResponse<Void>> response) {
-                    if (adapter != null) {
-                        adapter.markAllRead();
-                    }
+        notifRepo.markAllAsRead(uid, new FirestoreNotificationRepository.ActionCallback() {
+            @Override public void onSuccess(String msg) {
+                runOnUiThread(() -> {
+                    if (adapter != null) adapter.markAllRead();
                     Toast.makeText(NotificationsActivity.this,
-                            "Đã đánh dấu tất cả là đã đọc", Toast.LENGTH_SHORT).show();
-                }
-
-                @Override
-                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                    Toast.makeText(NotificationsActivity.this,
-                            "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                }
-            });
-        } else {
-            // Fake mark all read
-            for (FakeNotificationRepository.NotificationItem item :
-                    FakeNotificationRepository.getInstance().getNotifications()) {
-                item.setRead(true);
+                        "Đã đánh dấu tất cả là đã đọc", Toast.LENGTH_SHORT).show();
+                });
             }
-            if (adapter != null) {
-                adapter.markAllRead();
+            @Override public void onError(String err) {
+                Toast.makeText(NotificationsActivity.this, "Lỗi: " + err, Toast.LENGTH_SHORT).show();
             }
-            Toast.makeText(this, "Đã đánh dấu tất cả là đã đọc", Toast.LENGTH_SHORT).show();
-        }
+        });
     }
 
     private void setupBottomNavigation() {
-        FrameLayout btnHome = findViewById(R.id.btnHomeNotif);
+        FrameLayout btnHome     = findViewById(R.id.btnHomeNotif);
         FrameLayout btnMessages = findViewById(R.id.btnMessagesNotif);
-        FrameLayout btnProfile = findViewById(R.id.btnProfileNotif);
+        FrameLayout btnProfile  = findViewById(R.id.btnProfileNotif);
 
-        if (btnHome != null) {
-            btnHome.setOnClickListener(v -> {
-                Intent intent = new Intent(this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(intent);
-                finish();
-            });
-        }
-        if (btnMessages != null) {
-            btnMessages.setOnClickListener(v -> {
-                Intent intent = new Intent(this, ChatListActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(intent);
-                finish();
-            });
-        }
-        if (btnProfile != null) {
-            btnProfile.setOnClickListener(v -> {
-                Intent intent = new Intent(this, UserProfileActivity.class);
-                intent.putExtra("username", FakePostRepository.getInstance().getCurrentUsername());
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(intent);
-                finish();
-            });
-        }
+        if (btnHome != null) btnHome.setOnClickListener(v -> {
+            startActivity(new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finish();
+        });
+        if (btnMessages != null) btnMessages.setOnClickListener(v -> {
+            startActivity(new Intent(this, ChatListActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finish();
+        });
+        if (btnProfile != null) btnProfile.setOnClickListener(v -> {
+            Intent intent = new Intent(this, UserProfileActivity.class);
+            intent.putExtra("user_uid", FirebaseManager.getCurrentUserId());
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(intent);
+            finish();
+        });
     }
 }

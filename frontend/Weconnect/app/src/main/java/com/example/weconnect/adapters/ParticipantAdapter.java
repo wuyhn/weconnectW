@@ -13,7 +13,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
 import com.example.weconnect.activities.UserProfileActivity;
-import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.api.FirebaseManager;
 
 import java.util.List;
 
@@ -22,8 +22,9 @@ public class ParticipantAdapter extends RecyclerView.Adapter<ParticipantAdapter.
     public static class Participant {
         public final String name;
         public final int avatarResId;
-        public final long userId;
+        public final long userId; // kept for backward compat
         public final String avatarUrl;
+        public String userUid; // Firebase UID
 
         public Participant(String name, int avatarResId) {
             this(name, avatarResId, -1, null);
@@ -61,14 +62,10 @@ public class ParticipantAdapter extends RecyclerView.Adapter<ParticipantAdapter.
         Participant p = participants.get(position);
         holder.tvName.setText(p.name);
 
-        // Load avatar from server URL with Glide, fallback to resource
+        // Firebase Storage URL là HTTPS đầy đủ — dùng Glide trực tiếp
         if (p.avatarUrl != null && !p.avatarUrl.isEmpty()) {
-            String url = p.avatarUrl;
-            if (url.startsWith("/")) {
-                url = RetrofitClient.getBaseUrl() + url.substring(1);
-            }
             com.bumptech.glide.Glide.with(context)
-                    .load(url)
+                    .load(p.avatarUrl)
                     .placeholder(R.drawable.ic_user_placeholder)
                     .error(R.drawable.ic_user_placeholder)
                     .circleCrop()
@@ -78,21 +75,15 @@ public class ParticipantAdapter extends RecyclerView.Adapter<ParticipantAdapter.
         }
 
         View.OnClickListener openProfile = v -> {
-            // Lấy tên thật (bỏ hậu tố " (Người tổ chức)" nếu có)
             String cleanName = p.name.replace(" (Người tổ chức)", "").trim();
-
-            // Kiểm tra xem có phải profile của mình không
-            long myUserId = RetrofitClient.getUserId(context);
-            boolean isOwnProfile = (p.userId > 0 && p.userId == myUserId);
-
+            String myUid = FirebaseManager.getCurrentUserId();
+            boolean isOwn = p.userUid != null && p.userUid.equals(myUid);
             Intent intent = new Intent(context, UserProfileActivity.class);
             intent.putExtra("username", cleanName);
-            if (p.userId > 0) {
-                intent.putExtra("user_id", p.userId);
+            if (p.userUid != null && !p.userUid.isEmpty()) {
+                intent.putExtra("user_uid", p.userUid);
             }
-            if (!isOwnProfile) {
-                intent.putExtra("view_other", true);
-            }
+            if (!isOwn) intent.putExtra("view_other", true);
             context.startActivity(intent);
         };
 
