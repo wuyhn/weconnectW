@@ -1,0 +1,20 @@
+.empty-state {
+  padding: 48px 0;
+}
+
+.empty-content {
+  margin: 16px 0;
+}
+
+.empty-content h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #262626;
+  margin: 0 0 8px 0;
+}
+
+.empty-content p {
+  font-size: 14px;
+  color: #8c8c8c;
+  margin: 0;
+}

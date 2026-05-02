@@ -1,0 +1,79 @@
+.app-sider {
+  background: #ffffff;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.06);
+  border-radius: 0;
+  padding-bottom: 100px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px;
+  background: linear-gradient(135deg, #E85B8A 0%, #E03B6F 100%);
+  border-radius: 8px;
+  margin: 12px;
+}
+
+.sidebar-avatar {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 20px;
+  min-width: 40px;
+}
+
+.sidebar-user-info {
+  flex: 1;
+  color: white;
+  overflow: hidden;
+}
+
+.sidebar-user-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-user-role {
+  font-size: 12px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer {
+  position: absolute;
+  bottom: 24px;
+  left: 12px;
+  right: 12px;
+  z-index: 10;
+}
+
+.sidebar-footer .ant-btn-primary {
+  background: #E85B8A !important;
+  border-color: #E85B8A !important;
+}
+
+.sidebar-footer .ant-btn-primary:hover {
+  background: #D63A72 !important;
+  border-color: #D63A72 !important;
+}
+
+.ant-menu-item {
+  border-radius: 6px;
+  margin: 4px 8px;
+  height: 40px;
+  line-height: 40px;
+}
+
+.ant-menu-item-selected {
+  background: #fce4ec !important;
+  color: #E85B8A !important;
+}
+
+.ant-menu-item:hover {
+  background: #f5f5f5 !important;
+}

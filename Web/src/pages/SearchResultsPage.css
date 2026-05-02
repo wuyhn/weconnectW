@@ -1,0 +1,28 @@
+.search-results-page {
+  padding: 24px;
+}
+
+.search-result-list-item {
+  padding: 16px 0 !important;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.search-result-list-item:last-child {
+  border-bottom: none;
+}
+
+.result-title {
+  cursor: pointer;
+  font-weight: 500;
+  transition: color 0.3s;
+}
+
+.result-title:hover {
+  color: #1890ff;
+}
+
+@media (max-width: 576px) {
+  .search-results-page {
+    padding: 12px;
+  }
+}

@@ -1,0 +1,25 @@
+.admin-post-detail-page {
+  padding: 24px;
+}
+
+.post-header-card {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+
+.post-header-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.author-info {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid #f0f0f0;
+}
+
+@media (max-width: 576px) {
+  .admin-post-detail-page {
+    padding: 12px;
+  }
+}

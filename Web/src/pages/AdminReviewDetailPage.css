@@ -1,0 +1,19 @@
+.admin-review-detail-page {
+  padding: 24px;
+}
+
+.review-header-card {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+
+.review-header-content {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 576px) {
+  .admin-review-detail-page {
+    padding: 12px;
+  }
+}

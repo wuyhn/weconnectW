@@ -1,0 +1,64 @@
+.users-page {
+  animation: fadeIn 0.3s ease-in;
+}
+
+.users-card {
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: #ffffff;
+}
+
+.users-card .ant-table {
+  font-size: 13px;
+}
+
+.users-card .ant-table-thead > tr > th {
+  background: #fafafa;
+  color: #262626;
+  font-weight: 600;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.users-card .ant-table-tbody > tr:hover > td {
+  background: #fafafa;
+}
+
+.filters-row {
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.user-name {
+  font-weight: 500;
+  color: #262626;
+}
+
+.user-detail {
+  padding: 16px 0;
+}
+
+.user-detail .ant-descriptions-item-label {
+  font-weight: 600;
+  color: #262626;
+}
+
+@media (max-width: 768px) {
+  .filters-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .users-card .ant-table {
+    font-size: 12px;
+  }
+
+  .users-card .ant-table-thead > tr > th {
+    padding: 8px 4px;
+  }
+
+  .users-card .ant-table-tbody > tr > td {
+    padding: 8px 4px;
+  }
+}
