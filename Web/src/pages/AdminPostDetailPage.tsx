@@ -33,11 +33,11 @@ export default function AdminPostDetailPage() {
 
   useEffect(() => {
     if (id) {
-      loadPost(parseInt(id))
+      loadPost(id)
     }
   }, [id])
 
-  const loadPost = async (postId: number) => {
+  const loadPost = async (postId: string) => {
     try {
       setLoading(true)
       const postData = await postAdminService.getPost(postId)

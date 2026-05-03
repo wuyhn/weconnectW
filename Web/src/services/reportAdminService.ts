@@ -1,35 +1,48 @@
-import apiClient from './apiClient'
+import {
+  collection,
+  getDocs,
+  getDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+} from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { Report, PaginationParams, PaginatedResponse, ReportFilter } from '../types'
 
-/**
- * Report Admin Service
- *
- * Real API endpoints:
- * - GET /admin/reports (list all)
- * - GET /admin/reports/:id (detail)
- * - PUT /admin/reports/:id/status (update status)
- */
+const toReport = (id: string, data: any): Report => ({
+  id: id as any,
+  reporterId: data.reporterId || data.actorId || '',
+  reporterName: data.reporterName || data.actorName || '',
+  targetType: data.targetType || (data.postId ? 'POST' : 'USER'),
+  targetId: data.targetId || data.postId || data.actorId || '',
+  reason: data.reason || '',
+  description: data.description || data.message || '',
+  status: data.status || 'PENDING',
+  adminAction: data.adminAction,
+  createdAt: data.createdAt?.toDate
+    ? data.createdAt.toDate().toISOString()
+    : (data.createdAt || new Date().toISOString()),
+  reviewedAt: data.reviewedAt?.toDate
+    ? data.reviewedAt.toDate().toISOString()
+    : data.reviewedAt,
+  reviewedBy: data.reviewedBy,
+})
 
 export const reportAdminService = {
   /**
-   * Get paginated list of reports
-   * GET /admin/reports
+   * Get paginated list of reports from Firestore
    */
   async getReports(
     params: PaginationParams,
     filter?: ReportFilter
   ): Promise<PaginatedResponse<Report>> {
     try {
-      console.log('[ReportService] Fetching reports from /admin/reports...')
-      const reports = await apiClient.get<Report[]>('/admin/reports')
-      console.log('[ReportService] Fetched', reports?.length ?? 0, 'reports', reports)
+      const snapshot = await getDocs(collection(db, 'reports'))
+      let reports: Report[] = snapshot.docs.map((d) => toReport(d.id, d.data()))
 
-      let filtered = [...reports]
-
-      // Apply client-side filters
       if (filter?.search) {
         const search = filter.search.toLowerCase()
-        filtered = filtered.filter(
+        reports = reports.filter(
           (r) =>
             (r.reason || '').toLowerCase().includes(search) ||
             (r.description || '').toLowerCase().includes(search) ||
@@ -38,56 +51,83 @@ export const reportAdminService = {
       }
 
       if (filter?.targetType) {
-        filtered = filtered.filter((r) => r.targetType === filter.targetType)
+        reports = reports.filter((r) => r.targetType === filter.targetType)
       }
 
       if (filter?.status) {
-        filtered = filtered.filter((r) => r.status === filter.status)
+        reports = reports.filter((r) => r.status === filter.status)
       }
 
-      // Paginate
-      const start = (params.page - 1) * params.pageSize
-      const end = start + params.pageSize
+      reports.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
 
+      const start = (params.page - 1) * params.pageSize
       return {
-        data: filtered.slice(start, end),
-        total: filtered.length,
+        data: reports.slice(start, start + params.pageSize),
+        total: reports.length,
         page: params.page,
         pageSize: params.pageSize,
       }
     } catch (error) {
-      console.error('Failed to fetch reports from API', error)
+      console.error('Failed to fetch reports', error)
       return { data: [], total: 0, page: params.page, pageSize: params.pageSize }
     }
   },
 
   /**
-   * Get single report by ID
-   * GET /admin/reports/:id
+   * Get single report by Firestore doc ID
    */
-  async getReport(id: number): Promise<Report> {
-    return apiClient.get<Report>(`/admin/reports/${id}`)
+  async getReport(id: string): Promise<Report> {
+    const snap = await getDoc(doc(db, 'reports', id))
+    if (!snap.exists()) throw new Error('Report not found')
+    return toReport(snap.id, snap.data())
   },
 
   /**
    * Update report status
-   * PUT /admin/reports/:id/status
    */
-  async updateReportStatus(id: number, status: string): Promise<void> {
-    await apiClient.put<void>(`/admin/reports/${id}/status`, { status })
+  async updateReportStatus(id: string, status: string): Promise<void> {
+    await updateDoc(doc(db, 'reports', id), {
+      status,
+      reviewedAt: new Date().toISOString(),
+    })
   },
 
   /**
-   * Admin xử lý report với hành động cụ thể
-   * POST /admin/reports/:id/resolve
+   * Resolve report with admin action
    * Actions: WARN, HIDE_POST, DELETE_POST, BLOCK_USER, DELETE_USER, NO_VIOLATION
    */
-  async resolveReport(id: number, action: string): Promise<void> {
-    try {
-      await apiClient.postRAW<any>(`/admin/reports/${id}/resolve`, { action })
-    } catch (error: any) {
-      const msg = error.response?.data?.message || error.message || 'Không thể xử lý report'
-      throw new Error(msg)
+  async resolveReport(id: string, action: string): Promise<void> {
+    const reportSnap = await getDoc(doc(db, 'reports', id))
+    if (!reportSnap.exists()) throw new Error('Report not found')
+
+    const report = reportSnap.data()
+
+    // Thực hiện hành động tương ứng
+    if (action === 'DELETE_POST' && report.postId) {
+      try {
+        await deleteDoc(doc(db, 'posts', report.postId))
+      } catch (e) { console.error('Failed to delete post', e) }
     }
+
+    if (action === 'BLOCK_USER' && report.targetId) {
+      try {
+        await updateDoc(doc(db, 'users', String(report.targetId)), { isBlocked: true })
+      } catch (e) { console.error('Failed to block user', e) }
+    }
+
+    if (action === 'DELETE_USER' && report.targetId) {
+      try {
+        await deleteDoc(doc(db, 'users', String(report.targetId)))
+      } catch (e) { console.error('Failed to delete user', e) }
+    }
+
+    // Cập nhật trạng thái report
+    await updateDoc(doc(db, 'reports', id), {
+      status: 'RESOLVED',
+      adminAction: action,
+      reviewedAt: new Date().toISOString(),
+    })
   },
 }

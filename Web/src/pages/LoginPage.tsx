@@ -22,7 +22,7 @@ export default function LoginPage() {
       const result = await authService.login(values)
       console.log('[Login] Success:', result)
       const user = {
-        id: result.user.id || 0,
+        id: result.user.id!,
         email: result.user.email || '',
         fullName: result.user.fullName || '',
         role: result.user.role || 1,

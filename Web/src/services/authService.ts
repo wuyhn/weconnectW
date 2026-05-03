@@ -1,108 +1,106 @@
-import apiClient from './apiClient'
-import { LoginRequest, LoginResponse, User } from '../types'
-
-// Note: Login endpoint is from real backend: POST /api/auth/login
-// Other admin endpoints may be mocked initially
+import {
+  signInWithEmailAndPassword,
+  signOut,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
+} from 'firebase/auth'
+import { doc, getDoc, updateDoc } from 'firebase/firestore'
+import { auth, db } from '../lib/firebase'
+import { User } from '../types'
 
 export const authService = {
   /**
-   * Login with credentials
-   * REAL API: POST /api/auth/login
-   * Response format matches backend spec:
-   * {
-   *   "code": 1000,
-   *   "message": "Đăng nhập thành công!",
-   *   "result": {
-   *     "id": number,
-   *     "email": string,
-   *     "fullName": string,
-   *     "token": string,
-   *     "message": string
-   *   }
-   * }
+   * Login with Firebase Auth
+   * Kiểm tra role admin trong Firestore users/{uid}
    */
-  async login(credentials: LoginRequest): Promise<{
+  async login(credentials: { email: string; password: string }): Promise<{
     user: Partial<User>
     token: string
   }> {
     try {
-      // Always use real backend API
-      const response = await apiClient.postRAW<LoginResponse>(
-        '/auth/login',
-        credentials
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        credentials.email,
+        credentials.password
       )
+      const firebaseUser = userCredential.user
 
-      if (response.code === 1000 && response.result) {
-        // TODO: Kiểm tra role - chỉ admin (role=1) mới được đăng nhập web
-        // Tạm bỏ check role vì DB chưa có cột role
-        // if (response.result.role !== 1) {
-        //   throw new Error('Tài khoản không có quyền admin. Chỉ tài khoản admin mới được truy cập.')
-        // }
-
-        return {
-          user: {
-            id: response.result.id,
-            email: response.result.email,
-            fullName: response.result.fullName,
-            role: (response.result.role || 1) as 0 | 1, // Mặc định role=1 cho admin
-          },
-          token: response.result.token,
-        }
+      // Kiểm tra profile trong Firestore
+      const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid))
+      if (!userDoc.exists()) {
+        await signOut(auth)
+        throw new Error('Tài khoản không tồn tại trong hệ thống.')
       }
 
-      throw new Error(response.message || 'Login failed')
+      const data = userDoc.data()
+
+      // Chỉ admin (role = 1 hoặc role = "admin") mới được vào
+      if (data.role !== 1 && data.role !== 'admin') {
+        await signOut(auth)
+        throw new Error('Tài khoản không có quyền admin. Chỉ tài khoản admin mới được truy cập.')
+      }
+
+      const token = await firebaseUser.getIdToken()
+
+      return {
+        user: {
+          id: firebaseUser.uid as any,
+          email: firebaseUser.email || '',
+          fullName: data.fullName || firebaseUser.displayName || '',
+          role: 1,
+          isBlocked: false,
+          createdAt: data.createdAt || '',
+        },
+        token,
+      }
     } catch (error: any) {
-      // If backend is unreachable, throw meaningful error
-      if (error.code === 'ERR_NETWORK') {
-        throw 'Không thể kết nối đến server. Vui lòng kiểm tra backend đang chạy.'
+      const code = error.code
+      if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        throw 'Email hoặc mật khẩu không đúng.'
       }
-      throw error.response?.data?.message || error.message || 'Login failed'
+      if (code === 'auth/too-many-requests') {
+        throw 'Đăng nhập thất bại quá nhiều lần. Vui lòng thử lại sau.'
+      }
+      throw error.message || 'Đăng nhập thất bại.'
     }
   },
 
   /**
-   * Get current admin user info
-   * MOCK: User is set from login response
-   * TODO: Create real endpoint GET /api/admin/profile
+   * Get current admin user info from localStorage
    */
   async getProfile(): Promise<User> {
-    // Get from localStorage for now
     const user = localStorage.getItem('user')
-    if (user) {
-      return JSON.parse(user)
-    }
+    if (user) return JSON.parse(user)
     throw new Error('No user found')
   },
 
   /**
-   * Change password
-   * API: POST /api/auth/change-password
+   * Change password (requires re-authentication)
    */
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const user = auth.currentUser
+    if (!user || !user.email) throw new Error('Không có người dùng đang đăng nhập.')
+
     try {
-      const response = await apiClient.postRAW<any>(
-        '/auth/change-password',
-        {
-          currentPassword,
-          newPassword,
-        }
-      )
-
-      if (response?.code === 1000) {
-        return
-      }
-
-      throw new Error(response?.message || 'Failed to change password')
+      // Re-authenticate trước khi đổi mật khẩu (Firebase yêu cầu)
+      const credential = EmailAuthProvider.credential(user.email, currentPassword)
+      await reauthenticateWithCredential(user, credential)
+      await updatePassword(user, newPassword)
     } catch (error: any) {
-      throw error.response?.data?.message || error.message || 'Failed to change password'
+      const code = error.code
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        throw 'Mật khẩu hiện tại không đúng.'
+      }
+      throw error.message || 'Không thể đổi mật khẩu.'
     }
   },
 
   /**
-   * Logout
-   * Just clears local storage - no backend call needed
+   * Logout - clear Firebase session
    */
-  logout(): void {
+  async logout(): Promise<void> {
+    await signOut(auth)
     localStorage.removeItem('token')
     localStorage.removeItem('user')
   },

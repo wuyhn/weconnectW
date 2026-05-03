@@ -1,137 +1,130 @@
-import apiClient from './apiClient'
+import {
+  collection,
+  getDocs,
+  getDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  query,
+  orderBy,
+  limit,
+} from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { User, PaginationParams, PaginatedResponse } from '../types'
-import { mockUsers } from '../mock/mockData'
 
-/**
- * User Admin Service
- *
- * Real API endpoints:
- * - GET /admin/users (list all)
- * - GET /admin/users/:id (detail)
- * - PUT /admin/users/:id/block
- * - PUT /admin/users/:id/unblock
- * - DELETE /admin/users/:id
- */
+const toUser = (id: string, data: any): User => ({
+  id: id as any,
+  email: data.email || '',
+  fullName: data.fullName || '',
+  birthday: data.birthday,
+  gender: data.gender,
+  avatarUrl: data.avatarUrl,
+  bio: data.bio,
+  interestTags: data.interestTags || [],
+  averageRating: data.averageRating,
+  reputationScore: data.reputationScore,
+  isBlocked: data.isBlocked || false,
+  role: data.role === 1 || data.role === 'admin' ? 1 : 0,
+  createdAt: data.createdAt?.toDate
+    ? data.createdAt.toDate().toISOString()
+    : (data.createdAt || new Date().toISOString()),
+  postCount: data.postCount,
+})
 
 export const userAdminService = {
   /**
-   * Get paginated list of users
-   * GET /admin/users → client-side filter + paginate
-   * Auto-excludes admin users (role !== 1)
+   * Get paginated list of users from Firestore
    */
   async getUsers(
     params: PaginationParams,
     filter?: { search?: string; role?: number | null; isBlocked?: boolean | null }
   ): Promise<PaginatedResponse<User>> {
     try {
-      const users = await apiClient.get<User[]>('/admin/users')
-
-      let filtered = [...users]
+      const snapshot = await getDocs(collection(db, 'users'))
+      let users: User[] = snapshot.docs.map((d) => toUser(d.id, d.data()))
 
       // Exclude admin users by default
-      filtered = filtered.filter((u) => u.role !== 1)
+      users = users.filter((u) => u.role !== 1)
 
-      // Apply client-side filters
       if (filter?.search) {
         const search = filter.search.toLowerCase()
-        filtered = filtered.filter(
+        users = users.filter(
           (u) =>
             (u.fullName || '').toLowerCase().includes(search) ||
             (u.email || '').toLowerCase().includes(search)
         )
       }
 
-      if (filter?.role !== null && filter?.role !== undefined) {
-        filtered = filtered.filter((u) => u.role === filter.role)
-      }
-
       if (filter?.isBlocked !== null && filter?.isBlocked !== undefined) {
-        filtered = filtered.filter((u) => u.isBlocked === filter.isBlocked)
+        users = users.filter((u) => u.isBlocked === filter.isBlocked)
       }
 
-      // Sort by created date descending
-      filtered.sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      // Sort by createdAt desc
+      users.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       )
 
-      // Paginate
       const start = (params.page - 1) * params.pageSize
-      const end = start + params.pageSize
-
       return {
-        data: filtered.slice(start, end),
-        total: filtered.length,
+        data: users.slice(start, start + params.pageSize),
+        total: users.length,
         page: params.page,
         pageSize: params.pageSize,
       }
     } catch (error) {
-      console.error('Failed to fetch users from API', error)
+      console.error('Failed to fetch users', error)
       return { data: [], total: 0, page: params.page, pageSize: params.pageSize }
     }
   },
 
   /**
-   * Get single user by ID
-   * GET /admin/users/:id
+   * Get single user by Firestore doc ID
    */
-  async getUser(id: number): Promise<User> {
-    try {
-      return await apiClient.get<User>(`/admin/users/${id}`)
-    } catch (error) {
-      // Fallback to mock data if API fails
-      const user = mockUsers.find((u) => u.id === id)
-      if (user) {
-        return user
-      }
-      throw error
-    }
+  async getUser(id: string): Promise<User> {
+    const snap = await getDoc(doc(db, 'users', id))
+    if (!snap.exists()) throw new Error('User not found')
+    return toUser(snap.id, snap.data())
   },
 
   /**
-   * Block user
-   * PUT /admin/users/:id/block
+   * Block user → set isBlocked = true
    */
-  async blockUser(id: number): Promise<User> {
-    return apiClient.put<User>(`/admin/users/${id}/block`)
+  async blockUser(id: string): Promise<User> {
+    await updateDoc(doc(db, 'users', id), { isBlocked: true })
+    return this.getUser(id)
   },
 
   /**
-   * Unblock user
-   * PUT /admin/users/:id/unblock
+   * Unblock user → set isBlocked = false
    */
-  async unblockUser(id: number): Promise<User> {
-    return apiClient.put<User>(`/admin/users/${id}/unblock`)
+  async unblockUser(id: string): Promise<User> {
+    await updateDoc(doc(db, 'users', id), { isBlocked: false })
+    return this.getUser(id)
   },
 
   /**
-   * Delete user
-   * DELETE /admin/users/:id
+   * Delete user document from Firestore
    */
-  async deleteUser(id: number): Promise<void> {
-    await apiClient.delete<void>(`/admin/users/${id}`)
+  async deleteUser(id: string): Promise<void> {
+    await deleteDoc(doc(db, 'users', id))
   },
 
-  /**
-   * Update user (not yet supported by backend)
-   */
-  async updateUser(_id: number, _data: Partial<User>): Promise<User> {
-    // TODO: implement when backend supports PUT /admin/users/:id
+  async updateUser(_id: string, _data: Partial<User>): Promise<User> {
     throw new Error('Update user not yet implemented')
   },
 
   /**
-   * Get recent users (limit)
+   * Get most recent users
    */
-  async getRecentUsers(limit: number = 5): Promise<User[]> {
+  async getRecentUsers(limitCount: number = 5): Promise<User[]> {
     try {
-      const users = await apiClient.get<User[]>('/admin/users')
-      return [...users]
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        )
-        .slice(0, limit)
+      const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(limitCount * 3))
+      const snapshot = await getDocs(q)
+      const users = snapshot.docs
+        .map((d) => toUser(d.id, d.data()))
+        .filter((u) => u.role !== 1)
+        .slice(0, limitCount)
+      return users
     } catch {
       return []
     }

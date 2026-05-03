@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { signOut } from 'firebase/auth'
+import { auth } from '../lib/firebase'
 import { User } from '../types'
 
 interface AuthStore {
@@ -25,6 +27,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
   },
 
   logout: () => {
+    // Sign out from Firebase
+    signOut(auth).catch(() => {})
     localStorage.removeItem('user')
     localStorage.removeItem('token')
     set({ user: null, token: null, error: null })

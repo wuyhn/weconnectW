@@ -76,7 +76,7 @@ export default function ReportsPage() {
   }, [search, targetTypeFilter, statusFilter])
 
   // Auto-open drawer when reportId query param is present
-  const openReportById = useCallback(async (reportId: number) => {
+  const openReportById = useCallback(async (reportId: string) => {
     try {
       const report = await reportAdminService.getReport(reportId)
       setSelectedReport(report)
@@ -89,10 +89,7 @@ export default function ReportsPage() {
   useEffect(() => {
     const reportIdParam = searchParams.get('reportId')
     if (reportIdParam) {
-      const id = parseInt(reportIdParam, 10)
-      if (!isNaN(id)) {
-        openReportById(id)
-      }
+      openReportById(reportIdParam)
       // Clear the param so it doesn't re-trigger
       setSearchParams({}, { replace: true })
     }
@@ -454,7 +451,7 @@ export default function ReportsPage() {
       dataIndex: 'id',
       key: 'id',
       width: 60,
-      sorter: (a: Report, b: Report) => a.id - b.id,
+      sorter: (a: Report, b: Report) => String(a.id).localeCompare(String(b.id)),
     },
     {
       title: 'Reporter',

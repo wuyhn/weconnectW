@@ -1,6 +1,6 @@
 // User types
 export interface User {
-  id: number
+  id: string
   email: string
   password?: string
   fullName: string
@@ -26,7 +26,7 @@ export interface LoginResponse {
   code: number
   message: string
   result: {
-    id: number
+    id: string
     email: string
     fullName: string
     token: string
@@ -43,8 +43,8 @@ export interface ApiResponse<T> {
 
 // Post types
 export interface Post {
-  id: number
-  authorId: number
+  id: string
+  authorId: string
   authorName?: string  // Author's full name for display
   content: string
   interestTag: string
@@ -59,9 +59,9 @@ export interface Post {
 
 // Review types
 export interface UserReview {
-  id: number
-  reviewerId: number
-  reviewedUserId: number
+  id: string
+  reviewerId: string
+  reviewedUserId: string
   reviewerName?: string
   reviewedUserName?: string
   activityName: string
@@ -100,18 +100,18 @@ export interface UserTargetInfo {
 
 // Report types
 export interface Report {
-  id: number
-  reporterId: number
+  id: string
+  reporterId: string
   reporterName?: string
   targetType: 'USER' | 'POST'
-  targetId: number
+  targetId: string
   reason: string
   description?: string
   status: 'PENDING' | 'REVIEWED' | 'RESOLVED'
   adminAction?: string
   createdAt: string
   reviewedAt?: string
-  reviewedBy?: number
+  reviewedBy?: string
   targetInfo?: PostTargetInfo | UserTargetInfo
 }
 

@@ -37,11 +37,11 @@ export default function AdminReviewDetailPage() {
 
   useEffect(() => {
     if (id) {
-      loadReview(parseInt(id))
+      loadReview(id)
     }
   }, [id])
 
-  const loadReview = async (reviewId: number) => {
+  const loadReview = async (reviewId: string) => {
     try {
       setLoading(true)
       const reviewData = (await reviewAdminService.getReview(reviewId)) as ReviewWithUsers

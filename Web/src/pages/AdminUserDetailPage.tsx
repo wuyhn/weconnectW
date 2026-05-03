@@ -36,11 +36,11 @@ export default function AdminUserDetailPage() {
 
   useEffect(() => {
     if (id) {
-      loadUser(parseInt(id))
+      loadUser(id)
     }
   }, [id])
 
-  const loadUser = async (userId: number) => {
+  const loadUser = async (userId: string) => {
     try {
       setLoading(true)
       const userData = await userAdminService.getUser(userId)
