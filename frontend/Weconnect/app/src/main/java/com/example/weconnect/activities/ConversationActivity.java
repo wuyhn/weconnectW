@@ -3,8 +3,6 @@ package com.example.weconnect.activities;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -27,14 +25,14 @@ import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.data.FakeSocialRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.ChatMessage;
+import com.example.weconnect.models.ChatMessageApiResponse;
 import com.example.weconnect.models.ChatRoom;
+import com.example.weconnect.websocket.WebSocketManager;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -58,21 +56,6 @@ public class ConversationActivity extends AppCompatActivity {
     private ChatApiService chatApi;
     private long backendRoomId = -1;
 
-    // Auto-polling cho tin nhắn real-time
-    private static final long CHAT_POLL_INTERVAL = 3000; // 3 giây
-    private final Handler pollHandler = new Handler(Looper.getMainLooper());
-    private boolean isPolling = false;
-    private int lastMessageCount = 0;
-    private final Runnable pollRunnable = new Runnable() {
-        @Override
-        public void run() {
-            if (backendRoomId > 0) {
-                loadMessagesFromApi();
-            }
-            pollHandler.postDelayed(this, CHAT_POLL_INTERVAL);
-        }
-    };
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -90,31 +73,22 @@ public class ConversationActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        startPolling();
+        // Reconnect nếu WebSocket bị mất kết nối
+        if (!WebSocketManager.getInstance().isConnected()) {
+            String token = RetrofitClient.getAuthToken();
+            if (token != null) {
+                WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
+            }
+        }
+        if (backendRoomId > 0) {
+            WebSocketManager.getInstance().subscribeToRoom(backendRoomId, this::onNewMessage);
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        stopPolling();
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        stopPolling();
-    }
-
-    private void startPolling() {
-        if (!isPolling && backendRoomId > 0) {
-            isPolling = true;
-            pollHandler.postDelayed(pollRunnable, CHAT_POLL_INTERVAL);
-        }
-    }
-
-    private void stopPolling() {
-        isPolling = false;
-        pollHandler.removeCallbacks(pollRunnable);
+        WebSocketManager.getInstance().unsubscribeFromRoom(backendRoomId);
     }
 
     private void initViews() {
@@ -179,7 +153,7 @@ public class ConversationActivity extends AppCompatActivity {
                     room = parseRoomFromApi(data);
                     displayRoom();
                     loadMessagesFromApi();
-                    startPolling(); // Bắt đầu auto-refresh sau khi load room
+                    WebSocketManager.getInstance().subscribeToRoom(backendRoomId, ConversationActivity.this::onNewMessage);
                 } else {
                     Toast.makeText(ConversationActivity.this,
                             "Không tìm thấy phòng chat.", Toast.LENGTH_SHORT).show();
@@ -573,41 +547,43 @@ public class ConversationActivity extends AppCompatActivity {
     }
 
     private void sendMessage() {
-        if (room == null || backendRoomId <= 0) {
-            return;
-        }
+        if (room == null || backendRoomId <= 0) return;
 
         String content = etMessageInput.getText() != null
-                ? etMessageInput.getText().toString().trim()
-                : "";
-
-        if (TextUtils.isEmpty(content)) {
-            return;
-        }
+                ? etMessageInput.getText().toString().trim() : "";
+        if (TextUtils.isEmpty(content)) return;
 
         etMessageInput.setText("");
+        WebSocketManager.getInstance().sendMessage(backendRoomId, content);
+    }
 
-        Map<String, String> body = new HashMap<>();
-        body.put("content", content);
+    private void onNewMessage(ChatMessageApiResponse msg) {
+        long currentUserId = RetrofitClient.getUserId(this);
+        boolean sentByMe = msg.getSenderId() == currentUserId;
+        String time = "";
+        if (msg.getCreatedAt() != null) {
+            String raw = msg.getCreatedAt();
+            if (raw.contains("T") && raw.length() >= 16) time = raw.substring(11, 16);
+            else time = raw;
+        }
+        ChatMessage chatMsg = new ChatMessage(
+                String.valueOf(msg.getId()),
+                msg.getSenderName() != null ? msg.getSenderName() : "",
+                msg.getContent() != null ? msg.getContent() : "",
+                time,
+                sentByMe
+        );
 
-        chatApi.sendMessage(backendRoomId, body).enqueue(new Callback<ApiResponse<com.example.weconnect.models.ChatMessageApiResponse>>() {
-            @Override
-            public void onResponse(Call<ApiResponse<com.example.weconnect.models.ChatMessageApiResponse>> call,
-                                   Response<ApiResponse<com.example.weconnect.models.ChatMessageApiResponse>> response) {
-                if (response.isSuccessful()) {
-                    loadMessagesFromApi();
-                } else {
-                    Toast.makeText(ConversationActivity.this,
-                            "Không thể gửi tin nhắn", Toast.LENGTH_SHORT).show();
-                }
-            }
+        // Kiểm tra trùng lặp (tránh duplicate khi load history và WS cùng lúc)
+        List<ChatMessage> current = adapter.getMessages();
+        for (ChatMessage existing : current) {
+            if (String.valueOf(msg.getId()).equals(existing.getId())) return;
+        }
 
-            @Override
-            public void onFailure(Call<ApiResponse<com.example.weconnect.models.ChatMessageApiResponse>> call, Throwable t) {
-                Toast.makeText(ConversationActivity.this,
-                        "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-            }
-        });
+        List<ChatMessage> updated = new ArrayList<>(current);
+        updated.add(chatMsg);
+        adapter.submitList(updated);
+        rvMessages.scrollToPosition(updated.size() - 1);
     }
 
     private void loadMessagesFromApi() {
@@ -639,9 +615,7 @@ public class ConversationActivity extends AppCompatActivity {
                         messages.add(new ChatMessage(id, sender, msgContent, time, sentByMe));
                     }
                     adapter.submitList(messages);
-                    // Smart scroll: chỉ auto-scroll nếu có tin nhắn mới
-                    if (!messages.isEmpty() && messages.size() != lastMessageCount) {
-                        lastMessageCount = messages.size();
+                    if (!messages.isEmpty()) {
                         rvMessages.scrollToPosition(messages.size() - 1);
                     }
                 }

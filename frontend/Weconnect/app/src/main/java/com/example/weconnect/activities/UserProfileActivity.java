@@ -31,6 +31,7 @@ import com.example.weconnect.api.ReviewApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.data.FakeSocialRepository;
+import com.example.weconnect.websocket.WebSocketManager;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.UserProfile;
 import com.example.weconnect.models.Post;
@@ -392,6 +393,7 @@ public class UserProfileActivity extends AppCompatActivity {
                     .setMessage("Bạn có chắc muốn đăng xuất?")
                     .setPositiveButton("Đăng xuất", (d, w) -> {
                         // Clear session & reset all fake repos
+                        WebSocketManager.getInstance().disconnect();
                         RetrofitClient.clearSession(this);
                         FakeSocialRepository.resetInstance();
                         com.example.weconnect.data.FakePostRepository.resetInstance();
@@ -434,6 +436,7 @@ public class UserProfileActivity extends AppCompatActivity {
                                 Toast.makeText(UserProfileActivity.this,
                                         "Đã xoá tài khoản thành công!", Toast.LENGTH_SHORT).show();
                                 // Clear session & reset all fake repos
+                                WebSocketManager.getInstance().disconnect();
                                 RetrofitClient.clearSession(UserProfileActivity.this);
                                 FakeSocialRepository.resetInstance();
                                 com.example.weconnect.data.FakePostRepository.resetInstance();

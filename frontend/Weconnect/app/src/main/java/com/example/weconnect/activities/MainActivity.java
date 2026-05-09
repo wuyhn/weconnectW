@@ -1,6 +1,11 @@
 package com.example.weconnect.activities;
 
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -10,6 +15,7 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -18,6 +24,7 @@ import com.example.weconnect.adapters.PostAdapter;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakePostRepository;
+import com.example.weconnect.websocket.WebSocketManager;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
@@ -62,6 +69,12 @@ public class MainActivity extends AppCompatActivity {
         RetrofitClient.loadToken(this);
         postApiService = RetrofitClient.getClient().create(PostApiService.class);
 
+        // Khởi tạo WebSocket connection
+        String token = RetrofitClient.getAuthToken();
+        if (token != null && !WebSocketManager.getInstance().isConnected()) {
+            WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
+        }
+
         // Sync tên user thật với FakeRepositories (để profile detection hoạt động)
         String realName = RetrofitClient.getUserName(this);
         if (realName != null && !realName.isEmpty()) {
@@ -74,11 +87,20 @@ public class MainActivity extends AppCompatActivity {
         setupClickListeners();
         setupRecyclerView();
         loadUnreadNotificationCount();
+        createNotificationChannel();
+        requestNotificationPermission();
+        fetchAndRegisterFcmToken();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        // Reconnect WebSocket nếu bị mất kết nối (ví dụ backend restart)
+        RetrofitClient.loadToken(this);
+        String token = RetrofitClient.getAuthToken();
+        if (token != null && !WebSocketManager.getInstance().isConnected()) {
+            WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
+        }
         syncInterestsFromBackend();
         loadFriendNamesFromBackend();
         loadPostsFromApi();
@@ -540,6 +562,49 @@ public class MainActivity extends AppCompatActivity {
             icon.setImageTintList(android.content.res.ColorStateList.valueOf(
                     getResources().getColor(colorResId, getTheme())));
         }
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    "weconnect_channel",
+                    "WeConnect Notifications",
+                    NotificationManager.IMPORTANCE_HIGH);
+            getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        }
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                    this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 100);
+        }
+    }
+
+    private void fetchAndRegisterFcmToken() {
+        com.google.firebase.messaging.FirebaseMessaging.getInstance().getToken()
+                .addOnCompleteListener(task -> {
+                    if (!task.isSuccessful() || task.getResult() == null) return;
+                    String fcmToken = task.getResult();
+                    java.util.Map<String, String> body = new java.util.HashMap<>();
+                    body.put("fcmToken", fcmToken);
+                    RetrofitClient.getClient()
+                            .create(com.example.weconnect.api.UserApiService.class)
+                            .updateFcmToken(body)
+                            .enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<Void>>() {
+                                @Override
+                                public void onResponse(
+                                        retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call,
+                                        retrofit2.Response<com.example.weconnect.models.ApiResponse<Void>> response) {}
+
+                                @Override
+                                public void onFailure(
+                                        retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call,
+                                        Throwable t) {}
+                            });
+                });
     }
 
     private void showToast(String message) {

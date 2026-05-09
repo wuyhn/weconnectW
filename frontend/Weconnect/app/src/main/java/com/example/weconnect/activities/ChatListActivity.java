@@ -2,8 +2,6 @@ package com.example.weconnect.activities;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.EditText;
@@ -26,6 +24,7 @@ import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.ChatMessage;
 import com.example.weconnect.models.ChatRoom;
 import com.example.weconnect.models.ChatRoomApiResponse;
+import com.example.weconnect.websocket.WebSocketManager;
 import com.google.android.material.tabs.TabLayout;
 
 import java.util.ArrayList;
@@ -55,18 +54,6 @@ public class ChatListActivity extends AppCompatActivity {
     // Cached rooms from API
     private List<ChatRoom> allRooms = new ArrayList<>();
 
-    // Auto-polling cho danh sách chat real-time
-    private static final long CHAT_LIST_POLL_INTERVAL = 5000; // 5 giây
-    private final Handler pollHandler = new Handler(Looper.getMainLooper());
-    private boolean isPolling = false;
-    private final Runnable pollRunnable = new Runnable() {
-        @Override
-        public void run() {
-            loadChatsFromApi();
-            pollHandler.postDelayed(this, CHAT_LIST_POLL_INTERVAL);
-        }
-    };
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -85,25 +72,13 @@ public class ChatListActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         loadChatsFromApi();
-        startPolling();
+        WebSocketManager.getInstance().subscribeToChatList(payload -> loadChatsFromApi());
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        stopPolling();
-    }
-
-    private void startPolling() {
-        if (!isPolling) {
-            isPolling = true;
-            pollHandler.postDelayed(pollRunnable, CHAT_LIST_POLL_INTERVAL);
-        }
-    }
-
-    private void stopPolling() {
-        isPolling = false;
-        pollHandler.removeCallbacks(pollRunnable);
+        WebSocketManager.getInstance().unsubscribeFromChatList();
     }
 
     private void initViews() {

@@ -50,4 +50,8 @@ public interface UserApiService {
     // Đổi mật khẩu
     @PUT("api/users/me/password")
     Call<ApiResponse<Void>> changePassword(@Body Map<String, String> body);
+
+    // Đăng ký / cập nhật FCM token cho push notification
+    @PUT("api/users/me/fcm-token")
+    Call<ApiResponse<Void>> updateFcmToken(@Body Map<String, String> body);
 }

@@ -2,33 +2,40 @@ package com.weconnect.backend.service;
 
 import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.repository.NotificationRepository;
+import com.weconnect.backend.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class NotificationService {
 
     private final NotificationRepository notificationRepository;
+    private final UserRepository userRepository;
 
-    public NotificationService(NotificationRepository notificationRepository) {
+    @Autowired(required = false)
+    private FCMService fcmService;
+
+    public NotificationService(NotificationRepository notificationRepository,
+                               UserRepository userRepository) {
         this.notificationRepository = notificationRepository;
+        this.userRepository = userRepository;
     }
 
-    // Lấy danh sách thông báo
     public List<Notification> getNotifications(Long userId) {
         return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId);
     }
 
-    // Tạo thông báo (basic)
     @Transactional
     public void createNotification(Long userId, Notification.NotificationType type,
                                    String message, String relatedUsername) {
         createNotification(userId, type, message, relatedUsername, null, null);
     }
 
-    // Tạo thông báo (với context post/user)
     @Transactional
     public void createNotification(Long userId, Notification.NotificationType type,
                                    String message, String relatedUsername,
@@ -43,10 +50,20 @@ public class NotificationService {
                 .isRead(false)
                 .isActioned(false)
                 .build();
-        notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
+
+        if (fcmService != null) {
+            userRepository.findById(userId).ifPresent(user -> {
+                if (user.getFcmToken() != null && !user.getFcmToken().isBlank()) {
+                    Map<String, String> data = new HashMap<>();
+                    data.put("type", type.name());
+                    data.put("notificationId", String.valueOf(saved.getId()));
+                    fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
+                }
+            });
+        }
     }
 
-    // Đánh dấu đã đọc
     public void markAsRead(Long notificationId) {
         Notification notification = notificationRepository.findById(notificationId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy thông báo."));
@@ -54,7 +71,6 @@ public class NotificationService {
         notificationRepository.save(notification);
     }
 
-    // Đánh dấu đã xử lý
     public void markAsActioned(Long notificationId) {
         Notification notification = notificationRepository.findById(notificationId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy thông báo."));
@@ -63,7 +79,6 @@ public class NotificationService {
         notificationRepository.save(notification);
     }
 
-    // Đọc tất cả
     public void markAllAsRead(Long userId) {
         List<Notification> unread = notificationRepository.findByUserIdAndIsReadFalse(userId);
         for (Notification n : unread) {
@@ -72,7 +87,6 @@ public class NotificationService {
         notificationRepository.saveAll(unread);
     }
 
-    // Số chưa đọc
     public int getUnreadCount(Long userId) {
         return notificationRepository.countByUserIdAndIsReadFalse(userId);
     }

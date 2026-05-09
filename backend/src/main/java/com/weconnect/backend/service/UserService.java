@@ -197,4 +197,11 @@ public class UserService {
 
         return suggestions;
     }
+
+    public void updateFcmToken(Long userId, String fcmToken) {
+        userRepository.findById(userId).ifPresent(user -> {
+            user.setFcmToken(fcmToken);
+            userRepository.save(user);
+        });
+    }
 }

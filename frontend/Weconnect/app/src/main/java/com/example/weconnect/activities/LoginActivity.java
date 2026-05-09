@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
@@ -80,6 +81,7 @@ public class LoginActivity extends AppCompatActivity {
     // Gọi API login mới - nhận JWT token
     private void loginWithBackend(String email, String password) {
         LoginRequest loginRequest = new LoginRequest(email, password);
+        Log.e("LoginDebug", "Calling API with BASE_URL=" + RetrofitClient.getBaseUrl());
 
         apiService.login(loginRequest).enqueue(new Callback<ApiResponse<AuthResponse>>() {
             @Override
@@ -119,9 +121,11 @@ public class LoginActivity extends AppCompatActivity {
 
             @Override
             public void onFailure(Call<ApiResponse<AuthResponse>> call, Throwable t) {
+                String err = t.getClass().getSimpleName() + ": " + t.getMessage();
                 Toast.makeText(LoginActivity.this,
-                        "Không thể kết nối Server. Hãy kiểm tra Backend!",
+                        "Lỗi: " + err + "\nURL: " + RetrofitClient.getBaseUrl(),
                         Toast.LENGTH_LONG).show();
+                Log.e("LoginDebug", err, t);
             }
         });
     }

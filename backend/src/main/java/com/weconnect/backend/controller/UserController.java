@@ -159,6 +159,19 @@ public class UserController {
         }
     }
 
+    // Đăng ký / cập nhật FCM token cho push notification
+    @PutMapping("/me/fcm-token")
+    public ResponseEntity<?> updateFcmToken(Authentication authentication,
+                                            @RequestBody Map<String, String> body) {
+        User currentUser = (User) authentication.getPrincipal();
+        String fcmToken = body.get("fcmToken");
+        userService.updateFcmToken(currentUser.getId(), fcmToken);
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000)
+                .message("FCM token updated")
+                .build());
+    }
+
     // Tìm user theo tên exact (dùng để resolve user_id từ username)
     @GetMapping("/search")
     public ResponseEntity<?> searchByName(@RequestParam String name) {

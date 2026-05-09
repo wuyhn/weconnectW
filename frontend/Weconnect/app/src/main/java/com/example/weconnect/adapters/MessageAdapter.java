@@ -27,6 +27,10 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         notifyDataSetChanged();
     }
 
+    public List<ChatMessage> getMessages() {
+        return messages;
+    }
+
     @Override
     public int getItemViewType(int position) {
         return messages.get(position).isSentByCurrentUser() ? TYPE_OUTGOING : TYPE_INCOMING;

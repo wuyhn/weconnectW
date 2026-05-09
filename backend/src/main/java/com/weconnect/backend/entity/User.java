@@ -51,6 +51,9 @@ public class User {
     @Column(columnDefinition = "INT DEFAULT 0")
     private int role = 0;
 
+    @Column(name = "fcm_token", length = 500)
+    private String fcmToken;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

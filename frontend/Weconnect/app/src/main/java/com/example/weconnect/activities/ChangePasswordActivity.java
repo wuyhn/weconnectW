@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.example.weconnect.R;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.api.UserApiService;
+import com.example.weconnect.websocket.WebSocketManager;
 import com.example.weconnect.models.ApiResponse;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
@@ -172,6 +173,7 @@ public class ChangePasswordActivity extends AppCompatActivity {
 
     private void logoutAndGoToLogin() {
         // Clear session
+        WebSocketManager.getInstance().disconnect();
         RetrofitClient.clearSession(this);
 
         // Chuyển về LoginActivity, xóa hết back stack
