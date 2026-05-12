@@ -28,7 +28,11 @@ public class WebSocketManager {
     private CompositeDisposable compositeDisposable;
     private final Map<Long, Disposable> roomSubscriptions = new HashMap<>();
     private Disposable chatListSubscription;
+    private Disposable feedSubscription;
+    private Disposable avatarUpdateSubscription;
     private Consumer<String> chatListCallback;
+    private Consumer<String> feedCallback;
+    private Consumer<String> avatarUpdateCallback;
     private boolean connected = false;
 
     private WebSocketManager() {}
@@ -191,6 +195,64 @@ public class WebSocketManager {
         }
     }
 
+    /**
+     * Subscribe nhận bài đăng mới từ bất kỳ user nào (realtime feed).
+     */
+    public void subscribeToFeed(Consumer<String> onNewPost) {
+        if (stompClient == null) return;
+        feedCallback = onNewPost;
+
+        if (feedSubscription != null && !feedSubscription.isDisposed()) {
+            feedSubscription.dispose();
+        }
+
+        feedSubscription = stompClient.topic("/topic/feed")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (feedCallback != null) feedCallback.accept(frame.getPayload());
+                }, error -> Log.e(TAG, "Feed subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(feedSubscription);
+    }
+
+    public void unsubscribeFromFeed() {
+        feedCallback = null;
+        if (feedSubscription != null && !feedSubscription.isDisposed()) {
+            feedSubscription.dispose();
+            feedSubscription = null;
+        }
+    }
+
+    /**
+     * Subscribe nhận cập nhật avatar của tất cả user (realtime avatar sync).
+     */
+    public void subscribeToAvatarUpdates(Consumer<String> onUpdate) {
+        if (stompClient == null) return;
+        avatarUpdateCallback = onUpdate;
+
+        if (avatarUpdateSubscription != null && !avatarUpdateSubscription.isDisposed()) {
+            avatarUpdateSubscription.dispose();
+        }
+
+        avatarUpdateSubscription = stompClient.topic("/topic/user-updates")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (avatarUpdateCallback != null) avatarUpdateCallback.accept(frame.getPayload());
+                }, error -> Log.e(TAG, "Avatar update subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(avatarUpdateSubscription);
+    }
+
+    public void unsubscribeFromAvatarUpdates() {
+        avatarUpdateCallback = null;
+        if (avatarUpdateSubscription != null && !avatarUpdateSubscription.isDisposed()) {
+            avatarUpdateSubscription.dispose();
+            avatarUpdateSubscription = null;
+        }
+    }
+
     public boolean isConnected() {
         return connected && stompClient != null;
     }
@@ -201,6 +263,8 @@ public class WebSocketManager {
     public void disconnect() {
         connected = false;
         chatListCallback = null;
+        feedCallback = null;
+        avatarUpdateCallback = null;
         roomSubscriptions.clear();
         if (compositeDisposable != null && !compositeDisposable.isDisposed()) {
             compositeDisposable.dispose();

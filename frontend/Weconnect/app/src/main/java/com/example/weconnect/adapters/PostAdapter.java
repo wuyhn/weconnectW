@@ -11,15 +11,12 @@ import android.net.Uri;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.InputStream;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.AlertDialog;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
@@ -73,9 +70,19 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         holder.tvContent.setText(post.getContent());
         holder.itemView.setOnClickListener(v -> openPostDetail(post));
 
-        // Load avatar from server URL with Glide, fallback to placeholder
-        if (post.getAvatarUrl() != null && !post.getAvatarUrl().isEmpty()) {
-            String avatarUrl = post.getAvatarUrl();
+        // Load avatar: ưu tiên global cache (realtime WebSocket) → own cache → post data
+        long myId = com.example.weconnect.api.RetrofitClient.getUserId(context);
+        String avatarUrl = post.getAvatarUrl();
+        if (post.getAuthorId() > 0) {
+            String globalCached = com.example.weconnect.api.RetrofitClient.getCachedAvatarForUser(post.getAuthorId());
+            if (globalCached != null && !globalCached.isEmpty()) {
+                avatarUrl = globalCached;
+            } else if (myId > 0 && post.getAuthorId() == myId) {
+                String myCached = com.example.weconnect.api.RetrofitClient.getAvatarUrl(context);
+                if (myCached != null && !myCached.isEmpty()) avatarUrl = myCached;
+            }
+        }
+        if (avatarUrl != null && !avatarUrl.isEmpty()) {
             if (avatarUrl.startsWith("/")) {
                 avatarUrl = com.example.weconnect.api.RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
             }
@@ -94,27 +101,17 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         // Post image: URI từ thư viện hoặc server URL hoặc resource id
         if (post.getPostImageUri() != null && !post.getPostImageUri().isEmpty()) {
             String imageUriStr = post.getPostImageUri();
-            if (imageUriStr.startsWith("/uploads/")) {
-                // Server-hosted image — load via HTTP
+            if (imageUriStr.startsWith("/uploads/") || imageUriStr.startsWith("http")) {
+                // Server-hosted image — dùng Glide để tránh ViewHolder recycling bugs
+                String fullUrl = imageUriStr.startsWith("http")
+                        ? imageUriStr
+                        : com.example.weconnect.api.RetrofitClient.getBaseUrl() + imageUriStr.substring(1);
                 holder.cvPostImage.setVisibility(View.VISIBLE);
-                String fullUrl = com.example.weconnect.api.RetrofitClient.getBaseUrl() + imageUriStr.substring(1);
-                new Thread(() -> {
-                    try {
-                        java.net.URL url = new java.net.URL(fullUrl);
-                        InputStream inputStream = url.openStream();
-                        Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
-                        inputStream.close();
-                        if (bitmap != null) {
-                            ((android.app.Activity) context).runOnUiThread(() -> {
-                                holder.ivPostImage.setImageBitmap(bitmap);
-                            });
-                        }
-                    } catch (Exception e) {
-                        ((android.app.Activity) context).runOnUiThread(() -> {
-                            holder.cvPostImage.setVisibility(View.GONE);
-                        });
-                    }
-                }).start();
+                com.bumptech.glide.Glide.with(context)
+                        .load(fullUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .into(holder.ivPostImage);
             } else {
                 // Local content:// URI — load via ContentResolver
                 try {
@@ -221,42 +218,22 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private void showOwnPostMenu(Post post, int position) {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(context);
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(context.getResources().getColor(R.color.soft_beige, null));
-        layout.setPadding(0, 32, 0, 32);
+        sheet.getBehavior().setSkipCollapsed(true);
 
-        // Header
-        android.widget.TextView header = new android.widget.TextView(context);
-        header.setText("Tuỳ chọn bài viết");
-        header.setTextSize(18);
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setTextColor(context.getResources().getColor(R.color.primary_pink, null));
-        header.setGravity(android.view.Gravity.CENTER);
-        header.setPadding(0, 16, 0, 24);
-        layout.addView(header);
-
-        View div = new View(context);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        layout.addView(div);
-
-        TextView tvEdit = createMenuItem("✏️  Chỉnh sửa bài viết");
-        tvEdit.setOnClickListener(v -> {
-            sheet.dismiss();
-            showEditPostDialog(post, position);
-        });
-        layout.addView(tvEdit);
-
-        TextView tvDelete = createMenuItem("🗑️  Xoá bài viết");
-        tvDelete.setTextColor(0xFFE53935);
-        tvDelete.setOnClickListener(v -> {
-            sheet.dismiss();
-            showDeleteConfirmation(post, position);
-        });
-        layout.addView(tvDelete);
-
-        sheet.setContentView(layout);
+        LinearLayout root = buildIosRoot();
+        LinearLayout group1 = buildIosGroup();
+        addIosHeader(group1, "Tuỳ chọn bài viết");
+        addIosSep(group1);
+        addIosRow(group1, "Chỉnh sửa bài viết", 0xFF1C1C1E, v -> { sheet.dismiss(); showEditPostDialog(post, position); });
+        addIosSep(group1);
+        addIosRow(group1, "Xoá bài viết", 0xFFFF3B30, v -> { sheet.dismiss(); showDeleteConfirmation(post, position); });
+        root.addView(group1, matchW());
+        addGroupGap(root);
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Huỷ", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
+        sheet.setContentView(root);
+        makeSheetTransparent(root);
         sheet.show();
     }
 
@@ -295,25 +272,20 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private void showOtherPostMenu(Post post, int position) {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(context);
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(0, 32, 0, 32);
+        sheet.getBehavior().setSkipCollapsed(true);
 
-        TextView tvHide = createMenuItem("👁‍🗨  Ẩn bài viết");
-        tvHide.setOnClickListener(v -> {
-            sheet.dismiss();
-            hidePost(position);
-        });
-        layout.addView(tvHide);
-
-        TextView tvReport = createMenuItem("🚩  Báo cáo bài viết");
-        tvReport.setOnClickListener(v -> {
-            sheet.dismiss();
-            showReportDialog(post, position);
-        });
-        layout.addView(tvReport);
-
-        sheet.setContentView(layout);
+        LinearLayout root = buildIosRoot();
+        LinearLayout group1 = buildIosGroup();
+        addIosRow(group1, "Ẩn bài viết", 0xFF1C1C1E, v -> { sheet.dismiss(); hidePost(position); });
+        addIosSep(group1);
+        addIosRow(group1, "Báo cáo bài viết", 0xFFFF3B30, v -> { sheet.dismiss(); showReportDialog(post, position); });
+        root.addView(group1, matchW());
+        addGroupGap(root);
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Huỷ", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
+        sheet.setContentView(root);
+        makeSheetTransparent(root);
         sheet.show();
     }
 
@@ -327,50 +299,8 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private void showReportDialog(Post post, int position) {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(context);
+        sheet.getBehavior().setSkipCollapsed(true);
 
-        LinearLayout root = new LinearLayout(context);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(context.getResources().getColor(R.color.soft_beige, null));
-        root.setPadding(0, 0, 0, 48);
-
-        // Header
-        android.widget.TextView header = new android.widget.TextView(context);
-        header.setText("🚩 Báo cáo bài viết");
-        header.setTextSize(20);
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setTextColor(context.getResources().getColor(R.color.primary_pink, null));
-        header.setGravity(android.view.Gravity.CENTER);
-        header.setPadding(0, 40, 0, 16);
-        root.addView(header);
-
-        android.widget.TextView subHeader = new android.widget.TextView(context);
-        subHeader.setText("Chọn lý do báo cáo bài viết này");
-        subHeader.setTextSize(14);
-        subHeader.setTextColor(context.getResources().getColor(R.color.text_secondary, null));
-        subHeader.setGravity(android.view.Gravity.CENTER);
-        subHeader.setPadding(0, 0, 0, 24);
-        root.addView(subHeader);
-
-        View div = new View(context);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
-
-        // Reasons card
-        com.google.android.material.card.MaterialCardView reasonCard =
-                new com.google.android.material.card.MaterialCardView(context);
-        LinearLayout.LayoutParams cardP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cardP.setMargins(40, 24, 40, 0);
-        reasonCard.setLayoutParams(cardP);
-        reasonCard.setCardBackgroundColor(context.getResources().getColor(R.color.card_surface, null));
-        reasonCard.setRadius(48f);
-        reasonCard.setCardElevation(4f);
-        reasonCard.setStrokeWidth(3);
-        reasonCard.setStrokeColor(context.getResources().getColor(R.color.primary_pink, null));
-
-        RadioGroup radioGroup = new RadioGroup(context);
-        radioGroup.setPadding(40, 24, 40, 24);
         String[] reasons = {
                 "Nội dung thô tục",
                 "Vi phạm quy định cộng đồng",
@@ -379,67 +309,68 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 "Quấy rối / Bắt nạt",
                 "Khác"
         };
+        int[] selectedIndex = { -1 };
+        TextView[] reasonRows = new TextView[reasons.length];
+
+        LinearLayout root = buildIosRoot();
+
+        // Group 1: header + reason rows
+        LinearLayout group1 = buildIosGroup();
+        addIosHeader(group1, "Báo cáo bài viết");
         for (int i = 0; i < reasons.length; i++) {
-            RadioButton rb = new RadioButton(context);
-            rb.setText(reasons[i]);
-            rb.setId(i);
-            rb.setPadding(24, 20, 24, 20);
-            rb.setTextSize(15);
-            rb.setTextColor(context.getResources().getColor(R.color.text_primary, null));
-            radioGroup.addView(rb);
+            addIosSep(group1);
+            final int idx = i;
+            TextView tv = new TextView(context);
+            tv.setText(reasons[i]);
+            tv.setTextSize(17);
+            tv.setTextColor(0xFF1C1C1E);
+            tv.setGravity(android.view.Gravity.CENTER);
+            tv.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+            tv.setClickable(true);
+            tv.setFocusable(true);
+            android.util.TypedValue ripple = new android.util.TypedValue();
+            context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+            tv.setBackgroundResource(ripple.resourceId);
+            tv.setOnClickListener(v -> {
+                // Deselect previous
+                if (selectedIndex[0] >= 0) {
+                    reasonRows[selectedIndex[0]].setTextColor(0xFF1C1C1E);
+                }
+                selectedIndex[0] = idx;
+                tv.setTextColor(0xFF007AFF);
+            });
+            reasonRows[i] = tv;
+            group1.addView(tv, matchW());
         }
-        reasonCard.addView(radioGroup);
-        root.addView(reasonCard);
+        root.addView(group1, matchW());
+        addGroupGap(root);
 
-        // Custom text card
-        com.google.android.material.card.MaterialCardView inputCard =
-                new com.google.android.material.card.MaterialCardView(context);
-        LinearLayout.LayoutParams inputP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        inputP.setMargins(40, 16, 40, 0);
-        inputCard.setLayoutParams(inputP);
-        inputCard.setCardBackgroundColor(context.getResources().getColor(R.color.card_surface, null));
-        inputCard.setRadius(48f);
-        inputCard.setCardElevation(4f);
-        inputCard.setStrokeWidth(3);
-        inputCard.setStrokeColor(context.getResources().getColor(R.color.primary_pink, null));
-
+        // Group 2: description EditText (no border)
+        LinearLayout group2 = buildIosGroup();
         EditText etCustomReason = new EditText(context);
         etCustomReason.setHint("Mô tả chi tiết (không bắt buộc)");
         etCustomReason.setMinLines(2);
-        etCustomReason.setPadding(40, 28, 40, 28);
+        etCustomReason.setPadding(dpPx(20), dpPx(14), dpPx(20), dpPx(14));
         etCustomReason.setBackground(null);
-        etCustomReason.setTextSize(14);
+        etCustomReason.setTextSize(15);
         etCustomReason.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         etCustomReason.setFocusable(true);
         etCustomReason.setFocusableInTouchMode(true);
         etCustomReason.setClickable(true);
-        inputCard.addView(etCustomReason);
-        root.addView(inputCard);
+        group2.addView(etCustomReason, matchW());
+        root.addView(group2, matchW());
+        addGroupGap(root);
 
-        // Send button
-        com.google.android.material.button.MaterialButton btnSend =
-                new com.google.android.material.button.MaterialButton(context);
-        btnSend.setText("Gửi báo cáo");
-        btnSend.setAllCaps(false);
-        btnSend.setCornerRadius(72);
-        btnSend.setTextSize(16);
-        btnSend.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
-                context.getResources().getColor(R.color.primary_pink, null)));
-        LinearLayout.LayoutParams btnP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        btnP.setMargins(48, 32, 48, 0);
-        btnSend.setLayoutParams(btnP);
-        btnSend.setOnClickListener(v -> {
-            int checkedId = radioGroup.getCheckedRadioButtonId();
-            if (checkedId == -1) {
+        // Group 3: submit button
+        LinearLayout group3 = buildIosGroup();
+        addIosRow(group3, "Gửi báo cáo", 0xFF007AFF, v -> {
+            if (selectedIndex[0] == -1) {
                 Toast.makeText(context, "Vui lòng chọn lý do báo cáo", Toast.LENGTH_SHORT).show();
                 return;
             }
             sheet.dismiss();
 
-            // Gửi report lên backend
-            String selectedReason = reasons[checkedId];
+            String selectedReason = reasons[selectedIndex[0]];
             String description = etCustomReason.getText().toString().trim();
             long postId = 0;
             try {
@@ -475,11 +406,18 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
             }
             hidePost(position);
         });
-        root.addView(btnSend);
+        root.addView(group3, matchW());
+        addGroupGap(root);
+
+        // Group 4: cancel
+        LinearLayout group4 = buildIosGroup();
+        addIosRow(group4, "Huỷ", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group4, matchW());
 
         android.widget.ScrollView sv = new android.widget.ScrollView(context);
         sv.addView(root);
         sheet.setContentView(sv);
+        makeSheetTransparent(root);
         sheet.show();
     }
 
@@ -526,16 +464,12 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         boolean isOwnPost = currentUsername.equalsIgnoreCase(post.getUsername());
 
         if (isOwnPost) {
-            // Own post: don't show join button, only show members centered
-            holder.btnJoinGroup.setVisibility(View.GONE);
-
-            // Remove weight so gravity="center" on parent works
-            android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                    (int) (48 * holder.itemView.getResources().getDisplayMetrics().density));
-            params.weight = 0;
-            holder.btnViewMembers.setLayoutParams(params);
-            holder.btnViewMembers.setPadding(48, 0, 48, 0);
+            // Own post: show "Nhóm chat" to open the group chat
+            holder.btnJoinGroup.setVisibility(View.VISIBLE);
+            holder.btnJoinGroup.setText("💬 Nhóm chat");
+            holder.btnJoinGroup.setEnabled(true);
+            holder.btnJoinGroup.setAlpha(1.0f);
+            holder.btnJoinGroup.setOnClickListener(v -> openGroupChatForPost(post));
         } else {
             // Other's post: check if tag matches viewer's interests
             boolean tagMatchesViewer = true;
@@ -675,6 +609,40 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         return postList.size();
     }
 
+    private void openGroupChatForPost(Post post) {
+        long postIdLong;
+        try {
+            postIdLong = Long.parseLong(post.getId());
+        } catch (Exception e) {
+            Toast.makeText(context, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        com.example.weconnect.api.RetrofitClient.loadToken(context);
+        com.example.weconnect.api.RetrofitClient.getClient()
+                .create(com.example.weconnect.api.ChatApiService.class)
+                .getRoomByPostId(postIdLong)
+                .enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>>() {
+                    @Override
+                    public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call,
+                                           retrofit2.Response<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> response) {
+                        if (response.isSuccessful() && response.body() != null
+                                && response.body().getResult() != null) {
+                            long roomId = response.body().getResult().getId();
+                            Intent intent = new Intent(context, com.example.weconnect.activities.ConversationActivity.class);
+                            intent.putExtra("room_id", String.valueOf(roomId));
+                            context.startActivity(intent);
+                        } else {
+                            Toast.makeText(context, "Không tìm thấy phòng chat", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    @Override
+                    public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call,
+                                          Throwable t) {
+                        Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
     private void openPostDetail(Post post) {
         Intent intent = new Intent(context, PostDetailActivity.class);
         intent.putExtra("post", post);
@@ -692,16 +660,83 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         context.startActivity(intent);
     }
 
-    private TextView createMenuItem(String text) {
+    // ── iOS-style sheet helpers ──
+
+    private LinearLayout buildIosRoot() {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0x00000000);
+        int p = dpPx(10);
+        root.setPadding(p, 0, p, p);
+        return root;
+    }
+
+    private LinearLayout buildIosGroup() {
+        LinearLayout ll = new LinearLayout(context);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFFFFFFFF);
+        bg.setCornerRadius(dpPx(14));
+        ll.setBackground(bg);
+        ll.setClipToOutline(true);
+        return ll;
+    }
+
+    private void addIosHeader(LinearLayout parent, String text) {
         TextView tv = new TextView(context);
         tv.setText(text);
-        tv.setTextSize(16);
-        tv.setTextColor(context.getResources().getColor(R.color.text_primary, null));
-        tv.setPadding(64, 40, 64, 40);
-        tv.setBackgroundResource(android.R.drawable.list_selector_background);
-        tv.setClickable(true);
-        tv.setFocusable(true);
-        return tv;
+        tv.setTextSize(13);
+        tv.setTextColor(0xFF8E8E93);
+        tv.setGravity(android.view.Gravity.CENTER);
+        tv.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
+        parent.addView(tv, matchW());
+    }
+
+    private void addIosRow(LinearLayout parent, String text, int color, View.OnClickListener listener) {
+        TextView tv = new TextView(context);
+        tv.setText(text);
+        tv.setTextSize(17);
+        tv.setTextColor(color);
+        tv.setGravity(android.view.Gravity.CENTER);
+        tv.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        if (listener != null) {
+            tv.setClickable(true);
+            tv.setFocusable(true);
+            android.util.TypedValue tv2 = new android.util.TypedValue();
+            context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv2, true);
+            tv.setBackgroundResource(tv2.resourceId);
+            tv.setOnClickListener(listener);
+        }
+        parent.addView(tv, matchW());
+    }
+
+    private void addIosSep(LinearLayout parent) {
+        View sep = new View(context);
+        sep.setBackgroundColor(0xFFD1D1D6);
+        sep.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        parent.addView(sep);
+    }
+
+    private void addGroupGap(LinearLayout parent) {
+        View gap = new View(context);
+        gap.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpPx(8)));
+        parent.addView(gap);
+    }
+
+    private void makeSheetTransparent(View root) {
+        root.post(() -> {
+            if (root.getParent() instanceof View) {
+                ((View) root.getParent()).setBackgroundColor(0x00000000);
+            }
+        });
+    }
+
+    private LinearLayout.LayoutParams matchW() {
+        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+    }
+
+    private int dpPx(int dp) {
+        return Math.round(dp * context.getResources().getDisplayMetrics().density);
     }
 
     public static class PostViewHolder extends RecyclerView.ViewHolder {

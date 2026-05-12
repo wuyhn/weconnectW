@@ -28,7 +28,7 @@ public class CreatePostActivity extends AppCompatActivity {
 
     private EditText etPostContent;
     private TextView tvUserName;
-    private ImageView ivClose, ivAddImage, ivAddLocation, ivTagInterest;
+    private ImageView ivClose, ivAddImage, ivAddLocation, ivTagInterest, ivUserAvatar;
     private MaterialButton btnPost;
     private String selectedTag = "";
     private MaterialCardView cardSelectedTag;
@@ -61,6 +61,7 @@ public class CreatePostActivity extends AppCompatActivity {
         ivClose = findViewById(R.id.ivClose);
         etPostContent = findViewById(R.id.etPostContent);
         tvUserName = findViewById(R.id.tvUserName);
+        ivUserAvatar = findViewById(R.id.ivUserAvatar);
         // Hiển thị tên user thật
         String savedName = RetrofitClient.getUserName(this);
         if (savedName != null && !savedName.isEmpty()) {
@@ -194,6 +195,28 @@ public class CreatePostActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (ivUserAvatar == null) return;
+        String avatarUrl = RetrofitClient.getAvatarUrl(this);
+        if (avatarUrl != null && !avatarUrl.isEmpty()) {
+            if (avatarUrl.startsWith("/")) {
+                avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+            }
+            com.bumptech.glide.Glide.with(this)
+                    .load(avatarUrl)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .skipMemoryCache(true)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
+                    .circleCrop()
+                    .into(ivUserAvatar);
+        } else {
+            ivUserAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        }
+    }
+
     private void handlePost() {
         String content = etPostContent.getText().toString().trim();
 
@@ -256,53 +279,43 @@ public class CreatePostActivity extends AppCompatActivity {
     private void showDurationDialog() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.soft_beige, null));
+        // Outer: handle bar + scrollable body
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackgroundColor(0x00000000);
 
-        // Header
-        LinearLayout headerRow = new LinearLayout(this);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        headerRow.setPadding(48, 40, 48, 24);
+        // Handle bar
+        View handle = new View(this);
+        LinearLayout.LayoutParams handleLp = new LinearLayout.LayoutParams(dpPx(40), dpPx(4));
+        handleLp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        handleLp.topMargin = dpPx(12);
+        handle.setLayoutParams(handleLp);
+        handle.setBackgroundColor(0xFFD1D1D6);
+        outer.addView(handle);
 
-        ImageView ivClose = new ImageView(this);
-        ivClose.setImageResource(R.drawable.ic_close);
-        ivClose.setColorFilter(getResources().getColor(R.color.primary_pink, null));
-        ivClose.setBackgroundResource(R.drawable.bg_action_icon_circle);
-        ivClose.setPadding(28, 28, 28, 28);
-        ivClose.setLayoutParams(new LinearLayout.LayoutParams(120, 120));
-        ivClose.setOnClickListener(v -> dialog.dismiss());
-        headerRow.addView(ivClose);
-
+        // Title
         TextView tvTitle = new TextView(this);
         tvTitle.setText("Thời hạn bài viết");
-        tvTitle.setTextSize(20);
-        tvTitle.setTextColor(getResources().getColor(R.color.primary_pink, null));
+        tvTitle.setTextSize(17);
+        tvTitle.setTextColor(0xFF1C1C1E);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvTitle.setGravity(android.view.Gravity.CENTER);
-        LinearLayout.LayoutParams titleP = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        tvTitle.setLayoutParams(titleP);
-        headerRow.addView(tvTitle);
+        tvTitle.setPadding(dpPx(16), dpPx(14), dpPx(16), dpPx(12));
+        outer.addView(tvTitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        android.widget.Space spacer = new android.widget.Space(this);
-        spacer.setLayoutParams(new LinearLayout.LayoutParams(120, 120));
-        headerRow.addView(spacer);
-        root.addView(headerRow);
-
+        // Divider
         View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        div.setBackgroundColor(0xFFD1D1D6);
+        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        outer.addView(div);
 
-        // Quick select
         TextView tvQuickLabel = new TextView(this);
-        tvQuickLabel.setText("⚡ Chọn nhanh");
-        tvQuickLabel.setTextSize(15);
-        tvQuickLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvQuickLabel.setTextColor(getResources().getColor(R.color.text_primary, null));
-        tvQuickLabel.setPadding(48, 36, 48, 16);
-        root.addView(tvQuickLabel);
+        tvQuickLabel.setText("Chọn nhanh");
+        tvQuickLabel.setTextSize(13);
+        tvQuickLabel.setTextColor(0xFF8E8E93);
+        tvQuickLabel.setPadding(dpPx(20), dpPx(20), dpPx(20), dpPx(8));
+        outer.addView(tvQuickLabel);
 
         String[] quickLabels = {"30 phút", "1 giờ", "1 giờ 30'", "3 giờ", "12 giờ", "1 ngày", "2 ngày", "3 ngày", "7 ngày"};
         long[] quickMillis = {
@@ -312,20 +325,22 @@ public class CreatePostActivity extends AppCompatActivity {
         };
 
         com.google.android.material.chip.ChipGroup chipGroup = new com.google.android.material.chip.ChipGroup(this);
-        chipGroup.setPadding(40, 0, 40, 0);
-        chipGroup.setChipSpacingHorizontal(16);
-        chipGroup.setChipSpacingVertical(12);
+        LinearLayout.LayoutParams cgLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cgLp.setMargins(dpPx(16), 0, dpPx(16), 0);
+        chipGroup.setLayoutParams(cgLp);
+        chipGroup.setChipSpacingHorizontal(dpPx(8));
+        chipGroup.setChipSpacingVertical(dpPx(8));
 
         for (int i = 0; i < quickLabels.length; i++) {
             final int index = i;
             com.google.android.material.chip.Chip chip = new com.google.android.material.chip.Chip(this);
             chip.setText(quickLabels[i]);
             chip.setCheckable(true);
-            chip.setChipBackgroundColorResource(R.color.card_surface);
-            chip.setChipStrokeColorResource(R.color.primary_pink);
-            chip.setChipStrokeWidth(2f);
-            chip.setTextColor(getResources().getColor(R.color.text_primary, null));
-            chip.setChipCornerRadius(40f);
+            chip.setChipBackgroundColor(android.content.res.ColorStateList.valueOf(0xFFF2F2F7));
+            chip.setChipStrokeWidth(0f);
+            chip.setTextColor(0xFF1C1C1E);
+            chip.setChipCornerRadius(dpPx(20));
             chip.setOnClickListener(v -> {
                 selectedDurationMillis = quickMillis[index];
                 selectedDurationLabel = quickLabels[index];
@@ -335,32 +350,30 @@ public class CreatePostActivity extends AppCompatActivity {
             });
             chipGroup.addView(chip);
         }
-        root.addView(chipGroup);
+        outer.addView(chipGroup);
 
-        // Custom input
         TextView tvCustomLabel = new TextView(this);
-        tvCustomLabel.setText("✏️  Hoặc nhập tự do");
-        tvCustomLabel.setTextSize(15);
-        tvCustomLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvCustomLabel.setTextColor(getResources().getColor(R.color.text_primary, null));
-        tvCustomLabel.setPadding(48, 32, 48, 16);
-        root.addView(tvCustomLabel);
+        tvCustomLabel.setText("Hoặc nhập thủ công");
+        tvCustomLabel.setTextSize(13);
+        tvCustomLabel.setTextColor(0xFF8E8E93);
+        tvCustomLabel.setPadding(dpPx(20), dpPx(20), dpPx(20), dpPx(8));
+        outer.addView(tvCustomLabel);
 
         com.google.android.material.card.MaterialCardView inputCard =
                 new com.google.android.material.card.MaterialCardView(this);
         LinearLayout.LayoutParams cardP = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cardP.setMargins(40, 0, 40, 0);
+        cardP.setMargins(dpPx(16), 0, dpPx(16), 0);
         inputCard.setLayoutParams(cardP);
-        inputCard.setCardBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        inputCard.setRadius(48f);
-        inputCard.setCardElevation(6f);
+        inputCard.setCardBackgroundColor(0xFFF2F2F7);
+        inputCard.setRadius(dpPx(14));
+        inputCard.setCardElevation(0f);
         inputCard.setStrokeWidth(0);
 
         LinearLayout inputRow = new LinearLayout(this);
         inputRow.setOrientation(LinearLayout.HORIZONTAL);
         inputRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        inputRow.setPadding(48, 24, 48, 24);
+        inputRow.setPadding(dpPx(20), dpPx(16), dpPx(20), dpPx(16));
 
         EditText etHours = new EditText(this);
         etHours.setHint("0");
@@ -374,7 +387,7 @@ public class CreatePostActivity extends AppCompatActivity {
         TextView tvH = new TextView(this);
         tvH.setText(" giờ    ");
         tvH.setTextSize(16);
-        tvH.setTextColor(getResources().getColor(R.color.text_secondary, null));
+        tvH.setTextColor(0xFF8E8E93);
         inputRow.addView(tvH);
 
         EditText etMinutes = new EditText(this);
@@ -389,24 +402,23 @@ public class CreatePostActivity extends AppCompatActivity {
         TextView tvM = new TextView(this);
         tvM.setText(" phút");
         tvM.setTextSize(16);
-        tvM.setTextColor(getResources().getColor(R.color.text_secondary, null));
+        tvM.setTextColor(0xFF8E8E93);
         inputRow.addView(tvM);
 
         inputCard.addView(inputRow);
-        root.addView(inputCard);
+        outer.addView(inputCard);
 
-        // Confirm button
         com.google.android.material.button.MaterialButton btnConfirm =
                 new com.google.android.material.button.MaterialButton(this);
         btnConfirm.setText("Xác nhận");
         btnConfirm.setTextSize(16);
         btnConfirm.setAllCaps(false);
-        btnConfirm.setCornerRadius(72);
+        btnConfirm.setCornerRadius(dpPx(26));
         btnConfirm.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
                 getResources().getColor(R.color.primary_pink, null)));
         LinearLayout.LayoutParams btnP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 140);
-        btnP.setMargins(48, 36, 48, 48);
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(52));
+        btnP.setMargins(dpPx(20), dpPx(20), dpPx(20), dpPx(24));
         btnConfirm.setLayoutParams(btnP);
 
         btnConfirm.setOnClickListener(v -> {
@@ -430,18 +442,24 @@ public class CreatePostActivity extends AppCompatActivity {
             cardSelectedDuration.setVisibility(View.VISIBLE);
             dialog.dismiss();
         });
-        root.addView(btnConfirm);
+        outer.addView(btnConfirm);
 
-        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
-        scrollView.addView(root);
-        dialog.setContentView(scrollView);
+        dialog.setContentView(outer);
 
         dialog.setOnShowListener(dialogInterface -> {
-            BottomSheetDialog d = (BottomSheetDialog) dialogInterface;
-            FrameLayout bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            FrameLayout bottomSheet = ((BottomSheetDialog) dialogInterface)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xFFFFFFFF);
+                float r = dpPx(24);
+                bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+                bottomSheet.setBackground(bg);
+
                 com.google.android.material.bottomsheet.BottomSheetBehavior behavior =
                         com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+                behavior.setFitToContents(true);
+                behavior.setSkipCollapsed(true);
                 behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
             }
         });
@@ -496,91 +514,80 @@ public class CreatePostActivity extends AppCompatActivity {
     private void showTagDialogWithInterests(String[] interests) {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
 
-        // Build layout
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.soft_beige, null));
+        // Outer: handle bar + scrollable body
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackgroundColor(0x00000000);
 
-        // Header
-        LinearLayout headerRow = new LinearLayout(this);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        headerRow.setPadding(48, 40, 48, 24);
+        // Handle bar
+        View handle = new View(this);
+        LinearLayout.LayoutParams handleLp = new LinearLayout.LayoutParams(dpPx(40), dpPx(4));
+        handleLp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        handleLp.topMargin = dpPx(12);
+        handle.setLayoutParams(handleLp);
+        handle.setBackgroundColor(0xFFD1D1D6);
+        outer.addView(handle);
 
-        ImageView ivCloseTag = new ImageView(this);
-        ivCloseTag.setImageResource(R.drawable.ic_close);
-        ivCloseTag.setColorFilter(getResources().getColor(R.color.primary_pink, null));
-        ivCloseTag.setBackgroundResource(R.drawable.bg_action_icon_circle);
-        ivCloseTag.setPadding(28, 28, 28, 28);
-        ivCloseTag.setLayoutParams(new LinearLayout.LayoutParams(120, 120));
-        ivCloseTag.setOnClickListener(v -> dialog.dismiss());
-        headerRow.addView(ivCloseTag);
-
+        // Title
         TextView tvTitle = new TextView(this);
         tvTitle.setText("Sở thích");
-        tvTitle.setTextSize(22);
-        tvTitle.setTextColor(getResources().getColor(R.color.primary_pink, null));
+        tvTitle.setTextSize(17);
+        tvTitle.setTextColor(0xFF1C1C1E);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvTitle.setGravity(android.view.Gravity.CENTER);
-        LinearLayout.LayoutParams titleP = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        tvTitle.setLayoutParams(titleP);
-        headerRow.addView(tvTitle);
+        tvTitle.setPadding(dpPx(16), dpPx(14), dpPx(16), dpPx(12));
+        outer.addView(tvTitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        android.widget.Space spacer = new android.widget.Space(this);
-        spacer.setLayoutParams(new LinearLayout.LayoutParams(120, 120));
-        headerRow.addView(spacer);
-        root.addView(headerRow);
-
+        // Divider
         View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        div.setBackgroundColor(0xFFD1D1D6);
+        div.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        outer.addView(div);
 
-        // Description
         TextView tvDesc = new TextView(this);
         tvDesc.setText("Chọn sở thích phù hợp cho bài viết của bạn");
-        tvDesc.setTextSize(14);
-        tvDesc.setTextColor(getResources().getColor(R.color.text_secondary, null));
+        tvDesc.setTextSize(13);
+        tvDesc.setTextColor(0xFF8E8E93);
         tvDesc.setGravity(android.view.Gravity.CENTER);
-        tvDesc.setPadding(48, 32, 48, 24);
-        root.addView(tvDesc);
+        tvDesc.setPadding(dpPx(20), dpPx(16), dpPx(20), dpPx(8));
+        outer.addView(tvDesc);
 
-        // ChipGroup with user's interests
         ChipGroup chipGroup = new ChipGroup(this);
         chipGroup.setSingleSelection(true);
-        chipGroup.setPadding(40, 0, 40, 0);
-        chipGroup.setChipSpacingHorizontal(16);
-        chipGroup.setChipSpacingVertical(12);
+        LinearLayout.LayoutParams cgLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cgLp.setMargins(dpPx(16), dpPx(8), dpPx(16), 0);
+        chipGroup.setLayoutParams(cgLp);
+        chipGroup.setChipSpacingHorizontal(dpPx(8));
+        chipGroup.setChipSpacingVertical(dpPx(8));
 
         for (String interest : interests) {
             String tag = interest.trim();
             if (tag.isEmpty()) continue;
-
             Chip chip = new Chip(this);
             chip.setText(tag);
             chip.setCheckable(true);
-            chip.setChipBackgroundColorResource(R.color.card_surface);
-            chip.setChipStrokeColorResource(R.color.primary_pink);
-            chip.setChipStrokeWidth(2f);
-            chip.setTextColor(getResources().getColor(R.color.text_primary, null));
-            chip.setChipCornerRadius(40f);
+            chip.setChipBackgroundColor(android.content.res.ColorStateList.valueOf(0xFFF2F2F7));
+            chip.setChipStrokeWidth(0f);
+            chip.setTextColor(0xFF1C1C1E);
+            chip.setChipCornerRadius(dpPx(20));
             chip.setTextSize(14);
             chipGroup.addView(chip);
         }
-        root.addView(chipGroup);
+        outer.addView(chipGroup);
 
-        // Confirm button
         com.google.android.material.button.MaterialButton btnOk =
                 new com.google.android.material.button.MaterialButton(this);
         btnOk.setText("Xác nhận");
         btnOk.setTextSize(16);
         btnOk.setAllCaps(false);
-        btnOk.setCornerRadius(72);
+        btnOk.setCornerRadius(dpPx(26));
         btnOk.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
                 getResources().getColor(R.color.primary_pink, null)));
         LinearLayout.LayoutParams btnP = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 140);
-        btnP.setMargins(48, 36, 48, 48);
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(52));
+        btnP.setMargins(dpPx(20), dpPx(20), dpPx(20), dpPx(24));
         btnOk.setLayoutParams(btnP);
 
         btnOk.setOnClickListener(v -> {
@@ -595,18 +602,24 @@ public class CreatePostActivity extends AppCompatActivity {
                 Toast.makeText(this, "Bạn chưa chọn sở thích nào!", Toast.LENGTH_SHORT).show();
             }
         });
-        root.addView(btnOk);
+        outer.addView(btnOk);
 
-        android.widget.ScrollView scrollView = new android.widget.ScrollView(this);
-        scrollView.addView(root);
-        dialog.setContentView(scrollView);
+        dialog.setContentView(outer);
 
         dialog.setOnShowListener(dialogInterface -> {
-            BottomSheetDialog d = (BottomSheetDialog) dialogInterface;
-            FrameLayout bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            FrameLayout bottomSheet = ((BottomSheetDialog) dialogInterface)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xFFFFFFFF);
+                float r = dpPx(24);
+                bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+                bottomSheet.setBackground(bg);
+
                 com.google.android.material.bottomsheet.BottomSheetBehavior behavior =
                         com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+                behavior.setFitToContents(true);
+                behavior.setSkipCollapsed(true);
                 behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
             }
         });
@@ -620,13 +633,24 @@ public class CreatePostActivity extends AppCompatActivity {
         dialog.setContentView(view);
 
         dialog.setOnShowListener(dialogInterface -> {
-            BottomSheetDialog d = (BottomSheetDialog) dialogInterface;
-            FrameLayout bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            FrameLayout bottomSheet = ((BottomSheetDialog) dialogInterface)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xFFFFFFFF);
+                float r = dpPx(24);
+                bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+                bottomSheet.setBackground(bg);
+
+                int screenH = getResources().getDisplayMetrics().heightPixels;
+                bottomSheet.getLayoutParams().height = (int)(screenH * 0.55f);
+                bottomSheet.requestLayout();
+
                 com.google.android.material.bottomsheet.BottomSheetBehavior behavior =
                         com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+                behavior.setFitToContents(true);
+                behavior.setSkipCollapsed(true);
                 behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
-                bottomSheet.getLayoutParams().height = ViewGroup.LayoutParams.MATCH_PARENT;
             }
         });
 
@@ -662,7 +686,7 @@ public class CreatePostActivity extends AppCompatActivity {
             }
 
             participantLimit = Integer.parseInt(input);
-            tvParticipantLimit.setText("👥 Gioi han: " + participantLimit + " nguoi");
+            tvParticipantLimit.setText("👥 Giới hạn: " + participantLimit + " người");
             cardParticipantLimit.setVisibility(View.VISIBLE);
 
             dialog.dismiss();
@@ -677,13 +701,24 @@ public class CreatePostActivity extends AppCompatActivity {
         dialog.setContentView(view);
 
         dialog.setOnShowListener(dialogInterface -> {
-            BottomSheetDialog d = (BottomSheetDialog) dialogInterface;
-            FrameLayout bottomSheet = d.findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            FrameLayout bottomSheet = ((BottomSheetDialog) dialogInterface)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet != null) {
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xFFFFFFFF);
+                float r = dpPx(24);
+                bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+                bottomSheet.setBackground(bg);
+
+                int screenH = getResources().getDisplayMetrics().heightPixels;
+                bottomSheet.getLayoutParams().height = (int)(screenH * 0.55f);
+                bottomSheet.requestLayout();
+
                 com.google.android.material.bottomsheet.BottomSheetBehavior behavior =
                         com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+                behavior.setFitToContents(true);
+                behavior.setSkipCollapsed(true);
                 behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
-                bottomSheet.getLayoutParams().height = ViewGroup.LayoutParams.MATCH_PARENT;
             }
         });
 
@@ -830,6 +865,10 @@ public class CreatePostActivity extends AppCompatActivity {
         });
 
         dialog.show();
+    }
+
+    private int dpPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     private void updateLocationPreview(

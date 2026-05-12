@@ -32,6 +32,7 @@ import retrofit2.Response;
 public class EditProfileActivity extends AppCompatActivity {
 
     private ImageView ivBackEditProfile;
+    private ImageView ivEditProfileAvatar;
     private TextInputEditText etDisplayName;
     private TextInputEditText etBirthDate;
     private TextInputEditText etBio;
@@ -87,11 +88,27 @@ public class EditProfileActivity extends AppCompatActivity {
 
     private void initViews() {
         ivBackEditProfile = findViewById(R.id.ivBackEditProfile);
+        ivEditProfileAvatar = findViewById(R.id.ivEditProfileAvatar);
         etDisplayName = findViewById(R.id.etDisplayName);
         etBirthDate = findViewById(R.id.etBirthDate);
         etBio = findViewById(R.id.etBio);
         chipGroupGender = findViewById(R.id.chipGroupGender);
         btnSaveProfile = findViewById(R.id.btnSaveProfile);
+
+        if (ivEditProfileAvatar != null) {
+            String avatarUrl = RetrofitClient.getAvatarUrl(this);
+            if (avatarUrl != null && !avatarUrl.isEmpty()) {
+                if (avatarUrl.startsWith("/")) avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+                com.bumptech.glide.Glide.with(this)
+                        .load(avatarUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .skipMemoryCache(true)
+                        .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
+                        .circleCrop()
+                        .into(ivEditProfileAvatar);
+            }
+        }
     }
 
     private void setupInterestChips() {

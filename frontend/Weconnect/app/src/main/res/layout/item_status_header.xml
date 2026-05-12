@@ -25,11 +25,13 @@
             android:layout_height="40dp"
             app:cardCornerRadius="20dp"
             app:cardElevation="0dp">
+
             <ImageView
+                android:id="@+id/ivStatusAvatar"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:src="@drawable/ic_user_placeholder"
-                android:scaleType="centerCrop"/>
+                android:layout_height="wrap_content"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_user_placeholder" />
         </androidx.cardview.widget.CardView>
 
         <TextView

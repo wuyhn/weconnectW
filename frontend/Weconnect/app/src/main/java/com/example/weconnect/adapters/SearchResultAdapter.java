@@ -16,12 +16,18 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.api.PostApiService;
+import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakePostRepository;
+import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.SearchResultItem;
 import com.example.weconnect.activities.PostDetailActivity;
 import java.util.ArrayList;
 import java.util.List;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
 
 public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
@@ -70,11 +76,13 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
             ((SectionViewHolder) holder).tvSectionTitle.setText(item.getTitle());
         } else if (holder instanceof UserViewHolder) {
             ((UserViewHolder) holder).tvUserName.setText(item.getTitle());
-            // Load avatar from URL with Glide
-            String avatarUrl = item.getAvatarUrl();
+            // Ưu tiên global cache (realtime) → item avatarUrl từ API
+            String avatarUrl = item.getUserId() > 0
+                    ? RetrofitClient.getCachedAvatarForUser(item.getUserId()) : null;
+            if (avatarUrl == null || avatarUrl.isEmpty()) avatarUrl = item.getAvatarUrl();
             if (avatarUrl != null && !avatarUrl.isEmpty()) {
                 if (avatarUrl.startsWith("/")) {
-                    avatarUrl = com.example.weconnect.api.RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+                    avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
                 }
                 com.bumptech.glide.Glide.with(context)
                         .load(avatarUrl)
@@ -123,9 +131,16 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 });
 
                 // Join status button
-                boolean isOwnPost = currentUsername.equalsIgnoreCase(post.getUsername());
+                long myId = RetrofitClient.getUserId(context);
+                boolean isOwnPost = (myId > 0 && post.getAuthorId() == myId)
+                        || currentUsername.equalsIgnoreCase(post.getUsername());
                 if (isOwnPost) {
                     ph.btnJoin.setVisibility(View.GONE);
+                } else if (post.isExpired() || post.isArchived()) {
+                    ph.btnJoin.setVisibility(View.VISIBLE);
+                    ph.btnJoin.setText("⏰ Đã hết hạn");
+                    ph.btnJoin.setEnabled(false);
+                    ph.btnJoin.setAlpha(0.4f);
                 } else if (post.isJoined()) {
                     ph.btnJoin.setVisibility(View.VISIBLE);
                     ph.btnJoin.setText("✅ Đã tham gia");
@@ -142,11 +157,36 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                     ph.btnJoin.setEnabled(true);
                     ph.btnJoin.setAlpha(1.0f);
                     ph.btnJoin.setOnClickListener(v -> {
-                        post.setPendingApproval(true);
-                        Toast.makeText(context, "Đã gửi yêu cầu tham gia " + post.getUsername(), Toast.LENGTH_SHORT).show();
-                        ph.btnJoin.setText("⏳ Đang chờ duyệt");
                         ph.btnJoin.setEnabled(false);
                         ph.btnJoin.setAlpha(0.6f);
+                        ph.btnJoin.setText("⏳ Đang gửi...");
+                        long postId;
+                        try { postId = Long.parseLong(post.getId()); }
+                        catch (Exception e) { return; }
+                        RetrofitClient.getClient().create(PostApiService.class)
+                                .joinPost(postId).enqueue(new Callback<ApiResponse<Void>>() {
+                                    @Override
+                                    public void onResponse(Call<ApiResponse<Void>> call,
+                                                           Response<ApiResponse<Void>> response) {
+                                        if (response.isSuccessful()) {
+                                            post.setPendingApproval(true);
+                                            ph.btnJoin.setText("⏳ Đang chờ duyệt");
+                                            Toast.makeText(context, "Đã gửi yêu cầu tham gia", Toast.LENGTH_SHORT).show();
+                                        } else {
+                                            ph.btnJoin.setEnabled(true);
+                                            ph.btnJoin.setAlpha(1.0f);
+                                            ph.btnJoin.setText("Tham gia");
+                                            Toast.makeText(context, "Không thể tham gia. Thử lại sau.", Toast.LENGTH_SHORT).show();
+                                        }
+                                    }
+                                    @Override
+                                    public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                        ph.btnJoin.setEnabled(true);
+                                        ph.btnJoin.setAlpha(1.0f);
+                                        ph.btnJoin.setText("Tham gia");
+                                        Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                                    }
+                                });
                     });
                 }
             }

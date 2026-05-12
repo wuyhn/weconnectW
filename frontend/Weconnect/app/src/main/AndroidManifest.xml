@@ -32,21 +32,22 @@
 
         <activity
             android:name="com.example.weconnect.activities.MainActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop" />
         <activity
             android:name="com.example.weconnect.activities.CreatePostActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".activities.SearchActivity" />
         <activity android:name=".activities.ArchivePostsActivity" />
-        <activity android:name=".activities.ChatListActivity" />
+        <activity android:name=".activities.ChatListActivity" android:launchMode="singleTop" />
         <activity android:name=".activities.ConversationActivity" />
-        <activity android:name=".activities.UserProfileActivity" />
+        <activity android:name=".activities.UserProfileActivity" android:launchMode="singleTop" />
         <activity android:name=".activities.PostDetailActivity" />
         <activity android:name=".activities.EditProfileActivity" />
         <activity android:name=".activities.ChangePasswordActivity" />
         <activity android:name=".activities.ParticipantsActivity" />
-        <activity android:name=".activities.NotificationsActivity" />
+        <activity android:name=".activities.NotificationsActivity" android:launchMode="singleTop" />
         <activity android:name=".activities.OnboardingActivity" />
         <activity android:name=".activities.ForgotPasswordActivity" />
         <activity android:name=".activities.BlockedUsersActivity" />

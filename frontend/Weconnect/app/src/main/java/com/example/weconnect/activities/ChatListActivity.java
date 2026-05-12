@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
 import com.example.weconnect.adapters.ChatRoomAdapter;
+import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.api.ChatApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.models.ApiResponse;
@@ -28,6 +29,7 @@ import com.example.weconnect.websocket.WebSocketManager;
 import com.google.android.material.tabs.TabLayout;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +52,7 @@ public class ChatListActivity extends AppCompatActivity {
     private TabLayout tabChatType;
     private ChatRoomAdapter adapter;
     private String currentTab = TAB_ACTIVITY;
+    private TextView tvNotifBadge;
 
     // Cached rooms from API
     private List<ChatRoom> allRooms = new ArrayList<>();
@@ -71,6 +74,7 @@ public class ChatListActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        BadgeManager.applyBadge(tvNotifBadge);
         loadChatsFromApi();
         WebSocketManager.getInstance().subscribeToChatList(payload -> loadChatsFromApi());
     }
@@ -90,6 +94,7 @@ public class ChatListActivity extends AppCompatActivity {
         btnNotifications = findViewById(R.id.btnNotifications);
         btnProfile = findViewById(R.id.btnProfile);
         tabChatType = findViewById(R.id.tabChatType);
+        tvNotifBadge = findViewById(R.id.tvNotifBadge);
     }
 
     private void setupRecyclerView() {
@@ -124,24 +129,24 @@ public class ChatListActivity extends AppCompatActivity {
 
         btnHome.setOnClickListener(v -> {
             Intent intent = new Intent(this, MainActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
-            finish();
+            overridePendingTransition(0, 0);
         });
 
         btnNotifications.setOnClickListener(v -> {
             Intent intent = new Intent(this, NotificationsActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
-            finish();
+            overridePendingTransition(0, 0);
         });
 
         btnProfile.setOnClickListener(v -> {
             Intent intent = new Intent(this, UserProfileActivity.class);
             intent.putExtra("username", RetrofitClient.getUserName(this));
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
-            finish();
+            overridePendingTransition(0, 0);
         });
     }
 
@@ -255,6 +260,42 @@ public class ChatListActivity extends AppCompatActivity {
                         active, inactiveLabel,
                         messages, ownerName, memberNames, new ArrayList<>()
                 );
+                room.setLastMessageTimeRaw(lastTime);
+
+                if (item.getMembers() != null) {
+                    long myId = RetrofitClient.getUserId(ChatListActivity.this);
+                    if (ChatRoom.TYPE_DIRECT.equals(type)) {
+                        // DM: avatar của người còn lại
+                        for (ChatRoomApiResponse.MemberInfo m : item.getMembers()) {
+                            if (m.getId() != myId) {
+                                // Ưu tiên global cache (realtime) → fallback API data
+                                String cachedUrl = RetrofitClient.getCachedAvatarForUser(m.getId());
+                                String mUrl = (cachedUrl != null && !cachedUrl.isEmpty())
+                                        ? cachedUrl : m.getAvatarUrl();
+                                if (mUrl != null && !mUrl.isEmpty()) {
+                                    if (mUrl.startsWith("/")) mUrl = RetrofitClient.getBaseUrl() + mUrl.substring(1);
+                                    room.setAvatarUrl(mUrl);
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        // Group/Activity: avatar của owner (role="owner")
+                        for (ChatRoomApiResponse.MemberInfo m : item.getMembers()) {
+                            if ("owner".equalsIgnoreCase(m.getRole())) {
+                                String cachedUrl = RetrofitClient.getCachedAvatarForUser(m.getId());
+                                String mUrl = (cachedUrl != null && !cachedUrl.isEmpty())
+                                        ? cachedUrl : m.getAvatarUrl();
+                                if (mUrl != null && !mUrl.isEmpty()) {
+                                    if (mUrl.startsWith("/")) mUrl = RetrofitClient.getBaseUrl() + mUrl.substring(1);
+                                    room.setAvatarUrl(mUrl);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 rooms.add(room);
             } catch (Exception e) {
                 e.printStackTrace();
@@ -307,6 +348,10 @@ public class ChatListActivity extends AppCompatActivity {
 
             filtered.add(room);
         }
+
+        // Sort: tin nhắn mới nhất lên đầu (ISO string sort đúng thứ tự thời gian)
+        Collections.sort(filtered, (a, b) ->
+                b.getLastMessageTimeRaw().compareTo(a.getLastMessageTimeRaw()));
 
         adapter.submitList(filtered);
     }

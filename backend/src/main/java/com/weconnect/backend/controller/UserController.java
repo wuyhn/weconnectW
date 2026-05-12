@@ -8,9 +8,11 @@ import com.weconnect.backend.entity.User;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.service.UserService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -20,10 +22,13 @@ public class UserController {
 
     private final UserService userService;
     private final UserRepository userRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    public UserController(UserService userService, UserRepository userRepository) {
+    public UserController(UserService userService, UserRepository userRepository,
+                          SimpMessagingTemplate messagingTemplate) {
         this.userService = userService;
         this.userRepository = userRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     // Lấy profile của chính mình
@@ -62,6 +67,15 @@ public class UserController {
                                            @RequestBody UpdateProfileRequest request) {
         User currentUser = (User) authentication.getPrincipal();
         UserProfileResponse profile = userService.updateProfile(currentUser.getId(), request);
+
+        // Broadcast avatar change so all connected clients update in realtime
+        if (request.getAvatarUrl() != null && !request.getAvatarUrl().isEmpty()) {
+            Map<String, Object> event = new HashMap<>();
+            event.put("userId", currentUser.getId());
+            event.put("avatarUrl", request.getAvatarUrl());
+            messagingTemplate.convertAndSend("/topic/user-updates", (Object) event);
+        }
+
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000)
                 .message("Cập nhật thành công!")
@@ -195,7 +209,13 @@ public class UserController {
         List<Map<String, Object>> result = users.stream()
                 .filter(u -> !u.getId().equals(currentUser.getId()))
                 .limit(10)
-                .map(u -> Map.<String, Object>of("id", u.getId(), "fullName", u.getFullName()))
+                .map(u -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("id", u.getId());
+                    m.put("fullName", u.getFullName());
+                    m.put("avatarUrl", u.getAvatarUrl() != null ? u.getAvatarUrl() : "");
+                    return m;
+                })
                 .toList();
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công").result(result).build());

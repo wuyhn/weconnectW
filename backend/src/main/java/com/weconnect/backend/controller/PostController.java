@@ -6,6 +6,7 @@ import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.service.PostService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,9 +17,11 @@ import java.util.List;
 public class PostController {
 
     private final PostService postService;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    public PostController(PostService postService) {
+    public PostController(PostService postService, SimpMessagingTemplate messagingTemplate) {
         this.postService = postService;
+        this.messagingTemplate = messagingTemplate;
     }
 
     // Danh sách bài đăng active
@@ -50,6 +53,8 @@ public class PostController {
                                         @RequestBody PostRequest request) {
         User user = (User) authentication.getPrincipal();
         PostResponse post = postService.createPost(user.getId(), request);
+        // Broadcast tới tất cả client đang kết nối để cập nhật feed realtime
+        messagingTemplate.convertAndSend("/topic/feed", post);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Tạo bài đăng thành công!").result(post).build());
     }

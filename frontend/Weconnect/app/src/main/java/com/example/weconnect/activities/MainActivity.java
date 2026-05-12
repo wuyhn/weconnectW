@@ -20,7 +20,9 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.adapters.PostAdapter;
+import com.google.gson.Gson;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakePostRepository;
@@ -105,6 +107,8 @@ public class MainActivity extends AppCompatActivity {
         loadFriendNamesFromBackend();
         loadPostsFromApi();
         loadUnreadNotificationCount();
+        loadStatusHeaderAvatar();
+        subscribeToRealtimeEvents();
         highlightTab(btnHome);
     }
 
@@ -195,13 +199,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateBadge(int count) {
-        if (tvNotifBadge == null) return;
-        if (count > 0) {
-            tvNotifBadge.setVisibility(View.VISIBLE);
-            tvNotifBadge.setText(count > 99 ? "99+" : String.valueOf(count));
-        } else {
-            tvNotifBadge.setVisibility(View.GONE);
-        }
+        BadgeManager.setCount(count);
+        BadgeManager.applyBadge(tvNotifBadge);
     }
 
     private void setupActivityResultLauncher() {
@@ -342,6 +341,7 @@ public class MainActivity extends AppCompatActivity {
         rvPosts = findViewById(R.id.rvPosts);
         statusHeader = findViewById(R.id.statusHeader);
         tvNotifBadge = findViewById(R.id.tvNotifBadge);
+        loadStatusHeaderAvatar();
 
         androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout =
                 findViewById(R.id.swipeRefreshLayout);
@@ -374,22 +374,25 @@ public class MainActivity extends AppCompatActivity {
         });
 
         btnMessages.setOnClickListener(v -> {
-            highlightTab(btnMessages);
             Intent intent = new Intent(MainActivity.this, ChatListActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
+            overridePendingTransition(0, 0);
         });
 
         btnNotifications.setOnClickListener(v -> {
-            highlightTab(btnNotifications);
             Intent intent = new Intent(MainActivity.this, NotificationsActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
+            overridePendingTransition(0, 0);
         });
 
         btnProfile.setOnClickListener(v -> {
-            highlightTab(btnProfile);
             Intent intent = new Intent(MainActivity.this, UserProfileActivity.class);
             intent.putExtra("username", RetrofitClient.getUserName(this));
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
+            overridePendingTransition(0, 0);
         });
     }
 
@@ -695,6 +698,88 @@ public class MainActivity extends AppCompatActivity {
             public void onFailure(Call<ApiResponse<PostResponse>> call, Throwable t) {
                 Toast.makeText(MainActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
             }
+        });
+    }
+
+    private void loadStatusHeaderAvatar() {
+        if (statusHeader == null) return;
+        ImageView ivStatusAvatar = statusHeader.findViewById(R.id.ivStatusAvatar);
+        if (ivStatusAvatar == null) return;
+        String avatarUrl = RetrofitClient.getAvatarUrl(this);
+        if (avatarUrl != null && !avatarUrl.isEmpty()) {
+            if (avatarUrl.startsWith("/")) {
+                avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+            }
+            com.bumptech.glide.Glide.with(this)
+                    .load(avatarUrl)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .skipMemoryCache(true)
+                    .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
+                    .circleCrop()
+                    .into(ivStatusAvatar);
+        } else {
+            ivStatusAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        }
+    }
+
+    private void subscribeToRealtimeEvents() {
+        WebSocketManager ws = WebSocketManager.getInstance();
+        if (!ws.isConnected()) return;
+
+        // Nhận bài post mới từ user khác
+        ws.subscribeToFeed(json -> {
+            try {
+                PostResponse postResp = new Gson().fromJson(json, PostResponse.class);
+                if (postResp == null || postResp.getId() == null) return;
+
+                // Bỏ qua post của chính mình (đã được thêm qua REST response)
+                long myId = RetrofitClient.getUserId(this);
+                if (postResp.getAuthorId() != null && postResp.getAuthorId() == myId) return;
+
+                // Tránh trùng lặp
+                String newPostId = String.valueOf(postResp.getId());
+                for (Post p : postList) {
+                    if (newPostId.equals(p.getId())) return;
+                }
+
+                Post newPost = postResp.toPost();
+                // Áp dụng cached avatar nếu có
+                if (postResp.getAuthorId() != null) {
+                    String cachedAvatar = RetrofitClient.getCachedAvatarForUser(postResp.getAuthorId());
+                    if (cachedAvatar != null && !cachedAvatar.isEmpty()) newPost.setAvatarUrl(cachedAvatar);
+                }
+                postList.add(0, newPost);
+                postAdapter.notifyItemInserted(0);
+                rvPosts.scrollToPosition(0);
+            } catch (Exception ignored) {}
+        });
+
+        // Nhận cập nhật avatar user bất kỳ
+        ws.subscribeToAvatarUpdates(json -> {
+            try {
+                Gson gson = new Gson();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = gson.fromJson(json, Map.class);
+                if (map == null) return;
+
+                long userId = ((Number) map.get("userId")).longValue();
+                String avatarUrl = (String) map.get("avatarUrl");
+                if (avatarUrl == null || avatarUrl.isEmpty()) return;
+
+                // Cập nhật global cache cho tất cả user
+                RetrofitClient.cacheAvatarForUser(userId, avatarUrl);
+
+                // Nếu là user hiện tại, cập nhật personal cache và header
+                long myId = RetrofitClient.getUserId(this);
+                if (userId == myId) {
+                    RetrofitClient.saveAvatarUrl(this, avatarUrl);
+                    loadStatusHeaderAvatar();
+                }
+
+                // Refresh tất cả post hiển thị
+                if (postAdapter != null) postAdapter.notifyDataSetChanged();
+            } catch (Exception ignored) {}
         });
     }
 }

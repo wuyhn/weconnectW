@@ -14,14 +14,17 @@ import retrofit2.converter.gson.GsonConverterFactory;
 
 public class RetrofitClient {
 
-    private static final String BASE_URL = "http://172.16.0.223:8080/";
-
+//    private static final String BASE_URL = "http://172.16.0.223:8080/";
+    private static final String BASE_URL = "http://10.0.2.2:8080/";
     public static String getBaseUrl() {
         return BASE_URL;
     }
 
     private static Retrofit retrofit = null;
     private static String authToken = null;
+    private static String currentAvatarUrl = null;
+    // Global cache: userId → avatarUrl cho tất cả user (nhận qua WebSocket realtime)
+    private static final java.util.Map<Long, String> userAvatarCache = new java.util.HashMap<>();
 
     public static Retrofit getClient() {
         if (retrofit == null) {
@@ -91,10 +94,37 @@ public class RetrofitClient {
         return prefs.getString("user_name", "");
     }
 
+    // Lưu avatar URL của user hiện tại
+    public static void saveAvatarUrl(Context context, String url) {
+        currentAvatarUrl = (url != null && !url.isEmpty()) ? url : null;
+        SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
+        prefs.edit().putString("user_avatar_url", url != null ? url : "").apply();
+    }
+
+    public static String getAvatarUrl(Context context) {
+        if (currentAvatarUrl != null) return currentAvatarUrl;
+        if (context == null) return null;
+        SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
+        String saved = prefs.getString("user_avatar_url", "");
+        currentAvatarUrl = saved.isEmpty() ? null : saved;
+        return currentAvatarUrl;
+    }
+
+    // Cache avatar cho user bất kỳ (dùng sau khi nhận WebSocket avatar-update event)
+    public static void cacheAvatarForUser(long userId, String url) {
+        if (url != null && !url.isEmpty()) userAvatarCache.put(userId, url);
+    }
+
+    public static String getCachedAvatarForUser(long userId) {
+        return userAvatarCache.get(userId);
+    }
+
     // Logout
     public static void clearSession(Context context) {
         authToken = null;
         retrofit = null;
+        currentAvatarUrl = null;
+        userAvatarCache.clear();
         SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
         prefs.edit().clear().apply();
     }

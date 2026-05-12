@@ -64,6 +64,11 @@ public class ChatRoom implements Serializable {
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
 
+    // Raw ISO timestamp from API (e.g. "2026-04-18T21:04:10") — dùng để sort danh sách chat
+    private String lastMessageTimeRaw = "";
+    public String getLastMessageTimeRaw() { return lastMessageTimeRaw != null ? lastMessageTimeRaw : ""; }
+    public void setLastMessageTimeRaw(String t) { this.lastMessageTimeRaw = t != null ? t : ""; }
+
     public String getId() {
         return id;
     }

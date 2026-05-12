@@ -9,7 +9,7 @@ export const authService = {
    * Login with credentials
    * REAL API: POST /api/auth/login
    * Response format matches backend spec:
-   * {
+   * {1
    *   "code": 1000,
    *   "message": "Đăng nhập thành công!",
    *   "result": {

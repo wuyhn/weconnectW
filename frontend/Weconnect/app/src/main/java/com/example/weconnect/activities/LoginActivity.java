@@ -35,6 +35,16 @@ public class LoginActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Kiểm tra session còn hạn: nếu đã có token thì bỏ qua Login
+        RetrofitClient.loadToken(this);
+        String savedToken = RetrofitClient.getAuthToken();
+        if (savedToken != null && !savedToken.isEmpty()) {
+            startActivity(new Intent(LoginActivity.this, MainActivity.class));
+            finish();
+            return;
+        }
+
         setContentView(R.layout.activity_login);
 
         initViews();

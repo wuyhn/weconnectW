@@ -141,9 +141,11 @@ public class SearchActivity extends AppCompatActivity {
                         for (Map<String, Object> u : users) {
                             String fullName = u.get("fullName") != null ? u.get("fullName").toString() : "";
                             long userId = u.get("id") != null ? ((Number) u.get("id")).longValue() : 0;
+                            String avatarUrl = u.get("avatarUrl") != null ? u.get("avatarUrl").toString() : "";
                             SearchResultItem item = new SearchResultItem(
                                     SearchResultItem.TYPE_USER, fullName, "", R.drawable.ic_user_placeholder);
                             item.setUserId(userId);
+                            item.setAvatarUrl(avatarUrl);
                             userResults.add(item);
                         }
                     }

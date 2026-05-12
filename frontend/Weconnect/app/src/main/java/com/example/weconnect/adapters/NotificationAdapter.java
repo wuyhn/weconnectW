@@ -24,6 +24,7 @@ import com.example.weconnect.data.FakeNotificationRepository.NotificationType;
 import com.example.weconnect.data.FakeSocialRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.NotificationItem;
+import com.example.weconnect.util.BadgeManager;
 import com.google.android.material.button.MaterialButton;
 
 import java.text.SimpleDateFormat;
@@ -45,10 +46,16 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
     private final Context context;
     private final List<Object> items; // String (date header), NotificationItem (real), or FakeNotificationRepository.NotificationItem
+    private final Runnable onBadgeChanged;
 
     public NotificationAdapter(Context context, List<Object> items) {
+        this(context, items, null);
+    }
+
+    public NotificationAdapter(Context context, List<Object> items, Runnable onBadgeChanged) {
         this.context = context;
         this.items = items;
+        this.onBadgeChanged = onBadgeChanged;
     }
 
     @Override
@@ -93,8 +100,13 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         holder.tvMessage.setText(item.getMessage());
         holder.tvTime.setText(formatCreatedAt(item.getCreatedAt()));
 
-        // Load avatar from server URL with Glide
+        // Load avatar — if sender is current user, use fresh cached URL instead of stale stored URL
         String avatarUrl = item.getSenderAvatarUrl();
+        long myId = RetrofitClient.getUserId(context);
+        if (myId > 0 && item.getRelatedUserId() != null && item.getRelatedUserId() == myId) {
+            String cached = RetrofitClient.getAvatarUrl(context);
+            if (cached != null && !cached.isEmpty()) avatarUrl = cached;
+        }
         if (avatarUrl != null && !avatarUrl.isEmpty()) {
             if (avatarUrl.startsWith("/")) {
                 avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
@@ -221,6 +233,8 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 item.setRead(true);
                 holder.viewUnreadDot.setVisibility(View.GONE);
                 holder.tvMessage.setTypeface(null, android.graphics.Typeface.NORMAL);
+                BadgeManager.decrement();
+                if (onBadgeChanged != null) onBadgeChanged.run();
 
                 NotificationApiService notifApi = RetrofitClient.getClient()
                         .create(NotificationApiService.class);
@@ -314,8 +328,13 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
 
     private void markNotificationActioned(NotificationItem item, NotifViewHolder holder, String message) {
+        boolean wasUnread = !item.isRead();
         item.setActioned(true);
         item.setRead(true);
+        if (wasUnread) {
+            BadgeManager.decrement();
+            if (onBadgeChanged != null) onBadgeChanged.run();
+        }
 
         // Mark on backend
         NotificationApiService notifApi = RetrofitClient.getClient()
@@ -425,15 +444,22 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
             holder.tvActioned.setVisibility(View.GONE);
         }
 
-        // Click to open profile
-        if (item.getRelatedUsername() != null && !item.getRelatedUsername().isEmpty()) {
-            holder.itemView.setOnClickListener(v -> {
+        // Click to open profile + mark as read
+        holder.itemView.setOnClickListener(v -> {
+            if (!item.isRead()) {
+                item.setRead(true);
+                holder.viewUnreadDot.setVisibility(View.GONE);
+                holder.tvMessage.setTypeface(null, android.graphics.Typeface.NORMAL);
+                BadgeManager.decrement();
+                if (onBadgeChanged != null) onBadgeChanged.run();
+            }
+            if (item.getRelatedUsername() != null && !item.getRelatedUsername().isEmpty()) {
                 Intent intent = new Intent(context, UserProfileActivity.class);
                 intent.putExtra("username", item.getRelatedUsername());
                 intent.putExtra("view_other", true);
                 context.startActivity(intent);
-            });
-        }
+            }
+        });
 
         // Unread indicator
         if (!item.isRead()) {

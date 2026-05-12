@@ -26,6 +26,8 @@ import retrofit2.Response;
 public class PostDetailActivity extends AppCompatActivity {
 
     private ImageView ivBackPostDetail;
+    private ImageView ivPostDetailAuthorAvatar;
+    private android.widget.LinearLayout layoutPostDetailAuthor;
     private TextView tvPostDetailUsername;
     private TextView tvPostDetailContent;
     private TextView tvPostDetailTag;
@@ -59,6 +61,8 @@ public class PostDetailActivity extends AppCompatActivity {
 
     private void initViews() {
         ivBackPostDetail = findViewById(R.id.ivBackPostDetail);
+        ivPostDetailAuthorAvatar = findViewById(R.id.ivPostDetailAuthorAvatar);
+        layoutPostDetailAuthor = findViewById(R.id.layoutPostDetailAuthor);
         tvPostDetailUsername = findViewById(R.id.tvPostDetailUsername);
         tvPostDetailContent = findViewById(R.id.tvPostDetailContent);
         tvPostDetailTag = findViewById(R.id.tvPostDetailTag);
@@ -79,20 +83,20 @@ public class PostDetailActivity extends AppCompatActivity {
     private void setupClickListeners() {
         ivBackPostDetail.setOnClickListener(v -> finish());
 
-        tvPostDetailUsername.setOnClickListener(v -> {
+        android.view.View.OnClickListener authorClickListener = v -> {
+            if (post == null) return;
             Intent intent = new Intent(PostDetailActivity.this, UserProfileActivity.class);
             intent.putExtra("username", username);
-            if (post != null) {
-                String currentUser = RetrofitClient.getUserName(this);
-                if (currentUser == null || !username.equalsIgnoreCase(currentUser)) {
-                    intent.putExtra("view_other", true);
-                    if (post.getAuthorId() > 0) {
-                        intent.putExtra("user_id", post.getAuthorId());
-                    }
-                }
+            String currentUser = RetrofitClient.getUserName(this);
+            if (currentUser == null || !username.equalsIgnoreCase(currentUser)) {
+                intent.putExtra("view_other", true);
+                if (post.getAuthorId() > 0) intent.putExtra("user_id", post.getAuthorId());
             }
             startActivity(intent);
-        });
+        };
+        tvPostDetailUsername.setOnClickListener(authorClickListener);
+        if (layoutPostDetailAuthor != null) layoutPostDetailAuthor.setOnClickListener(authorClickListener);
+        if (ivPostDetailAuthorAvatar != null) ivPostDetailAuthorAvatar.setOnClickListener(authorClickListener);
 
         // Bấm vào thành viên → mở danh sách người tham gia
         tvPostDetailMembers.setOnClickListener(v -> {
@@ -118,6 +122,22 @@ public class PostDetailActivity extends AppCompatActivity {
 
         username = post.getUsername();
         tvPostDetailUsername.setText(username);
+
+        // Load author avatar: global cache → post avatarUrl → placeholder
+        if (ivPostDetailAuthorAvatar != null) {
+            String avatarUrl = post.getAuthorId() > 0
+                    ? RetrofitClient.getCachedAvatarForUser(post.getAuthorId()) : null;
+            if (avatarUrl == null || avatarUrl.isEmpty()) avatarUrl = post.getAvatarUrl();
+            if (avatarUrl != null && !avatarUrl.isEmpty()) {
+                if (avatarUrl.startsWith("/")) avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+                com.bumptech.glide.Glide.with(this)
+                        .load(avatarUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .circleCrop()
+                        .into(ivPostDetailAuthorAvatar);
+            }
+        }
         tvPostDetailContent.setText(post.getContent());
         tvPostDetailMembers.setText("Thành viên: " + post.getMemberCount() + "/" + post.getMaxMembers());
         tvPostDetailTime.setText("Đăng lúc: " + post.getTimeAgo());
@@ -137,10 +157,14 @@ public class PostDetailActivity extends AppCompatActivity {
             tvPostDetailLocation.setVisibility(View.GONE);
         }
 
-        // Show group chat and joined state
-        if (post.isJoined()) {
+        // Show group chat button: owner always sees it, joined members too
+        String currentUser = RetrofitClient.getUserName(this);
+        long myId = RetrofitClient.getUserId(this);
+        boolean isOwnPost = (currentUser != null && currentUser.equalsIgnoreCase(username))
+                || (myId > 0 && post.getAuthorId() == myId);
+        if (isOwnPost || post.isJoined()) {
             btnOpenGroupChat.setVisibility(View.VISIBLE);
-            btnOpenGroupChat.setText("💬 Mở nhóm chat");
+            btnOpenGroupChat.setText(isOwnPost ? "💬 Xem nhóm chat" : "💬 Mở nhóm chat");
         } else {
             btnOpenGroupChat.setVisibility(View.GONE);
         }

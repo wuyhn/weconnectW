@@ -60,6 +60,7 @@ public class UserService {
         if (request.getGender() != null) user.setGender(request.getGender());
         if (request.getBio() != null) user.setBio(request.getBio());
         if (request.getInterestTags() != null) user.setInterestTags(request.getInterestTags());
+        if (request.getAvatarUrl() != null) user.setAvatarUrl(request.getAvatarUrl());
 
         userRepository.save(user);
         return toProfileResponse(user);

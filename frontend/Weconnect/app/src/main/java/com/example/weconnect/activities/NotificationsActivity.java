@@ -17,9 +17,9 @@ import com.example.weconnect.adapters.NotificationAdapter;
 import com.example.weconnect.api.NotificationApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakeNotificationRepository;
-import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.NotificationItem;
+import com.example.weconnect.util.BadgeManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +33,7 @@ public class NotificationsActivity extends AppCompatActivity {
     private RecyclerView rvNotifications;
     private NotificationAdapter adapter;
     private TextView tvEmpty;
+    private TextView tvNotifBadge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,11 +42,14 @@ public class NotificationsActivity extends AppCompatActivity {
 
         rvNotifications = findViewById(R.id.rvNotifications);
         tvEmpty = findViewById(R.id.tvNoNotifications);
+        tvNotifBadge = findViewById(R.id.tvNotifBadge);
         ImageView ivMarkAllRead = findViewById(R.id.ivMarkAllRead);
+
+        // Hiển thị badge theo count hiện tại (không reset ở đây)
+        BadgeManager.applyBadge(tvNotifBadge);
 
         loadNotifications();
 
-        // Mark all as read
         ivMarkAllRead.setOnClickListener(v -> markAllAsRead());
 
         setupBottomNavigation();
@@ -54,6 +58,8 @@ public class NotificationsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Chỉ hiển thị badge theo state hiện tại, không reset
+        BadgeManager.applyBadge(tvNotifBadge);
         loadNotifications();
     }
 
@@ -62,7 +68,6 @@ public class NotificationsActivity extends AppCompatActivity {
         String token = RetrofitClient.getAuthToken();
 
         if (token == null) {
-            // Fallback to fake data
             loadFakeNotifications();
             return;
         }
@@ -76,8 +81,7 @@ public class NotificationsActivity extends AppCompatActivity {
                                    Response<ApiResponse<List<NotificationItem>>> response) {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
-                    List<NotificationItem> notifications = response.body().getResult();
-                    displayNotifications(notifications);
+                    displayNotifications(response.body().getResult());
                 } else {
                     loadFakeNotifications();
                 }
@@ -99,7 +103,8 @@ public class NotificationsActivity extends AppCompatActivity {
             rvNotifications.setVisibility(View.VISIBLE);
 
             List<Object> groupedItems = NotificationAdapter.groupByDate(notifications);
-            adapter = new NotificationAdapter(this, groupedItems);
+            adapter = new NotificationAdapter(this, groupedItems,
+                    () -> BadgeManager.applyBadge(tvNotifBadge));
             rvNotifications.setLayoutManager(new LinearLayoutManager(this));
             rvNotifications.setAdapter(adapter);
         }
@@ -109,9 +114,6 @@ public class NotificationsActivity extends AppCompatActivity {
         List<FakeNotificationRepository.NotificationItem> fakeNotifs =
                 FakeNotificationRepository.getInstance().getNotifications();
 
-        // Convert fake notifications to real model
-        List<NotificationItem> converted = new ArrayList<>();
-        // Show empty if no fake data
         if (fakeNotifs.isEmpty()) {
             tvEmpty.setVisibility(View.VISIBLE);
             rvNotifications.setVisibility(View.GONE);
@@ -121,7 +123,8 @@ public class NotificationsActivity extends AppCompatActivity {
 
             List<Object> groupedItems = com.example.weconnect.adapters.NotificationAdapter
                     .groupByDateFake(fakeNotifs);
-            adapter = new NotificationAdapter(this, groupedItems);
+            adapter = new NotificationAdapter(this, groupedItems,
+                    () -> BadgeManager.applyBadge(tvNotifBadge));
             rvNotifications.setLayoutManager(new LinearLayoutManager(this));
             rvNotifications.setAdapter(adapter);
         }
@@ -139,6 +142,9 @@ public class NotificationsActivity extends AppCompatActivity {
                 @Override
                 public void onResponse(Call<ApiResponse<Void>> call,
                                        Response<ApiResponse<Void>> response) {
+                    // Reset badge chỉ khi markAllAsRead thành công
+                    BadgeManager.reset();
+                    BadgeManager.applyBadge(tvNotifBadge);
                     if (adapter != null) {
                         adapter.markAllRead();
                     }
@@ -158,6 +164,8 @@ public class NotificationsActivity extends AppCompatActivity {
                     FakeNotificationRepository.getInstance().getNotifications()) {
                 item.setRead(true);
             }
+            BadgeManager.reset();
+            BadgeManager.applyBadge(tvNotifBadge);
             if (adapter != null) {
                 adapter.markAllRead();
             }
@@ -173,26 +181,26 @@ public class NotificationsActivity extends AppCompatActivity {
         if (btnHome != null) {
             btnHome.setOnClickListener(v -> {
                 Intent intent = new Intent(this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
-                finish();
+                overridePendingTransition(0, 0);
             });
         }
         if (btnMessages != null) {
             btnMessages.setOnClickListener(v -> {
                 Intent intent = new Intent(this, ChatListActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
-                finish();
+                overridePendingTransition(0, 0);
             });
         }
         if (btnProfile != null) {
             btnProfile.setOnClickListener(v -> {
                 Intent intent = new Intent(this, UserProfileActivity.class);
-                intent.putExtra("username", FakePostRepository.getInstance().getCurrentUsername());
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.putExtra("username", RetrofitClient.getUserName(this));
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
-                finish();
+                overridePendingTransition(0, 0);
             });
         }
     }

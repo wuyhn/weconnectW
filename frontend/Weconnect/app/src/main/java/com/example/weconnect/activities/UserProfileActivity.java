@@ -29,6 +29,7 @@ import com.example.weconnect.adapters.UserReviewAdapter;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.ReviewApiService;
 import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.data.FakeSocialRepository;
 import com.example.weconnect.websocket.WebSocketManager;
@@ -87,6 +88,7 @@ public class UserProfileActivity extends AppCompatActivity {
     private View cardCreatePostProfile;
     private TextView tvCreatePostHint;
     private TextView tvReviewsTitle;
+    private android.widget.TextView tvNotifBadge;
 
     // Related posts (from other users matching interest tags)
     private TextView tvRelatedPostsTitle;
@@ -244,6 +246,7 @@ public class UserProfileActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        BadgeManager.applyBadge(tvNotifBadge);
         // Refresh state khi quay lại (vd: sau khi chấp nhận kết bạn từ thông báo)
         bindSocialState();
         // Refresh bài viết khi quay lại (vd: sau khi tạo bài mới)
@@ -278,6 +281,7 @@ public class UserProfileActivity extends AppCompatActivity {
         rvUserReviews = findViewById(R.id.rvUserReviews);
         chipGroupUserInterests = findViewById(R.id.chipGroupUserInterests);
         footerNavigationProfile = findViewById(R.id.footerNavigationProfile);
+        tvNotifBadge = findViewById(R.id.tvNotifBadge);
 
         drawerLayoutProfile = findViewById(R.id.drawerLayoutProfile);
         menuEditProfile = findViewById(R.id.menuEditProfile);
@@ -346,19 +350,25 @@ public class UserProfileActivity extends AppCompatActivity {
         if (btnHome != null) {
             btnHome.setOnClickListener(v -> {
                 Intent intent = new Intent(this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
+                overridePendingTransition(0, 0);
             });
         }
         if (btnMessages != null) {
             btnMessages.setOnClickListener(v -> {
                 Intent intent = new Intent(this, ChatListActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
+                overridePendingTransition(0, 0);
             });
         }
         if (btnNotifications != null) {
             btnNotifications.setOnClickListener(v -> {
-                startActivity(new Intent(this, NotificationsActivity.class));
+                Intent intent = new Intent(this, NotificationsActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                startActivity(intent);
+                overridePendingTransition(0, 0);
             });
         }
     }
@@ -372,7 +382,7 @@ public class UserProfileActivity extends AppCompatActivity {
 
         menuEditProfile.setOnClickListener(v -> {
             drawerLayoutProfile.closeDrawer(Gravity.END);
-            startActivity(new Intent(this, EditProfileActivity.class));
+            startActivityForResult(new Intent(this, EditProfileActivity.class), 3001);
         });
 
         menuChangePassword.setOnClickListener(v -> {
@@ -604,13 +614,14 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserReputation.setText(String.valueOf(rep));
                     }
 
-                    // Load avatar with Glide
+                    // Load avatar with Glide + persist URL globally
                     String avatarUrl = profile.get("avatarUrl") != null
                             ? profile.get("avatarUrl").toString() : null;
                     if (avatarUrl != null && !avatarUrl.isEmpty()) {
                         if (avatarUrl.startsWith("/")) {
                             avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
                         }
+                        RetrofitClient.saveAvatarUrl(UserProfileActivity.this, avatarUrl);
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
                                 .load(avatarUrl)
                                 .placeholder(R.drawable.ic_user_placeholder)
@@ -1482,250 +1493,227 @@ public class UserProfileActivity extends AppCompatActivity {
     private void showFriendListDialog() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
+
+        // Group 1: friends list
+        LinearLayout group1 = buildIosGroup();
 
         // Header
         TextView header = new TextView(this);
-        header.setText("👥 Danh sách bạn bè");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
+        header.setText("Danh sách bạn bè");
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
         header.setGravity(Gravity.CENTER);
-        header.setPadding(0, 48, 0, 24);
-        root.addView(header);
+        header.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(header, matchW());
 
-        // Divider
-        View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        addIosSep(group1);
 
-        // Loading indicator
-    TextView tvLoading = new TextView(this);
-    tvLoading.setText("Đang tải...");
-    tvLoading.setTextSize(15);
-    tvLoading.setTextColor(getResources().getColor(R.color.text_secondary, null));
-    tvLoading.setGravity(Gravity.CENTER);
-    tvLoading.setPadding(0, 48, 0, 48);
-    root.addView(tvLoading);
-    sheet.setContentView(root);
-    sheet.show();
+        // Loading row
+        TextView tvLoading = new TextView(this);
+        tvLoading.setText("Đang tải...");
+        tvLoading.setTextSize(17);
+        tvLoading.setTextColor(0xFF8E8E93);
+        tvLoading.setGravity(Gravity.CENTER);
+        tvLoading.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        group1.addView(tvLoading, matchW());
 
-    // Load từ backend
-    friendApiService.getFriends().enqueue(new Callback<ApiResponse<java.util.List<java.util.Map<String, Object>>>>() {
-        @Override
-        public void onResponse(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call,
-                               Response<ApiResponse<java.util.List<java.util.Map<String, Object>>>> response) {
-            root.removeView(tvLoading);
-            if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
-                java.util.List<java.util.Map<String, Object>> friendsList = response.body().getResult();
-                if (friendsList.isEmpty()) {
-                    TextView tvEmpty = new TextView(UserProfileActivity.this);
-                    tvEmpty.setText("Bạn chưa có bạn bè nào");
-                    tvEmpty.setTextSize(15);
-                    tvEmpty.setTextColor(getResources().getColor(R.color.text_secondary, null));
-                    tvEmpty.setGravity(Gravity.CENTER);
-                    tvEmpty.setPadding(0, 48, 0, 48);
-                    root.addView(tvEmpty);
-                } else {
-                    for (java.util.Map<String, Object> friend : friendsList) {
-                        String friendName = friend.get("fullName") != null
-                                ? friend.get("fullName").toString() : "Người dùng";
-                        long friendId = -1;
-                        try {
-                            if (friend.get("userId") != null)
-                                friendId = ((Number) friend.get("userId")).longValue();
-                        } catch (Exception ignored) {}
+        root.addView(group1, matchW());
+        addGroupGap(root);
 
-                        LinearLayout row = new LinearLayout(UserProfileActivity.this);
-                        row.setOrientation(LinearLayout.HORIZONTAL);
-                        row.setGravity(Gravity.CENTER_VERTICAL);
-                        row.setPadding(64, 32, 64, 32);
-                        row.setBackgroundResource(android.R.drawable.list_selector_background);
-                        row.setClickable(true);
-                        row.setFocusable(true);
+        // Group 2: Cancel
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
 
-                        TextView tvIcon = new TextView(UserProfileActivity.this);
-                        tvIcon.setText("👤");
-                        tvIcon.setTextSize(22);
-                        row.addView(tvIcon);
+        sheet.setContentView(root);
+        sheet.show();
 
-                        TextView tvName = new TextView(UserProfileActivity.this);
-                        tvName.setText(friendName);
-                        tvName.setTextSize(16);
-                        tvName.setTextColor(getResources().getColor(R.color.text_primary, null));
-                        tvName.setTypeface(null, android.graphics.Typeface.BOLD);
-                        tvName.setPadding(32, 0, 0, 0);
-                        row.addView(tvName);
+        // Load từ backend
+        friendApiService.getFriends().enqueue(new Callback<ApiResponse<java.util.List<java.util.Map<String, Object>>>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call,
+                                   Response<ApiResponse<java.util.List<java.util.Map<String, Object>>>> response) {
+                group1.removeView(tvLoading);
+                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
+                    java.util.List<java.util.Map<String, Object>> friendsList = response.body().getResult();
+                    if (friendsList.isEmpty()) {
+                        TextView tvEmpty = new TextView(UserProfileActivity.this);
+                        tvEmpty.setText("Bạn chưa có bạn bè nào");
+                        tvEmpty.setTextSize(17);
+                        tvEmpty.setTextColor(0xFF8E8E93);
+                        tvEmpty.setGravity(Gravity.CENTER);
+                        tvEmpty.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+                        group1.addView(tvEmpty, matchW());
+                    } else {
+                        boolean first = true;
+                        for (java.util.Map<String, Object> friend : friendsList) {
+                            String friendName = friend.get("fullName") != null
+                                    ? friend.get("fullName").toString() : "Người dùng";
+                            long friendId = -1;
+                            try {
+                                if (friend.get("userId") != null)
+                                    friendId = ((Number) friend.get("userId")).longValue();
+                            } catch (Exception ignored) {}
 
-                        final long fId = friendId;
-                        final String fName = friendName;
-                        row.setOnClickListener(v -> {
-                            sheet.dismiss();
-                            Intent intent = new Intent(UserProfileActivity.this, UserProfileActivity.class);
-                            intent.putExtra("username", fName);
-                            intent.putExtra("user_id", fId);
-                            intent.putExtra("view_other", true);
-                            startActivity(intent);
-                        });
-                        root.addView(row);
+                            if (!first) addIosSep(group1);
+                            first = false;
 
-                        View sep = new View(UserProfileActivity.this);
-                        sep.setBackgroundColor(0xFFE8E4DE);
-                        sep.setLayoutParams(new LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT, 1));
-                        root.addView(sep);
+                            LinearLayout row = new LinearLayout(UserProfileActivity.this);
+                            row.setOrientation(LinearLayout.HORIZONTAL);
+                            row.setGravity(Gravity.CENTER_VERTICAL);
+                            row.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+                            row.setClickable(true);
+                            row.setFocusable(true);
+                            android.util.TypedValue ripple = new android.util.TypedValue();
+                            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+                            row.setBackgroundResource(ripple.resourceId);
+
+                            // Avatar placeholder circle 44dp
+                            ImageView ivAvatar = new ImageView(UserProfileActivity.this);
+                            int size = dpPx(44);
+                            LinearLayout.LayoutParams avParams = new LinearLayout.LayoutParams(size, size);
+                            ivAvatar.setLayoutParams(avParams);
+                            ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+                            ivAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                            android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
+                            circle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+                            circle.setColor(0xFFE0E0E0);
+                            ivAvatar.setBackground(circle);
+                            ivAvatar.setClipToOutline(true);
+                            row.addView(ivAvatar);
+
+                            TextView tvName = new TextView(UserProfileActivity.this);
+                            tvName.setText(friendName);
+                            tvName.setTextSize(16);
+                            tvName.setTextColor(0xFF1C1C1E);
+                            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
+                                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                            nameParams.leftMargin = dpPx(12);
+                            tvName.setLayoutParams(nameParams);
+                            row.addView(tvName);
+
+                            final long fId = friendId;
+                            final String fName = friendName;
+                            row.setOnClickListener(v -> {
+                                sheet.dismiss();
+                                Intent intent = new Intent(UserProfileActivity.this, UserProfileActivity.class);
+                                intent.putExtra("username", fName);
+                                intent.putExtra("user_id", fId);
+                                intent.putExtra("view_other", true);
+                                startActivity(intent);
+                            });
+                            group1.addView(row, matchW());
+                        }
                     }
+                } else {
+                    tvLoading.setText("Không thể tải danh sách bạn bè");
+                    group1.addView(tvLoading, matchW());
                 }
-            } else {
-                tvLoading.setText("Không thể tải danh sách bạn bè");
-                root.addView(tvLoading);
             }
-        }
 
-        @Override
-        public void onFailure(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call, Throwable t) {
-            tvLoading.setText("Lỗi kết nối");
-        }
-    });
+            @Override
+            public void onFailure(Call<ApiResponse<java.util.List<java.util.Map<String, Object>>>> call, Throwable t) {
+                group1.removeView(tvLoading);
+                TextView tvErr = new TextView(UserProfileActivity.this);
+                tvErr.setText("Lỗi kết nối");
+                tvErr.setTextSize(17);
+                tvErr.setTextColor(0xFF8E8E93);
+                tvErr.setGravity(Gravity.CENTER);
+                tvErr.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+                group1.addView(tvErr, matchW());
+            }
+        });
     }
 
     private void showFriendOptionsMenu() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
-        root.setOrientation(android.widget.LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
 
-        // Header
-        android.widget.TextView header = new android.widget.TextView(this);
-        header.setText("Tuỳ chọn bạn bè");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
+        // Group 1: username header + actions
+        LinearLayout group1 = buildIosGroup();
+
+        TextView header = new TextView(this);
+        header.setText(username);
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
         header.setGravity(Gravity.CENTER);
-        header.setPadding(0, 48, 0, 24);
-        root.addView(header);
+        header.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(header, matchW());
 
-        // Divider
-        View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        addIosSep(group1);
 
-        // Unfriend option
-        android.widget.LinearLayout unfriendRow = createOptionRow(
-                "👋", "Huỷ kết bạn", "Xoá " + username + " khỏi danh sách bạn bè",
-                getResources().getColor(R.color.text_primary, null));
-        unfriendRow.setOnClickListener(v -> {
+        addIosRow(group1, "Huỷ kết bạn", 0xFFFF3B30, v -> {
             sheet.dismiss();
             new AlertDialog.Builder(this)
                     .setTitle("Huỷ kết bạn")
                     .setMessage("Bạn có chắc muốn huỷ kết bạn với " + username + "?")
                     .setPositiveButton("Huỷ kết bạn", (d, w) -> {
                         if (viewedUserId > 0) {
-                        friendApiService.unfriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                            @Override
-                            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                                if (response.isSuccessful()) {
-                                    Toast.makeText(UserProfileActivity.this, "Đã huỷ kết bạn", Toast.LENGTH_SHORT).show();
-                                    setupFriendButton("NONE");
+                            friendApiService.unfriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
+                                @Override
+                                public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                                    if (response.isSuccessful()) {
+                                        Toast.makeText(UserProfileActivity.this, "Đã huỷ kết bạn", Toast.LENGTH_SHORT).show();
+                                        setupFriendButton("NONE");
+                                    }
                                 }
-                            }
-                            @Override
-                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                            }
-                        });
-                    }
+                                @Override
+                                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                    Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
                     })
                     .setNegativeButton("Không", null)
                     .show();
         });
-        root.addView(unfriendRow);
 
-        // Divider
-        View div2 = new View(this);
-        div2.setBackgroundColor(0xFFE8E4DE);
-        div2.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1));
-        root.addView(div2);
+        addIosSep(group1);
 
-        // Block option
-        android.widget.LinearLayout blockRow = createOptionRow(
-                "🚫", "Chặn người dùng", username + " sẽ không thể liên hệ với bạn",
-                0xFFFF4D6D);
-        blockRow.setOnClickListener(v -> {
+        addIosRow(group1, "Chặn người dùng", 0xFFFF3B30, v -> {
             sheet.dismiss();
             new AlertDialog.Builder(this)
                     .setTitle("Chặn người dùng")
                     .setMessage("Bạn có chắc muốn chặn " + username + "? Người này sẽ không thể liên hệ với bạn.")
                     .setPositiveButton("Chặn", (d, w) -> {
                         if (viewedUserId > 0) {
-                        friendApiService.blockUser(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
-                            @Override
-                            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                                if (response.isSuccessful()) {
-                                    Toast.makeText(UserProfileActivity.this, "Đã chặn người dùng", Toast.LENGTH_SHORT).show();
-                                    setupFriendButton("BLOCKED");
+                            friendApiService.blockUser(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
+                                @Override
+                                public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                                    if (response.isSuccessful()) {
+                                        Toast.makeText(UserProfileActivity.this, "Đã chặn người dùng", Toast.LENGTH_SHORT).show();
+                                        setupFriendButton("BLOCKED");
+                                    }
                                 }
-                            }
-                            @Override
-                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                            }
-                        });
-                    }
+                                @Override
+                                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                    Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
                     })
                     .setNegativeButton("Không", null)
                     .show();
         });
-        root.addView(blockRow);
+
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // Group 2: Cancel
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
 
         sheet.setContentView(root);
         sheet.show();
-    }
-
-    private android.widget.LinearLayout createOptionRow(String icon, String title, String subtitle, int titleColor) {
-        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
-        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(64, 36, 64, 36);
-        row.setBackgroundResource(android.R.drawable.list_selector_background);
-        row.setClickable(true);
-
-        android.widget.TextView tvIcon = new android.widget.TextView(this);
-        tvIcon.setText(icon);
-        tvIcon.setTextSize(24);
-        row.addView(tvIcon);
-
-        android.widget.LinearLayout textCol = new android.widget.LinearLayout(this);
-        textCol.setOrientation(android.widget.LinearLayout.VERTICAL);
-        textCol.setPadding(32, 0, 0, 0);
-
-        android.widget.TextView tvTitle = new android.widget.TextView(this);
-        tvTitle.setText(title);
-        tvTitle.setTextSize(16);
-        tvTitle.setTextColor(titleColor);
-        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        textCol.addView(tvTitle);
-
-        android.widget.TextView tvSubtitle = new android.widget.TextView(this);
-        tvSubtitle.setText(subtitle);
-        tvSubtitle.setTextSize(12);
-        tvSubtitle.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        textCol.addView(tvSubtitle);
-
-        row.addView(textCol);
-        return row;
     }
 
     private void showRateUserDialog() {
@@ -1780,15 +1768,14 @@ public class UserProfileActivity extends AppCompatActivity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
+        root.setBackgroundColor(0xFFFFFFFF);
         root.setPadding(64, 48, 64, 48);
 
         // Header
         TextView header = new TextView(this);
-        header.setText("⭐ Đánh giá " + username);
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
+        header.setText("Đánh giá " + username);
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
         header.setGravity(Gravity.CENTER);
         root.addView(header);
 
@@ -1846,7 +1833,7 @@ public class UserProfileActivity extends AppCompatActivity {
         btnSubmit.setText("Gửi đánh giá");
         btnSubmit.setAllCaps(false);
         btnSubmit.setCornerRadius(48);
-        btnSubmit.setBackgroundTintList(getResources().getColorStateList(R.color.primary_pink, null));
+        btnSubmit.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF007AFF));
         LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 120);
         btnParams.topMargin = 32;
@@ -1958,33 +1945,25 @@ public class UserProfileActivity extends AppCompatActivity {
     private void showFriendResponseDialog() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
 
-        // Title
+        // Group 1: header + actions
+        LinearLayout group1 = buildIosGroup();
+
         TextView header = new TextView(this);
-        header.setText("Phản hồi lời mời kết bạn");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setGravity(android.view.Gravity.CENTER);
-        header.setPadding(0, 48, 0, 24);
-        root.addView(header);
+        header.setText(username + " muốn kết bạn với bạn");
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
+        header.setGravity(Gravity.CENTER);
+        header.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(header, matchW());
 
-        // Divider
-        View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        addIosSep(group1);
 
-        // Option: Xác nhận
-        LinearLayout rowAccept = createOptionRow("✅", "Xác nhận",
-                "Chấp nhận lời mời kết bạn", getResources().getColor(R.color.text_primary, null));
-        rowAccept.setOnClickListener(v -> {
+        addIosRow(group1, "Xác nhận", 0xFF1C1C1E, v -> {
             sheet.dismiss();
             friendApiService.acceptFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
                 @Override
@@ -2000,12 +1979,10 @@ public class UserProfileActivity extends AppCompatActivity {
                 }
             });
         });
-        root.addView(rowAccept);
 
-        // Option: Từ chối
-        LinearLayout rowDecline = createOptionRow("❌", "Từ chối",
-                "Từ chối lời mời kết bạn", getResources().getColor(R.color.danger_red, null));
-        rowDecline.setOnClickListener(v -> {
+        addIosSep(group1);
+
+        addIosRow(group1, "Từ chối", 0xFFFF3B30, v -> {
             sheet.dismiss();
             friendApiService.declineFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
                 @Override
@@ -2021,7 +1998,14 @@ public class UserProfileActivity extends AppCompatActivity {
                 }
             });
         });
-        root.addView(rowDecline);
+
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // Group 2: Cancel
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
 
         sheet.setContentView(root);
         sheet.show();
@@ -2059,31 +2043,10 @@ public class UserProfileActivity extends AppCompatActivity {
     private void showReportUserDialog() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(64, 48, 64, 48);
-
-        // Header
-        TextView header = new TextView(this);
-        header.setText("🚩 Báo cáo " + username);
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.danger_red, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setGravity(Gravity.CENTER);
-        root.addView(header);
-
-        // Subtitle
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Chọn lý do báo cáo:");
-        subtitle.setTextSize(14);
-        subtitle.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        subParams.topMargin = 24;
-        subtitle.setLayoutParams(subParams);
-        root.addView(subtitle);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
 
         String[] reasons = {
                 "Hành vi không phù hợp",
@@ -2097,71 +2060,61 @@ public class UserProfileActivity extends AppCompatActivity {
         final int[] selectedIndex = {-1};
         final TextView[] reasonViews = new TextView[reasons.length];
 
+        // Group 1: header + reason rows
+        LinearLayout group1 = buildIosGroup();
+
+        TextView header = new TextView(this);
+        header.setText("Báo cáo " + username);
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
+        header.setGravity(Gravity.CENTER);
+        header.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(header, matchW());
+
         for (int i = 0; i < reasons.length; i++) {
             final int index = i;
+            addIosSep(group1);
             TextView tvReason = new TextView(this);
             tvReason.setText(reasons[i]);
-            tvReason.setTextSize(15);
-            tvReason.setTextColor(getResources().getColor(R.color.text_primary, null));
-            tvReason.setPadding(32, 28, 32, 28);
-            tvReason.setBackgroundResource(android.R.drawable.list_selector_background);
+            tvReason.setTextSize(17);
+            tvReason.setTextColor(0xFF1C1C1E);
+            tvReason.setGravity(Gravity.CENTER);
+            tvReason.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
             tvReason.setClickable(true);
-
-            LinearLayout.LayoutParams reasonParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            reasonParams.topMargin = 8;
-            tvReason.setLayoutParams(reasonParams);
-
+            tvReason.setFocusable(true);
+            android.util.TypedValue ripple = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+            tvReason.setBackgroundResource(ripple.resourceId);
             tvReason.setOnClickListener(v -> {
-                // Deselect previous
                 if (selectedIndex[0] >= 0) {
-                    reasonViews[selectedIndex[0]].setTextColor(getResources().getColor(R.color.text_primary, null));
-                    reasonViews[selectedIndex[0]].setTypeface(null, android.graphics.Typeface.NORMAL);
+                    reasonViews[selectedIndex[0]].setTextColor(0xFF1C1C1E);
                 }
                 selectedIndex[0] = index;
-                tvReason.setTextColor(getResources().getColor(R.color.danger_red, null));
-                tvReason.setTypeface(null, android.graphics.Typeface.BOLD);
+                tvReason.setTextColor(0xFF007AFF);
             });
-
             reasonViews[i] = tvReason;
-            root.addView(tvReason);
+            group1.addView(tvReason, matchW());
         }
 
-        // Description input
-        TextView descLabel = new TextView(this);
-        descLabel.setText("Mô tả thêm (tùy chọn):");
-        descLabel.setTextSize(14);
-        descLabel.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        LinearLayout.LayoutParams descLabelParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        descLabelParams.topMargin = 24;
-        descLabel.setLayoutParams(descLabelParams);
-        root.addView(descLabel);
+        root.addView(group1, matchW());
+        addGroupGap(root);
 
+        // Group 2: description EditText
+        LinearLayout group2 = buildIosGroup();
         EditText etDescription = new EditText(this);
         etDescription.setHint("Nhập mô tả chi tiết...");
         etDescription.setTextSize(14);
         etDescription.setMinLines(2);
         etDescription.setMaxLines(4);
-        etDescription.setBackground(getResources().getDrawable(R.drawable.bg_search_bar, null));
-        etDescription.setPadding(32, 24, 32, 24);
-        LinearLayout.LayoutParams etParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        etParams.topMargin = 8;
-        etDescription.setLayoutParams(etParams);
-        root.addView(etDescription);
+        etDescription.setBackground(null);
+        etDescription.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        group2.addView(etDescription, matchW());
+        root.addView(group2, matchW());
+        addGroupGap(root);
 
-        // Submit button
-        MaterialButton btnSubmit = new MaterialButton(this);
-        btnSubmit.setText("Gửi báo cáo");
-        btnSubmit.setAllCaps(false);
-        btnSubmit.setCornerRadius(48);
-        btnSubmit.setBackgroundTintList(getResources().getColorStateList(R.color.danger_red, null));
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 120);
-        btnParams.topMargin = 32;
-        btnSubmit.setLayoutParams(btnParams);
-        btnSubmit.setOnClickListener(v -> {
+        // Group 3: Submit
+        LinearLayout group3 = buildIosGroup();
+        addIosRow(group3, "Gửi báo cáo", 0xFF007AFF, v -> {
             if (selectedIndex[0] < 0) {
                 Toast.makeText(this, "Vui lòng chọn lý do báo cáo", Toast.LENGTH_SHORT).show();
                 return;
@@ -2170,7 +2123,13 @@ public class UserProfileActivity extends AppCompatActivity {
             submitReportToBackend("USER", viewedUserId, reasons[selectedIndex[0]],
                     etDescription.getText().toString().trim());
         });
-        root.addView(btnSubmit);
+        root.addView(group3, matchW());
+        addGroupGap(root);
+
+        // Group 4: Cancel
+        LinearLayout group4 = buildIosGroup();
+        addIosRow(group4, "Huỷ", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group4, matchW());
 
         sheet.setContentView(root);
         sheet.show();
@@ -2209,6 +2168,18 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void loadSavedAvatar() {
+        // Prefer server-side avatar URL (updated after each upload)
+        String serverUrl = RetrofitClient.getAvatarUrl(this);
+        if (serverUrl != null && !serverUrl.isEmpty()) {
+            com.bumptech.glide.Glide.with(this)
+                    .load(serverUrl)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .circleCrop()
+                    .into(ivUserProfileAvatar);
+            return;
+        }
+        // Fallback: legacy local file (first-time use before first server upload)
         String path = getSharedPreferences("weconnect_prefs", MODE_PRIVATE)
                 .getString("user_avatar_uri", null);
         if (path != null) {
@@ -2222,43 +2193,33 @@ public class UserProfileActivity extends AppCompatActivity {
                     }
                 }
             } catch (Exception ignored) {}
-            ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
         }
+        ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
     }
 
     private void showAvatarOptionsSheet() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
 
-        // Header
+        // Group 1: header + actions
+        LinearLayout group1 = buildIosGroup();
+
         TextView header = new TextView(this);
         header.setText("Ảnh đại diện");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
+        header.setTextSize(13);
+        header.setTextColor(0xFF8E8E93);
         header.setGravity(Gravity.CENTER);
-        header.setPadding(0, 48, 0, 24);
-        root.addView(header);
+        header.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(header, matchW());
 
-        // Divider
-        View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        root.addView(div);
+        addIosSep(group1);
 
-        // View avatar option
-        LinearLayout viewRow = createOptionRow(
-                "📷", "Xem ảnh đại diện", "Xem ảnh toàn màn hình",
-                getResources().getColor(R.color.text_primary, null));
-        viewRow.setOnClickListener(v -> {
+        addIosRow(group1, "Xem ảnh đại diện", 0xFF1C1C1E, v -> {
             sheet.dismiss();
-            // Show full-screen avatar dialog
             Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
             ImageView imageView = new ImageView(this);
@@ -2269,20 +2230,10 @@ public class UserProfileActivity extends AppCompatActivity {
             dialog.setContentView(imageView);
             dialog.show();
         });
-        root.addView(viewRow);
 
-        // Divider
-        View div2 = new View(this);
-        div2.setBackgroundColor(0xFFE8E4DE);
-        div2.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1));
-        root.addView(div2);
+        addIosSep(group1);
 
-        // Choose from gallery option
-        LinearLayout galleryRow = createOptionRow(
-                "🖼", "Chọn ảnh đại diện từ thư viện", "Chọn ảnh mới từ bộ sưu tập",
-                getResources().getColor(R.color.text_primary, null));
-        galleryRow.setOnClickListener(v -> {
+        addIosRow(group1, "Chọn ảnh từ thư viện", 0xFF1C1C1E, v -> {
             sheet.dismiss();
             Intent pickIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             pickIntent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -2291,7 +2242,14 @@ public class UserProfileActivity extends AppCompatActivity {
                     | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
             startActivityForResult(pickIntent, 1001);
         });
-        root.addView(galleryRow);
+
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // Group 2: Cancel
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
 
         sheet.setContentView(root);
         sheet.show();
@@ -2300,38 +2258,19 @@ public class UserProfileActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 3001 && resultCode == RESULT_OK) {
+            // Sau khi EditProfile lưu thành công → reload lại profile để UI cập nhật
+            loadOwnProfileName();
+            return;
+        }
         if (requestCode == 1001 && resultCode == RESULT_OK && data != null) {
             android.net.Uri selectedImage = data.getData();
             if (selectedImage != null) {
-                // Copy ảnh vào internal storage để luôn truy cập được
                 try {
-                    java.io.InputStream is = getContentResolver().openInputStream(selectedImage);
-                    if (is != null) {
-                        java.io.File avatarFile = new java.io.File(getFilesDir(), "avatar.jpg");
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(avatarFile);
-                        byte[] buffer = new byte[4096];
-                        int len;
-                        while ((len = is.read(buffer)) != -1) {
-                            fos.write(buffer, 0, len);
-                        }
-                        fos.close();
-                        is.close();
-
-                        // Load từ file đã copy
-                        android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeFile(avatarFile.getAbsolutePath());
-                        ivUserProfileAvatar.setImageBitmap(bitmap);
-
-                        // Lưu path vào SharedPreferences
-                        getSharedPreferences("weconnect_prefs", MODE_PRIVATE)
-                                .edit()
-                                .putString("user_avatar_uri", avatarFile.getAbsolutePath())
-                                .apply();
-
-                        Toast.makeText(this, "Đã cập nhật ảnh đại diện!", Toast.LENGTH_SHORT).show();
-                    }
-                } catch (Exception e) {
-                    Toast.makeText(this, "Lỗi khi lưu ảnh: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
+                    getContentResolver().takePersistableUriPermission(
+                            selectedImage, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Exception ignored) {}
+                uploadAvatarToServer(selectedImage);
             }
         } else if (requestCode == 2001 && resultCode == RESULT_OK && data != null) {
             long editPostId = data.getLongExtra("edit_post_id", -1);
@@ -2340,6 +2279,159 @@ public class UserProfileActivity extends AppCompatActivity {
             }
         }
     }
+
+    private void uploadAvatarToServer(android.net.Uri uri) {
+        try {
+            java.io.InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) {
+                Toast.makeText(this, "Không thể đọc ảnh", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            byte[] bytes = readAllBytesProfile(is);
+            is.close();
+
+            String mimeType = getContentResolver().getType(uri);
+            if (mimeType == null) mimeType = "image/jpeg";
+            String ext = mimeType.contains("png") ? ".png" : mimeType.contains("webp") ? ".webp" : ".jpg";
+            String fileName = "avatar_" + System.currentTimeMillis() + ext;
+
+            okhttp3.RequestBody requestBody = okhttp3.RequestBody.create(
+                    okhttp3.MediaType.parse(mimeType), bytes);
+            okhttp3.MultipartBody.Part filePart =
+                    okhttp3.MultipartBody.Part.createFormData("file", fileName, requestBody);
+
+            ivUserProfileAvatar.setAlpha(0.5f);
+
+            postApiService.uploadImage(filePart).enqueue(new Callback<ApiResponse<String>>() {
+                @Override
+                public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> response) {
+                    ivUserProfileAvatar.setAlpha(1.0f);
+                    if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
+                        String avatarUrl = response.body().getResult();
+                        if (avatarUrl != null && avatarUrl.startsWith("/")) {
+                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+                        }
+                        // Persist URL globally so all screens stay in sync
+                        RetrofitClient.saveAvatarUrl(UserProfileActivity.this, avatarUrl);
+                        // Push new avatarUrl to backend profile
+                        updateProfileAvatarOnBackend(avatarUrl);
+                        // Wipe Glide cache so every screen shows fresh avatar on next load
+                        com.bumptech.glide.Glide.get(UserProfileActivity.this).clearMemory();
+                        new Thread(() -> com.bumptech.glide.Glide.get(UserProfileActivity.this).clearDiskCache()).start();
+                        // Reload own avatar ImageView immediately, bypassing old cache
+                        final String finalUrl = avatarUrl;
+                        com.bumptech.glide.Glide.with(UserProfileActivity.this)
+                                .load(finalUrl)
+                                .placeholder(R.drawable.ic_user_placeholder)
+                                .error(R.drawable.ic_user_placeholder)
+                                .skipMemoryCache(true)
+                                .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
+                                .circleCrop()
+                                .into(ivUserProfileAvatar);
+                        Toast.makeText(UserProfileActivity.this,
+                                "Đã cập nhật ảnh đại diện!", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(UserProfileActivity.this,
+                                "Lỗi khi tải ảnh lên server", Toast.LENGTH_SHORT).show();
+                    }
+                }
+
+                @Override
+                public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
+                    ivUserProfileAvatar.setAlpha(1.0f);
+                    Toast.makeText(UserProfileActivity.this,
+                            "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } catch (Exception e) {
+            Toast.makeText(this, "Lỗi khi đọc ảnh: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void updateProfileAvatarOnBackend(String avatarUrl) {
+        com.example.weconnect.api.UserApiService userApi =
+                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
+        Map<String, Object> body = new HashMap<>();
+        body.put("avatarUrl", avatarUrl);
+        userApi.updateProfile(body).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                   Response<ApiResponse<Map<String, Object>>> response) {}
+            @Override
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {}
+        });
+    }
+
+    // ── iOS action-sheet helpers ────────────────────────────────────────────
+
+    private LinearLayout buildIosRoot() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0x00000000);
+        int p = dpPx(10);
+        root.setPadding(p, 0, p, p);
+        return root;
+    }
+
+    private LinearLayout buildIosGroup() {
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFFFFFFFF);
+        bg.setCornerRadius(dpPx(14));
+        ll.setBackground(bg);
+        ll.setClipToOutline(true);
+        return ll;
+    }
+
+    private void addIosRow(LinearLayout parent, String text, int color, View.OnClickListener listener) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(17);
+        tv.setTextColor(color);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        if (listener != null) {
+            tv.setClickable(true);
+            tv.setFocusable(true);
+            android.util.TypedValue tv2 = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv2, true);
+            tv.setBackgroundResource(tv2.resourceId);
+            tv.setOnClickListener(listener);
+        }
+        parent.addView(tv, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    private void addIosSep(LinearLayout parent) {
+        View sep = new View(this);
+        sep.setBackgroundColor(0xFFD1D1D6);
+        sep.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        parent.addView(sep);
+    }
+
+    private void addGroupGap(LinearLayout parent) {
+        View gap = new View(this);
+        gap.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpPx(8)));
+        parent.addView(gap);
+    }
+
+    private void makeSheetTransparent(View root) {
+        root.post(() -> {
+            if (root.getParent() instanceof View) {
+                ((View) root.getParent()).setBackgroundColor(0x00000000);
+            }
+        });
+    }
+
+    private LinearLayout.LayoutParams matchW() {
+        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+    }
+
+    private int dpPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
 
     private void updatePostViaApi(long postId, Intent data) {
         String imageUri = data.getStringExtra("post_image_uri");

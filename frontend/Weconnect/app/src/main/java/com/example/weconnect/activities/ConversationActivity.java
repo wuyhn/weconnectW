@@ -1,7 +1,6 @@
 package com.example.weconnect.activities;
 
 import android.content.Intent;
-import android.content.res.ColorStateList;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -18,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.adapters.MessageAdapter;
 import com.example.weconnect.api.ChatApiService;
 import com.example.weconnect.api.RetrofitClient;
@@ -27,12 +27,15 @@ import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.ChatMessage;
 import com.example.weconnect.models.ChatMessageApiResponse;
 import com.example.weconnect.models.ChatRoom;
+import com.example.weconnect.utils.UserActionBottomSheet;
 import com.example.weconnect.websocket.WebSocketManager;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -55,6 +58,13 @@ public class ConversationActivity extends AppCompatActivity {
     private String currentUsername;
     private ChatApiService chatApi;
     private long backendRoomId = -1;
+
+    // Member info maps populated from room API response
+    private final Map<String, Long> memberNameToId = new HashMap<>();
+    private final Map<String, String> memberNameToAvatar = new HashMap<>();
+    private long otherUserId = -1;
+    private String otherUserName = "";
+    private String otherUserAvatar = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -105,7 +115,9 @@ public class ConversationActivity extends AppCompatActivity {
     }
 
     private void setupRecyclerView() {
-        adapter = new MessageAdapter();
+        adapter = new MessageAdapter(this);
+        adapter.setOnUserClickListener((userId, userName, avatarUrl) ->
+                UserActionBottomSheet.show(this, userId, userName, avatarUrl));
         rvMessages.setLayoutManager(new LinearLayoutManager(this));
         rvMessages.setAdapter(adapter);
     }
@@ -113,7 +125,75 @@ public class ConversationActivity extends AppCompatActivity {
     private void setupClickListeners() {
         ivBackConversation.setOnClickListener(v -> finish());
         btnSendMessage.setOnClickListener(v -> sendMessage());
-        ivChatSettings.setOnClickListener(v -> showMemberManagementDialog());
+        ivChatSettings.setOnClickListener(v -> showChatMenu());
+    }
+
+    private void showChatMenu() {
+        if (room == null) return;
+        boolean isOwner = room.isOwner(currentUsername);
+
+        BottomSheetDialog sheet = new BottomSheetDialog(this);
+        sheet.getBehavior().setSkipCollapsed(true);
+
+        LinearLayout root = buildIosRoot();
+
+        // ─── Group 1: actions ───
+        LinearLayout group1 = buildIosGroup();
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText(room.getTitle());
+        tvTitle.setTextSize(13);
+        tvTitle.setTextColor(0xFF8E8E93);
+        tvTitle.setGravity(Gravity.CENTER);
+        tvTitle.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
+        group1.addView(tvTitle, matchW());
+
+        addIosSep(group1);
+        addIosRow(group1, "Xem thành viên nhóm", 0xFF1C1C1E, v -> {
+            sheet.dismiss();
+            showMemberManagementDialog();
+        });
+
+        if (isOwner) {
+            addIosSep(group1);
+            addIosRow(group1, "Xóa nhóm", 0xFFFF3B30, v -> {
+                sheet.dismiss();
+                new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                        .setTitle("Xóa nhóm?")
+                        .setMessage("Toàn bộ tin nhắn và nhóm này sẽ bị xóa vĩnh viễn.")
+                        .setPositiveButton("Xóa nhóm", (d, w) -> deleteRoom())
+                        .setNegativeButton("Huỷ", null)
+                        .show();
+            });
+        }
+
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // ─── Group 2: cancel ───
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
+
+        sheet.setContentView(root);
+        makeSheetTransparent(root);
+        sheet.show();
+    }
+
+    private void deleteRoom() {
+        if (backendRoomId <= 0) return;
+        RetrofitClient.loadToken(this);
+        chatApi.deleteRoom(backendRoomId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                Toast.makeText(ConversationActivity.this, "Đã xóa", Toast.LENGTH_SHORT).show();
+                finish();
+            }
+            @Override
+            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                Toast.makeText(ConversationActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void bindRoom() {
@@ -182,21 +262,60 @@ public class ConversationActivity extends AppCompatActivity {
         String postStatusLabel = data.getPostStatusLabel();
 
         List<String> memberNames = new ArrayList<>();
+        long myId = RetrofitClient.getUserId(this);
+        memberNameToId.clear();
+        memberNameToAvatar.clear();
         if (data.getMembers() != null) {
             for (com.example.weconnect.models.ChatRoomApiResponse.MemberInfo m : data.getMembers()) {
                 String name = m.getFullName() != null ? m.getFullName() : "";
                 if (!name.isEmpty()) memberNames.add(name);
+                if (m.getId() > 0) {
+                    memberNameToId.put(name, m.getId());
+                    if (m.getAvatarUrl() != null && !m.getAvatarUrl().isEmpty()) {
+                        RetrofitClient.cacheAvatarForUser(m.getId(), m.getAvatarUrl());
+                        memberNameToAvatar.put(name, m.getAvatarUrl());
+                    }
+                    if (m.getId() != myId) {
+                        otherUserId = m.getId();
+                        otherUserName = name;
+                        otherUserAvatar = m.getAvatarUrl() != null ? m.getAvatarUrl() : "";
+                    }
+                }
             }
         }
 
-        return new ChatRoom(id, title, subtitle, postStatusLabel, type, R.drawable.ic_user_placeholder,
+        ChatRoom chatRoom = new ChatRoom(id, title, subtitle, postStatusLabel, type,
+                R.drawable.ic_user_placeholder,
                 active, inactiveLabel, new ArrayList<>(), ownerName, memberNames, new ArrayList<>());
+
+        // For DM: set the other participant's avatar so the header shows a real photo
+        if (ChatRoom.TYPE_DIRECT.equals(type) && data.getMembers() != null) {
+            for (com.example.weconnect.models.ChatRoomApiResponse.MemberInfo m : data.getMembers()) {
+                if (m.getId() != myId
+                        && m.getAvatarUrl() != null && !m.getAvatarUrl().isEmpty()) {
+                    String mUrl = m.getAvatarUrl();
+                    if (mUrl.startsWith("/")) mUrl = RetrofitClient.getBaseUrl() + mUrl.substring(1);
+                    chatRoom.setAvatarUrl(mUrl);
+                    break;
+                }
+            }
+        }
+        return chatRoom;
     }
 
     private void displayRoom() {
         if (room == null) return;
 
-        ivConversationAvatar.setImageResource(room.getAvatarResId());
+        if (room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
+            com.bumptech.glide.Glide.with(this)
+                    .load(room.getAvatarUrl())
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .circleCrop()
+                    .into(ivConversationAvatar);
+        } else {
+            ivConversationAvatar.setImageResource(room.getAvatarResId());
+        }
         tvConversationTitle.setText(room.getTitle());
         tvConversationType.setText(room.getTypeLabel());
 
@@ -222,328 +341,411 @@ public class ConversationActivity extends AppCompatActivity {
 
     private void showMemberManagementDialog() {
         if (room == null) return;
-
         boolean isOwner = room.isOwner(currentUsername);
         boolean isFriendGroup = ChatRoom.TYPE_FRIEND_GROUP.equals(room.getType());
-        boolean isActivityGroup = ChatRoom.TYPE_GROUP.equals(room.getType())
-                || ChatRoom.TYPE_ACTIVITY.equals(room.getType());
+        List<String> members = room.getMembers();
+        List<String> pending = room.getPendingMembers();
 
         BottomSheetDialog sheet = new BottomSheetDialog(this);
+        sheet.getBehavior().setSkipCollapsed(true);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(0x00000000);
 
-        // Header
-        TextView header = new TextView(this);
-        header.setText("Quản lý phòng chat");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setGravity(Gravity.CENTER);
-        header.setPadding(0, 48, 0, 12);
-        root.addView(header);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setBackgroundColor(0x00000000);
+        int p = dpPx(10);
+        content.setPadding(p, 0, p, p);
 
-        // Room info
-        TextView roomInfo = new TextView(this);
-        String typeStr = isActivityGroup ? "Hoạt động" : (isFriendGroup ? "Nhóm bạn bè" : "");
-        roomInfo.setText(typeStr + " • Chủ phòng: " + (room.getOwnerUsername() != null ? room.getOwnerUsername() : "N/A"));
-        roomInfo.setTextSize(13);
-        roomInfo.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        roomInfo.setGravity(Gravity.CENTER);
-        roomInfo.setPadding(0, 0, 0, 24);
-        root.addView(roomInfo);
-
-        // Divider
-        addDivider(root);
-
-        // === MEMBERS SECTION ===
-        TextView membersHeader = new TextView(this);
-        membersHeader.setText("👥 Thành viên (" + room.getMembers().size() + ")");
-        membersHeader.setTextSize(15);
-        membersHeader.setTypeface(null, android.graphics.Typeface.BOLD);
-        membersHeader.setTextColor(getResources().getColor(R.color.text_primary, null));
-        membersHeader.setPadding(64, 28, 64, 12);
-        root.addView(membersHeader);
-
-        for (String member : room.getMembers()) {
-            LinearLayout memberRow = createMemberRow(member, isOwner && !member.equalsIgnoreCase(currentUsername), sheet);
-            root.addView(memberRow);
+        // ─── Group 1: active members ───
+        LinearLayout group1 = buildIosGroup();
+        TextView tvMembersHeader = new TextView(this);
+        tvMembersHeader.setText("Thành viên  " + members.size());
+        tvMembersHeader.setTextSize(13);
+        tvMembersHeader.setTextColor(0xFF8E8E93);
+        tvMembersHeader.setGravity(Gravity.CENTER);
+        tvMembersHeader.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
+        group1.addView(tvMembersHeader, matchW());
+        for (String memberName : members) {
+            addIosSep(group1);
+            group1.addView(buildMemberRow(memberName,
+                    isOwner && !memberName.equalsIgnoreCase(currentUsername), sheet));
         }
+        content.addView(group1, matchW());
 
-        // === PENDING MEMBERS SECTION (Owner only, Activity groups) ===
-        if (isOwner && !room.getPendingMembers().isEmpty()) {
-            addDivider(root);
-
-            TextView pendingHeader = new TextView(this);
-            pendingHeader.setText("⏳ Chờ duyệt (" + room.getPendingMembers().size() + ")");
-            pendingHeader.setTextSize(15);
-            pendingHeader.setTypeface(null, android.graphics.Typeface.BOLD);
-            pendingHeader.setTextColor(getResources().getColor(R.color.text_primary, null));
-            pendingHeader.setPadding(64, 28, 64, 12);
-            root.addView(pendingHeader);
-
-            for (String pending : room.getPendingMembers()) {
-                LinearLayout pendingRow = createPendingMemberRow(pending, sheet);
-                root.addView(pendingRow);
+        // ─── Group 2: pending (owner only) ───
+        if (isOwner && !pending.isEmpty()) {
+            addGroupGap(content);
+            LinearLayout group2 = buildIosGroup();
+            TextView tvPendingHeader = new TextView(this);
+            tvPendingHeader.setText("Chờ duyệt  " + pending.size());
+            tvPendingHeader.setTextSize(13);
+            tvPendingHeader.setTextColor(0xFF8E8E93);
+            tvPendingHeader.setGravity(Gravity.CENTER);
+            tvPendingHeader.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
+            group2.addView(tvPendingHeader, matchW());
+            for (String pName : pending) {
+                addIosSep(group2);
+                group2.addView(buildPendingRow(pName, sheet));
             }
+            content.addView(group2, matchW());
         }
 
-        // === ADD FRIEND (Owner of friend_group only) ===
+        // ─── Group 3: add friend (owner of friend_group) ───
         if (isOwner && isFriendGroup) {
-            addDivider(root);
-
-            MaterialButton btnAddFriend = new MaterialButton(this);
-            btnAddFriend.setText("+ Thêm bạn bè vào nhóm");
-            btnAddFriend.setAllCaps(false);
-            btnAddFriend.setCornerRadius(72);
-            btnAddFriend.setTextSize(14);
-            btnAddFriend.setBackgroundTintList(ColorStateList.valueOf(
-                    getResources().getColor(R.color.primary_pink, null)));
-            LinearLayout.LayoutParams btnP = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            btnP.setMargins(48, 24, 48, 0);
-            btnAddFriend.setLayoutParams(btnP);
-            btnAddFriend.setOnClickListener(v -> {
+            addGroupGap(content);
+            LinearLayout groupAdd = buildIosGroup();
+            addIosRow(groupAdd, "Thêm bạn bè vào nhóm", 0xFF007AFF, v -> {
                 sheet.dismiss();
                 showAddFriendToGroupDialog();
             });
-            root.addView(btnAddFriend);
+            content.addView(groupAdd, matchW());
         }
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(root);
-        sheet.setContentView(scrollView);
+        addGroupGap(content);
+
+        // ─── Group last: close ───
+        LinearLayout groupClose = buildIosGroup();
+        addIosRow(groupClose, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        content.addView(groupClose, matchW());
+
+        sv.addView(content);
+        sheet.setContentView(sv);
+        makeSheetTransparent(sv);
         sheet.show();
     }
 
-    private LinearLayout createMemberRow(String memberName, boolean canRemove, BottomSheetDialog parentSheet) {
+    private View buildMemberRow(String memberName, boolean canRemove, BottomSheetDialog parentSheet) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(64, 20, 64, 20);
+        row.setPadding(dpPx(16), dpPx(12), dpPx(16), dpPx(12));
 
-        // Avatar
-        ImageView avatar = new ImageView(this);
-        avatar.setImageResource(R.drawable.ic_user_placeholder);
-        LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(72, 72);
-        avatar.setLayoutParams(avatarLp);
-        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        row.addView(avatar);
+        Long memberId = memberNameToId.get(memberName);
+        long myId = RetrofitClient.getUserId(this);
+        boolean isSelf = memberId != null && memberId == myId;
+
+        if (!isSelf && memberId != null) {
+            android.util.TypedValue tv = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);
+            row.setBackgroundResource(tv.resourceId);
+            row.setClickable(true);
+            row.setFocusable(true);
+            long fId = memberId;
+            row.setOnClickListener(v -> {
+                String av = memberNameToAvatar.getOrDefault(memberName, "");
+                UserActionBottomSheet.show(this, fId, memberName, av);
+            });
+        }
+
+        // Avatar 44dp circle
+        ImageView ivAvatar = new ImageView(this);
+        int avatarSize = dpPx(44);
+        ivAvatar.setLayoutParams(new LinearLayout.LayoutParams(avatarSize, avatarSize));
+        ivAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ivAvatar.setClipToOutline(true);
+        android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
+        circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        circleBg.setColor(0xFFE0E0E0);
+        ivAvatar.setBackground(circleBg);
+        ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+
+        String cachedAvatar = memberId != null ? RetrofitClient.getCachedAvatarForUser(memberId) : null;
+        if (cachedAvatar == null) cachedAvatar = memberNameToAvatar.get(memberName);
+        if (cachedAvatar != null && !cachedAvatar.isEmpty()) {
+            String url = cachedAvatar.startsWith("/")
+                    ? RetrofitClient.getBaseUrl() + cachedAvatar.substring(1) : cachedAvatar;
+            com.bumptech.glide.Glide.with(this).load(url)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .circleCrop().into(ivAvatar);
+        }
+        row.addView(ivAvatar);
 
         // Name
-        TextView name = new TextView(this);
-        boolean isOwner = room.isOwner(memberName);
-        name.setText(memberName + (isOwner ? " (Chủ phòng)" : ""));
-        name.setTextSize(14);
-        name.setTextColor(getResources().getColor(isOwner ? R.color.primary_pink : R.color.text_primary, null));
-        name.setPadding(24, 0, 0, 0);
+        boolean isOwnerMember = room != null && room.isOwner(memberName);
+        TextView tvName = new TextView(this);
+        tvName.setText(isOwnerMember ? memberName + "  👑" : memberName);
+        tvName.setTextSize(16);
+        tvName.setTextColor(0xFF1C1C1E);
+        tvName.setTypeface(null, isOwnerMember ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
         LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        name.setLayoutParams(nameLp);
-        row.addView(name);
+        nameLp.leftMargin = dpPx(12);
+        tvName.setLayoutParams(nameLp);
+        row.addView(tvName);
 
-        // Remove button (only for owner, can't remove self)
+        // "Xóa" text link for owner
         if (canRemove) {
-            MaterialButton btnRemove = new MaterialButton(this);
-            btnRemove.setText("Xóa");
-            btnRemove.setAllCaps(false);
-            btnRemove.setTextSize(11);
-            btnRemove.setCornerRadius(48);
-            btnRemove.setBackgroundTintList(ColorStateList.valueOf(0xFFFF4D6D));
-            LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 72);
-            btnRemove.setLayoutParams(removeLp);
-            btnRemove.setInsetTop(0);
-            btnRemove.setInsetBottom(0);
-            btnRemove.setMinWidth(0);
-            btnRemove.setMinimumWidth(0);
-            btnRemove.setPadding(32, 0, 32, 0);
-            btnRemove.setOnClickListener(v -> {
+            TextView tvRemove = new TextView(this);
+            tvRemove.setText("Xóa");
+            tvRemove.setTextSize(14);
+            tvRemove.setTextColor(0xFFFF3B30);
+            tvRemove.setClickable(true);
+            tvRemove.setFocusable(true);
+            tvRemove.setPadding(dpPx(8), dpPx(4), 0, dpPx(4));
+            tvRemove.setOnClickListener(v -> {
                 room.removeMember(memberName);
-                Toast.makeText(this, "Đã xóa " + memberName + " khỏi phòng", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Đã xóa " + memberName, Toast.LENGTH_SHORT).show();
                 parentSheet.dismiss();
-                showMemberManagementDialog(); // Refresh
+                showMemberManagementDialog();
             });
-            row.addView(btnRemove);
+            row.addView(tvRemove);
         }
 
         return row;
     }
 
-    private LinearLayout createPendingMemberRow(String pendingName, BottomSheetDialog parentSheet) {
+    private View buildPendingRow(String pendingName, BottomSheetDialog parentSheet) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(64, 20, 64, 20);
+        row.setPadding(dpPx(16), dpPx(12), dpPx(16), dpPx(12));
 
-        // Avatar
-        ImageView avatar = new ImageView(this);
-        avatar.setImageResource(R.drawable.ic_user_placeholder);
-        LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(72, 72);
-        avatar.setLayoutParams(avatarLp);
-        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        row.addView(avatar);
+        // Avatar 44dp
+        ImageView ivAvatar = new ImageView(this);
+        int avatarSize = dpPx(44);
+        ivAvatar.setLayoutParams(new LinearLayout.LayoutParams(avatarSize, avatarSize));
+        ivAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ivAvatar.setClipToOutline(true);
+        android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
+        circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        circleBg.setColor(0xFFE0E0E0);
+        ivAvatar.setBackground(circleBg);
+        ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        row.addView(ivAvatar);
 
         // Name
-        TextView name = new TextView(this);
-        name.setText(pendingName);
-        name.setTextSize(14);
-        name.setTextColor(getResources().getColor(R.color.text_primary, null));
-        name.setPadding(24, 0, 0, 0);
+        TextView tvName = new TextView(this);
+        tvName.setText(pendingName);
+        tvName.setTextSize(16);
+        tvName.setTextColor(0xFF1C1C1E);
         LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        name.setLayoutParams(nameLp);
-        row.addView(name);
+        nameLp.leftMargin = dpPx(12);
+        tvName.setLayoutParams(nameLp);
+        row.addView(tvName);
 
-        // Approve button
-        MaterialButton btnApprove = new MaterialButton(this);
-        btnApprove.setText("✓");
-        btnApprove.setAllCaps(false);
-        btnApprove.setTextSize(14);
-        btnApprove.setCornerRadius(48);
-        btnApprove.setBackgroundTintList(ColorStateList.valueOf(0xFF4CAF50));
-        LinearLayout.LayoutParams approveLp = new LinearLayout.LayoutParams(72, 72);
-        approveLp.setMargins(8, 0, 0, 0);
-        btnApprove.setLayoutParams(approveLp);
-        btnApprove.setInsetTop(0);
-        btnApprove.setInsetBottom(0);
-        btnApprove.setMinWidth(0);
-        btnApprove.setMinimumWidth(0);
-        btnApprove.setPadding(0, 0, 0, 0);
-        btnApprove.setOnClickListener(v -> {
+        // "Duyệt" green link
+        TextView tvApprove = new TextView(this);
+        tvApprove.setText("Duyệt");
+        tvApprove.setTextSize(14);
+        tvApprove.setTextColor(0xFF34C759);
+        tvApprove.setClickable(true);
+        tvApprove.setFocusable(true);
+        tvApprove.setPadding(dpPx(8), dpPx(4), 0, dpPx(4));
+        tvApprove.setOnClickListener(v -> {
             room.addMember(pendingName);
             Toast.makeText(this, "Đã duyệt " + pendingName, Toast.LENGTH_SHORT).show();
             parentSheet.dismiss();
-            showMemberManagementDialog(); // Refresh
+            showMemberManagementDialog();
         });
-        row.addView(btnApprove);
+        row.addView(tvApprove);
 
-        // Reject button
-        MaterialButton btnReject = new MaterialButton(this);
-        btnReject.setText("✕");
-        btnReject.setAllCaps(false);
-        btnReject.setTextSize(14);
-        btnReject.setCornerRadius(48);
-        btnReject.setBackgroundTintList(ColorStateList.valueOf(0xFFFF4D6D));
-        LinearLayout.LayoutParams rejectLp = new LinearLayout.LayoutParams(72, 72);
-        rejectLp.setMargins(8, 0, 0, 0);
-        btnReject.setLayoutParams(rejectLp);
-        btnReject.setInsetTop(0);
-        btnReject.setInsetBottom(0);
-        btnReject.setMinWidth(0);
-        btnReject.setMinimumWidth(0);
-        btnReject.setPadding(0, 0, 0, 0);
-        btnReject.setOnClickListener(v -> {
+        // "Từ chối" red link
+        TextView tvReject = new TextView(this);
+        tvReject.setText("Từ chối");
+        tvReject.setTextSize(14);
+        tvReject.setTextColor(0xFFFF3B30);
+        tvReject.setClickable(true);
+        tvReject.setFocusable(true);
+        LinearLayout.LayoutParams rejectLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rejectLp.leftMargin = dpPx(12);
+        tvReject.setLayoutParams(rejectLp);
+        tvReject.setPadding(0, dpPx(4), 0, dpPx(4));
+        tvReject.setOnClickListener(v -> {
             room.rejectPendingMember(pendingName);
             Toast.makeText(this, "Đã từ chối " + pendingName, Toast.LENGTH_SHORT).show();
             parentSheet.dismiss();
-            showMemberManagementDialog(); // Refresh
+            showMemberManagementDialog();
         });
-        row.addView(btnReject);
+        row.addView(tvReject);
 
         return row;
     }
 
     private void showAddFriendToGroupDialog() {
         BottomSheetDialog sheet = new BottomSheetDialog(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getResources().getColor(R.color.card_surface, null));
-        root.setPadding(0, 0, 0, 48);
+        sheet.getBehavior().setSkipCollapsed(true);
 
-        TextView header = new TextView(this);
-        header.setText("Thêm bạn bè vào nhóm");
-        header.setTextSize(20);
-        header.setTextColor(getResources().getColor(R.color.primary_pink, null));
-        header.setTypeface(null, android.graphics.Typeface.BOLD);
-        header.setGravity(Gravity.CENTER);
-        header.setPadding(0, 48, 0, 24);
-        root.addView(header);
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(0x00000000);
 
-        addDivider(root);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setBackgroundColor(0x00000000);
+        int p = dpPx(10);
+        content.setPadding(p, 0, p, p);
 
-        // Get friends of owner that aren't already in the group
+        LinearLayout group1 = buildIosGroup();
+
+        TextView tvHeader = new TextView(this);
+        tvHeader.setText("Thêm bạn bè vào nhóm");
+        tvHeader.setTextSize(13);
+        tvHeader.setTextColor(0xFF8E8E93);
+        tvHeader.setGravity(Gravity.CENTER);
+        tvHeader.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
+        group1.addView(tvHeader, matchW());
+
         List<String> allFriends = FakeSocialRepository.getInstance().getFriendNames();
-
         boolean hasAvailable = false;
         for (String friend : allFriends) {
             if (room.isMember(friend)) continue;
             hasAvailable = true;
 
+            addIosSep(group1);
+
             LinearLayout friendRow = new LinearLayout(this);
             friendRow.setOrientation(LinearLayout.HORIZONTAL);
             friendRow.setGravity(Gravity.CENTER_VERTICAL);
-            friendRow.setPadding(64, 24, 64, 24);
-            friendRow.setBackgroundResource(android.R.drawable.list_selector_background);
+            friendRow.setPadding(dpPx(16), dpPx(12), dpPx(16), dpPx(12));
+            android.util.TypedValue tv = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);
+            friendRow.setBackgroundResource(tv.resourceId);
             friendRow.setClickable(true);
 
-            ImageView avatar = new ImageView(this);
-            avatar.setImageResource(R.drawable.ic_user_placeholder);
-            LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(72, 72);
-            avatar.setLayoutParams(avatarLp);
-            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            friendRow.addView(avatar);
+            // Avatar
+            ImageView ivA = new ImageView(this);
+            int s = dpPx(44);
+            ivA.setLayoutParams(new LinearLayout.LayoutParams(s, s));
+            ivA.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            ivA.setClipToOutline(true);
+            android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
+            circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            circleBg.setColor(0xFFE0E0E0);
+            ivA.setBackground(circleBg);
+            ivA.setImageResource(R.drawable.ic_user_placeholder);
+            friendRow.addView(ivA);
 
-            TextView name = new TextView(this);
-            name.setText(friend);
-            name.setTextSize(15);
-            name.setTextColor(getResources().getColor(R.color.text_primary, null));
-            name.setPadding(24, 0, 0, 0);
+            // Name
+            TextView tvName = new TextView(this);
+            tvName.setText(friend);
+            tvName.setTextSize(16);
+            tvName.setTextColor(0xFF1C1C1E);
             LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-            name.setLayoutParams(nameLp);
-            friendRow.addView(name);
+            nameLp.leftMargin = dpPx(12);
+            tvName.setLayoutParams(nameLp);
+            friendRow.addView(tvName);
 
-            MaterialButton btnAdd = new MaterialButton(this);
-            btnAdd.setText("Thêm");
-            btnAdd.setAllCaps(false);
-            btnAdd.setTextSize(11);
-            btnAdd.setCornerRadius(48);
-            btnAdd.setBackgroundTintList(ColorStateList.valueOf(
-                    getResources().getColor(R.color.primary_pink, null)));
-            LinearLayout.LayoutParams addLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 72);
-            btnAdd.setLayoutParams(addLp);
-            btnAdd.setInsetTop(0);
-            btnAdd.setInsetBottom(0);
-            btnAdd.setMinWidth(0);
-            btnAdd.setMinimumWidth(0);
-            btnAdd.setPadding(32, 0, 32, 0);
-            btnAdd.setOnClickListener(v -> {
-                room.addMember(friend);
-                Toast.makeText(this, "Đã thêm " + friend + " vào nhóm", Toast.LENGTH_SHORT).show();
+            // "Thêm" blue link
+            TextView tvAdd = new TextView(this);
+            tvAdd.setText("Thêm");
+            tvAdd.setTextSize(14);
+            tvAdd.setTextColor(0xFF007AFF);
+            tvAdd.setClickable(true);
+            tvAdd.setFocusable(true);
+            tvAdd.setPadding(dpPx(8), dpPx(4), 0, dpPx(4));
+            String finalFriend = friend;
+            tvAdd.setOnClickListener(v2 -> {
+                room.addMember(finalFriend);
+                Toast.makeText(this, "Đã thêm " + finalFriend + " vào nhóm",
+                        Toast.LENGTH_SHORT).show();
                 sheet.dismiss();
                 showMemberManagementDialog();
             });
-            friendRow.addView(btnAdd);
+            friendRow.addView(tvAdd);
 
-            root.addView(friendRow);
+            group1.addView(friendRow, matchW());
         }
 
         if (!hasAvailable) {
-            TextView noFriends = new TextView(this);
-            noFriends.setText("Tất cả bạn bè đã ở trong nhóm");
-            noFriends.setTextSize(14);
-            noFriends.setTextColor(getResources().getColor(R.color.text_secondary, null));
-            noFriends.setGravity(Gravity.CENTER);
-            noFriends.setPadding(0, 48, 0, 48);
-            root.addView(noFriends);
+            addIosSep(group1);
+            TextView tvEmpty = new TextView(this);
+            tvEmpty.setText("Tất cả bạn bè đã ở trong nhóm");
+            tvEmpty.setTextSize(15);
+            tvEmpty.setTextColor(0xFF8E8E93);
+            tvEmpty.setGravity(Gravity.CENTER);
+            tvEmpty.setPadding(dpPx(16), dpPx(20), dpPx(16), dpPx(20));
+            group1.addView(tvEmpty, matchW());
         }
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(root);
-        sheet.setContentView(scrollView);
+        content.addView(group1, matchW());
+        addGroupGap(content);
+
+        LinearLayout groupClose = buildIosGroup();
+        addIosRow(groupClose, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        content.addView(groupClose, matchW());
+
+        sv.addView(content);
+        sheet.setContentView(sv);
+        makeSheetTransparent(sv);
         sheet.show();
     }
 
-    private void addDivider(LinearLayout parent) {
-        View div = new View(this);
-        div.setBackgroundColor(0xFFE8E4DE);
-        div.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 2));
-        parent.addView(div);
+    // ── iOS-style sheet helpers ──
+
+    private LinearLayout buildIosRoot() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0x00000000);
+        int p = dpPx(10);
+        root.setPadding(p, 0, p, p);
+        return root;
+    }
+
+    private LinearLayout buildIosGroup() {
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFFFFFFFF);
+        bg.setCornerRadius(dpPx(14));
+        ll.setBackground(bg);
+        ll.setClipToOutline(true);
+        return ll;
+    }
+
+    private void addIosRow(LinearLayout parent, String text, int color,
+                            View.OnClickListener listener) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(17);
+        tv.setTextColor(color);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        if (listener != null) {
+            tv.setClickable(true);
+            tv.setFocusable(true);
+            android.util.TypedValue tv2 = new android.util.TypedValue();
+            getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv2, true);
+            tv.setBackgroundResource(tv2.resourceId);
+            tv.setOnClickListener(listener);
+        }
+        parent.addView(tv, matchW());
+    }
+
+    private void addIosSep(LinearLayout parent) {
+        View sep = new View(this);
+        sep.setBackgroundColor(0xFFD1D1D6);
+        sep.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        parent.addView(sep);
+    }
+
+    private void addGroupGap(LinearLayout parent) {
+        View gap = new View(this);
+        gap.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(8)));
+        parent.addView(gap);
+    }
+
+    private void makeSheetTransparent(View contentRoot) {
+        contentRoot.post(() -> {
+            if (contentRoot.getParent() instanceof View) {
+                ((View) contentRoot.getParent()).setBackgroundColor(0x00000000);
+            }
+        });
+    }
+
+    private LinearLayout.LayoutParams matchW() {
+        return new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+    }
+
+    private int dpPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     private void sendMessage() {
@@ -568,6 +770,7 @@ public class ConversationActivity extends AppCompatActivity {
         }
         ChatMessage chatMsg = new ChatMessage(
                 String.valueOf(msg.getId()),
+                msg.getSenderId(),
                 msg.getSenderName() != null ? msg.getSenderName() : "",
                 msg.getContent() != null ? msg.getContent() : "",
                 time,
@@ -612,7 +815,7 @@ public class ConversationActivity extends AppCompatActivity {
                             }
                         }
                         boolean sentByMe = msgData.isSentByCurrentUser();
-                        messages.add(new ChatMessage(id, sender, msgContent, time, sentByMe));
+                        messages.add(new ChatMessage(id, msgData.getSenderId(), sender, msgContent, time, sentByMe));
                     }
                     adapter.submitList(messages);
                     if (!messages.isEmpty()) {
