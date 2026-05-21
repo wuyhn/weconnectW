@@ -25,6 +25,11 @@ public class UserReview {
     @Column(name = "reviewed_user_id", nullable = false)
     private Long reviewedUserId;
 
+    @Column(name = "post_id")
+    private Long postId;
+
+    private Integer rating;
+
     @Column(length = 200)
     private String activityName;
 
@@ -36,6 +41,9 @@ public class UserReview {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
 
     @PrePersist
     protected void onCreate() {

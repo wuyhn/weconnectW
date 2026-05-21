@@ -115,10 +115,28 @@ public class LoginActivity extends AppCompatActivity {
                     com.example.weconnect.data.FakeSocialRepository.getInstance()
                             .setCurrentUsername(authResult.getFullName());
 
-                    Toast.makeText(LoginActivity.this, "Đăng nhập thành công!", Toast.LENGTH_SHORT).show();
-                    Intent intent = new Intent(LoginActivity.this, MainActivity.class);
-                    startActivity(intent);
-                    finish();
+                    // Fetch avatar URL trước khi vào Home để Home hiển thị đúng ngay
+                    com.example.weconnect.api.UserApiService userApi =
+                            RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
+                    userApi.getMyProfile().enqueue(new Callback<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>>() {
+                        @Override
+                        public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> call,
+                                               retrofit2.Response<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> response) {
+                            if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
+                                java.util.Map<String, Object> profile = response.body().getResult();
+                                Object avatarObj = profile.get("avatarUrl");
+                                if (avatarObj != null && !avatarObj.toString().isEmpty()) {
+                                    RetrofitClient.saveAvatarUrl(LoginActivity.this, avatarObj.toString());
+                                }
+                            }
+                            navigateToMain();
+                        }
+
+                        @Override
+                        public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
+                            navigateToMain();
+                        }
+                    });
                 } else {
                     // Lỗi từ backend
                     String errorMsg = "Sai email hoặc mật khẩu";
@@ -138,6 +156,12 @@ public class LoginActivity extends AppCompatActivity {
                 Log.e("LoginDebug", err, t);
             }
         });
+    }
+
+    private void navigateToMain() {
+        Toast.makeText(LoginActivity.this, "Đăng nhập thành công!", Toast.LENGTH_SHORT).show();
+        startActivity(new Intent(LoginActivity.this, MainActivity.class));
+        finish();
     }
 
     private void setupSmartValidation() {

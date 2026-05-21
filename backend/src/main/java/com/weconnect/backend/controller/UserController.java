@@ -45,9 +45,10 @@ public class UserController {
 
     // Lấy profile của user khác
     @GetMapping("/{id}")
-    public ResponseEntity<?> getProfile(@PathVariable Long id) {
+    public ResponseEntity<?> getProfile(@PathVariable Long id, Authentication authentication) {
         try {
-            UserProfileResponse profile = userService.getProfile(id);
+            User currentUser = (User) authentication.getPrincipal();
+            UserProfileResponse profile = userService.getProfile(id, currentUser.getId());
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000)
                     .message("Thành công")
@@ -188,15 +189,25 @@ public class UserController {
 
     // Tìm user theo tên exact (dùng để resolve user_id từ username)
     @GetMapping("/search")
-    public ResponseEntity<?> searchByName(@RequestParam String name) {
+    public ResponseEntity<?> searchByName(@RequestParam String name, Authentication authentication) {
+        User currentUser = (User) authentication.getPrincipal();
         var user = userRepository.findByFullName(name).orElse(null);
         if (user == null) {
             return ResponseEntity.status(404).body(ApiResponse.builder()
                     .code(1003).message("Không tìm thấy người dùng").build());
         }
+        // Nếu user này đã chặn tôi → hiển thị như không tồn tại
+        if (userService.isBlockedBy(user.getId(), currentUser.getId())) {
+            return ResponseEntity.status(404).body(ApiResponse.builder()
+                    .code(1003).message("Không tìm thấy người dùng").build());
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", user.getId());
+        result.put("fullName", user.getFullName());
+        userService.appendBlockStatus(result, currentUser.getId(), user.getId());
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công")
-                .result(Map.of("id", user.getId(), "fullName", user.getFullName()))
+                .result(result)
                 .build());
     }
 
@@ -208,12 +219,14 @@ public class UserController {
         List<User> users = userRepository.findByFullNameContainingIgnoreCase(q);
         List<Map<String, Object>> result = users.stream()
                 .filter(u -> !u.getId().equals(currentUser.getId()))
+                .filter(u -> !userService.isBlockedBy(u.getId(), currentUser.getId()))
                 .limit(10)
                 .map(u -> {
                     Map<String, Object> m = new HashMap<>();
                     m.put("id", u.getId());
                     m.put("fullName", u.getFullName());
                     m.put("avatarUrl", u.getAvatarUrl() != null ? u.getAvatarUrl() : "");
+                    userService.appendBlockStatus(m, currentUser.getId(), u.getId());
                     return m;
                 })
                 .toList();

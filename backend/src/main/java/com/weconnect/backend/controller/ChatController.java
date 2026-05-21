@@ -5,6 +5,7 @@ import com.weconnect.backend.dto.ChatRoomResponse;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.service.ChatService;
+import com.weconnect.backend.service.PostService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -17,9 +18,11 @@ import java.util.Map;
 public class ChatController {
 
     private final ChatService chatService;
+    private final PostService postService;
 
-    public ChatController(ChatService chatService) {
+    public ChatController(ChatService chatService, PostService postService) {
         this.chatService = chatService;
+        this.postService = postService;
     }
 
     // Danh sách phòng chat
@@ -27,6 +30,15 @@ public class ChatController {
     public ResponseEntity<?> getRooms(Authentication authentication) {
         User user = (User) authentication.getPrincipal();
         List<ChatRoomResponse> rooms = chatService.getUserRooms(user.getId());
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công").result(rooms).build());
+    }
+
+    // Danh sach direct room tu nguoi chua la ban be
+    @GetMapping("/message-requests")
+    public ResponseEntity<?> getMessageRequests(Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        List<ChatRoomResponse> rooms = chatService.getMessageRequests(user.getId());
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công").result(rooms).build());
     }
@@ -129,6 +141,60 @@ public class ChatController {
         } catch (RuntimeException e) {
             return ResponseEntity.status(404).body(ApiResponse.builder()
                     .code(1020).message(e.getMessage()).build());
+        }
+    }
+
+    // Đánh dấu đã đọc tất cả tin nhắn trong phòng
+    @PutMapping("/rooms/{id}/read")
+    public ResponseEntity<?> markAsRead(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        chatService.markAsRead(id, user.getId());
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Đã đánh dấu đã đọc.").build());
+    }
+
+    // Xóa thành viên khỏi nhóm (chỉ owner)
+    @DeleteMapping("/rooms/{id}/members/{memberId}")
+    public ResponseEntity<?> removeMember(@PathVariable Long id,
+                                          @PathVariable Long memberId,
+                                          Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            chatService.removeMember(id, user.getId(), memberId);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã xóa thành viên.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(403).body(ApiResponse.builder()
+                    .code(1021).message(e.getMessage()).build());
+        }
+    }
+
+    // Rời nhóm (non-owner)
+    @PostMapping("/rooms/{id}/leave")
+    public ResponseEntity<?> leaveRoom(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            chatService.leaveRoom(id, user.getId());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã rời nhóm.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1021).message(e.getMessage()).build());
+        }
+    }
+
+    // Hủy hoạt động qua roomId (chủ phòng activity room)
+    @PostMapping("/rooms/{id}/cancel")
+    public ResponseEntity<?> cancelActivityRoom(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            Long postId = chatService.getPostIdFromActivityRoom(id, user.getId());
+            postService.cancelActivity(postId, user.getId());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã hủy hoạt động.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1005).message(e.getMessage()).build());
         }
     }
 

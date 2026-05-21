@@ -51,6 +51,13 @@ public class UserService {
         return toProfileResponse(user);
     }
 
+    public UserProfileResponse getProfile(Long userId, Long currentUserId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng."));
+
+        return toProfileResponse(user, currentUserId);
+    }
+
     public UserProfileResponse updateProfile(Long userId, UpdateProfileRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng."));
@@ -120,18 +127,48 @@ public class UserService {
     }
 
     public UserProfileResponse toProfileResponse(User user) {
+        return toProfileResponse(user, null);
+    }
+
+    public UserProfileResponse toProfileResponse(User user, Long currentUserId) {
+        boolean isBlockedByMe = false;
+        boolean hasBlockedMe = false;
+        if (currentUserId != null && user.getId() != null && !currentUserId.equals(user.getId())) {
+            isBlockedByMe = blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, user.getId());
+            hasBlockedMe = blockedUserRepository.existsByBlockerIdAndBlockedId(user.getId(), currentUserId);
+        }
+        boolean blockedBetweenUsers = isBlockedByMe || hasBlockedMe;
+        int totalReviewCount = userReviewRepository.countByReviewedUserId(user.getId());
+
         return UserProfileResponse.builder()
                 .id(user.getId())
                 .email(user.getEmail())
                 .fullName(user.getFullName())
-                .birthday(user.getBirthday())
-                .gender(user.getGender())
+                .birthday(blockedBetweenUsers ? null : user.getBirthday())
+                .gender(blockedBetweenUsers ? null : user.getGender())
                 .avatarUrl(user.getAvatarUrl())
-                .bio(user.getBio())
-                .interestTags(user.getInterestTags())
-                .averageRating(user.getAverageRating())
-                .reputationScore(user.getReputationScore())
+                .bio(blockedBetweenUsers ? null : user.getBio())
+                .interestTags(blockedBetweenUsers ? null : user.getInterestTags())
+                .averageRating(blockedBetweenUsers ? 0 : user.getAverageRating())
+                .reputationScore(blockedBetweenUsers ? 0 : user.getReputationScore())
+                .totalReviewCount(totalReviewCount)
+                .isActivityJoinLocked(user.isBlocked())
+                .isBlockedByMe(isBlockedByMe)
+                .hasBlockedMe(hasBlockedMe)
+                .isBlockedBetweenUsers(blockedBetweenUsers)
                 .build();
+    }
+
+    public void appendBlockStatus(Map<String, Object> item, Long currentUserId, Long targetUserId) {
+        boolean isBlockedByMe = false;
+        boolean hasBlockedMe = false;
+        if (currentUserId != null && targetUserId != null && !currentUserId.equals(targetUserId)) {
+            isBlockedByMe = blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, targetUserId);
+            hasBlockedMe = blockedUserRepository.existsByBlockerIdAndBlockedId(targetUserId, currentUserId);
+        }
+        item.put("isBlockedByMe", isBlockedByMe);
+        item.put("hasBlockedMe", hasBlockedMe);
+        item.put("isBlockedBetweenUsers", isBlockedByMe || hasBlockedMe);
     }
 
     /**
@@ -161,6 +198,9 @@ public class UserService {
             if (u.getId().equals(currentUserId)) continue;
             // Loại trừ user đang xem
             if (excludeId != null && u.getId().equals(excludeId)) continue;
+            // Loại trừ users đã chặn tôi hoặc tôi đã chặn
+            if (blockedUserRepository.existsByBlockerIdAndBlockedId(u.getId(), currentUserId)) continue;
+            if (blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, u.getId())) continue;
 
             String theirTags = u.getInterestTags();
             if (theirTags == null || theirTags.isEmpty()) continue;
@@ -182,6 +222,7 @@ public class UserService {
                 item.put("fullName", u.getFullName());
                 item.put("avatarUrl", u.getAvatarUrl());
                 item.put("commonInterestCount", commonCount);
+                appendBlockStatus(item, currentUserId, u.getId());
                 suggestions.add(item);
             }
         }
@@ -197,6 +238,11 @@ public class UserService {
         }
 
         return suggestions;
+    }
+
+    public boolean isBlockedBy(Long blockerId, Long currentUserId) {
+        if (blockerId == null || currentUserId == null || blockerId.equals(currentUserId)) return false;
+        return blockedUserRepository.existsByBlockerIdAndBlockedId(blockerId, currentUserId);
     }
 
     public void updateFcmToken(Long userId, String fcmToken) {

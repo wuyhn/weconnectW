@@ -17,6 +17,7 @@ public class ChatMessageResponse {
     private Long senderId;
     private String senderName;
     private String content;
+    private String type;
     private boolean sentByCurrentUser;
     private LocalDateTime createdAt;
 }

@@ -32,4 +32,7 @@ public class ChatRoomMember {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;
+
+    @Column(name = "last_read_message_id")
+    private Long lastReadMessageId;
 }

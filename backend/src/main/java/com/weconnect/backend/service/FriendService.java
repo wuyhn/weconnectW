@@ -8,6 +8,7 @@ import com.weconnect.backend.repository.BlockedUserRepository;
 import com.weconnect.backend.repository.FriendshipRepository;
 import com.weconnect.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -99,6 +100,12 @@ public class FriendService {
 
     // Chấp nhận lời mời
     public String acceptFriendRequest(Long currentUserId, Long fromUserId) {
+        // Không cho phép chấp nhận nếu đang có block 2 chiều
+        if (blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, fromUserId)
+                || blockedUserRepository.existsByBlockerIdAndBlockedId(fromUserId, currentUserId)) {
+            throw new RuntimeException("Không thể chấp nhận lời mời.");
+        }
+
         Friendship friendship = findUniqueBetween(currentUserId, fromUserId);
         if (friendship == null) {
             throw new RuntimeException("Không tìm thấy lời mời.");
@@ -115,6 +122,9 @@ public class FriendService {
 
         friendship.setStatus(Friendship.Status.ACCEPTED);
         friendshipRepository.save(friendship);
+
+        // Đánh dấu notification FRIEND_REQUEST_RECEIVED là actioned
+        notificationService.markFriendRequestActioned(currentUserId, fromUserId, "ACCEPTED");
 
         // Tạo thông báo cho người gửi lời mời
         User accepter = userRepository.findById(currentUserId).orElse(null);
@@ -145,6 +155,10 @@ public class FriendService {
 
         friendship.setStatus(Friendship.Status.DECLINED);
         friendshipRepository.save(friendship);
+
+        // Đánh dấu notification FRIEND_REQUEST_RECEIVED là actioned
+        notificationService.markFriendRequestActioned(currentUserId, fromUserId, "DECLINED");
+
         return "Đã từ chối lời mời.";
     }
 
@@ -217,7 +231,31 @@ public class FriendService {
         return "NONE";
     }
 
+    // Trạng thái block 2 chiều, dùng riêng cho quyền nhắn tin direct
+    public Map<String, Object> getBlockStatus(Long currentUserId, Long otherUserId) {
+        if (currentUserId.equals(otherUserId)) {
+            throw new RuntimeException("Không thể kiểm tra chính mình.");
+        }
+
+        boolean currentUserBlockedOther =
+                blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, otherUserId);
+        boolean otherUserBlockedCurrent =
+                blockedUserRepository.existsByBlockerIdAndBlockedId(otherUserId, currentUserId);
+        boolean blockedBetweenUsers = currentUserBlockedOther || otherUserBlockedCurrent;
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("currentUserBlockedOther", currentUserBlockedOther);
+        result.put("otherUserBlockedCurrent", otherUserBlockedCurrent);
+        result.put("blockedBetweenUsers", blockedBetweenUsers);
+        result.put("isBlockedByMe", currentUserBlockedOther);
+        result.put("hasBlockedMe", otherUserBlockedCurrent);
+        result.put("isBlockedBetweenUsers", blockedBetweenUsers);
+        result.put("canSendDirectMessage", !blockedBetweenUsers);
+        return result;
+    }
+
     // Chặn user
+    @Transactional
     public String blockUser(Long blockerId, Long blockedId) {
         if (blockerId.equals(blockedId)) {
             throw new RuntimeException("Không thể chặn chính mình.");
@@ -227,18 +265,25 @@ public class FriendService {
             throw new RuntimeException("Đã chặn người này rồi.");
         }
 
-        // Xóa tất cả friendship nếu có (kể cả trùng)
-        List<Friendship> existing = friendshipRepository.findBetweenUsers(blockerId, blockedId);
-        if (existing != null && !existing.isEmpty()) {
-            friendshipRepository.deleteAll(existing);
-        }
-
         BlockedUser blocked = BlockedUser.builder()
                 .blockerId(blockerId)
                 .blockedId(blockedId)
                 .build();
 
         blockedUserRepository.save(blocked);
+
+        // Hủy tất cả quan hệ bạn bè giữa 2 người (pending lẫn accepted)
+        Friendship friendship = findUniqueBetween(blockerId, blockedId);
+        if (friendship != null) {
+            friendshipRepository.delete(friendship);
+        }
+
+        // Hủy notification lời mời kết bạn cả 2 chiều:
+        // - blockerId nhận lời mời từ blockedId (case: blockedId đã gửi request trước)
+        notificationService.cancelFriendRequestNotifications(blockerId, blockedId);
+        // - blockedId nhận lời mời từ blockerId (case: blockerId đã gửi request trước)
+        notificationService.cancelFriendRequestNotifications(blockedId, blockerId);
+
         return "Đã chặn người dùng.";
     }
 

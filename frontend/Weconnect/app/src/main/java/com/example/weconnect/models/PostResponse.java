@@ -19,12 +19,15 @@ public class PostResponse {
     private boolean joined;
     private boolean pendingApproval;
     private boolean archived;
+    private boolean cancelled;
     private boolean expired;
     private Integer expirationHours;
     private String startTime;
     private String endTime;
+    private String activityEndTime;
     private String createdAt;
     private String authorAvatarUrl;
+    private String activityTimeType;
 
     public Long getId() { return id; }
     public Long getAuthorId() { return authorId; }
@@ -40,12 +43,15 @@ public class PostResponse {
     public boolean isJoined() { return joined; }
     public boolean isPendingApproval() { return pendingApproval; }
     public boolean isArchived() { return archived; }
+    public boolean isCancelled() { return cancelled; }
     public boolean isExpired() { return expired; }
     public Integer getExpirationHours() { return expirationHours; }
     public String getStartTime() { return startTime; }
     public String getEndTime() { return endTime; }
+    public String getActivityEndTime() { return activityEndTime; }
     public String getCreatedAt() { return createdAt; }
     public String getAuthorAvatarUrl() { return authorAvatarUrl; }
+    public String getActivityTimeType() { return activityTimeType; }
 
     /**
      * Convert thành Post model cũ để tương thích với PostAdapter hiện tại
@@ -89,6 +95,7 @@ public class PostResponse {
                 archived || expired
         );
         post.setPendingApproval(pendingApproval);
+        post.setCancelled(cancelled);
         if (imageUrl != null && !imageUrl.isEmpty()) {
             post.setPostImageUri(imageUrl);
         }
@@ -100,6 +107,22 @@ public class PostResponse {
         }
         if (authorAvatarUrl != null && !authorAvatarUrl.isEmpty()) {
             post.setAvatarUrl(authorAvatarUrl);
+        }
+        if (activityEndTime != null && !activityEndTime.isEmpty()) {
+            post.setActivityEndTimeStr(activityEndTime);
+        }
+        if (activityTimeType != null && !activityTimeType.isEmpty()) {
+            post.setActivityTimeType(activityTimeType);
+        }
+        if (createdAt != null && !createdAt.isEmpty()) {
+            try {
+                java.text.SimpleDateFormat isoFmt = new java.text.SimpleDateFormat(
+                        "yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+                java.util.Date d = isoFmt.parse(createdAt);
+                java.text.SimpleDateFormat displayFmt = new java.text.SimpleDateFormat(
+                        "dd/MM/yyyy HH:mm", java.util.Locale.getDefault());
+                post.setPostedDate(displayFmt.format(d));
+            } catch (Exception ignored) {}
         }
         return post;
     }

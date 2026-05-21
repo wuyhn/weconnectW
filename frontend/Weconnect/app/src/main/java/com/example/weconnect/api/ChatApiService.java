@@ -17,6 +17,10 @@ public interface ChatApiService {
     Call<ApiResponse<List<ChatRoomApiResponse>>> getRooms();
 
     // Chi tiết phòng chat
+    // Danh sach direct room tu nguoi chua la ban be
+    @GET("api/chat/message-requests")
+    Call<ApiResponse<List<ChatRoomApiResponse>>> getMessageRequests();
+
     @GET("api/chat/rooms/{id}")
     Call<ApiResponse<ChatRoomApiResponse>> getRoom(@Path("id") long id);
 
@@ -46,7 +50,23 @@ public interface ChatApiService {
     @GET("api/chat/rooms/post/{postId}")
     Call<ApiResponse<ChatRoomApiResponse>> getRoomByPostId(@Path("postId") long postId);
 
+    // Đánh dấu đã đọc tất cả tin nhắn trong phòng
+    @PUT("api/chat/rooms/{id}/read")
+    Call<ApiResponse<Void>> markRoomAsRead(@Path("id") long id);
+
+    // Hủy hoạt động (owner of activity room only)
+    @POST("api/chat/rooms/{id}/cancel")
+    Call<ApiResponse<Void>> cancelActivityRoom(@Path("id") long id);
+
     // Xóa phòng chat (owner only)
     @DELETE("api/chat/rooms/{id}")
     Call<ApiResponse<Void>> deleteRoom(@Path("id") long id);
+
+    // Xóa thành viên khỏi nhóm (owner only)
+    @DELETE("api/chat/rooms/{id}/members/{memberId}")
+    Call<ApiResponse<Void>> removeMember(@Path("id") long id, @Path("memberId") long memberId);
+
+    // Rời nhóm (non-owner)
+    @POST("api/chat/rooms/{id}/leave")
+    Call<ApiResponse<Void>> leaveRoom(@Path("id") long id);
 }

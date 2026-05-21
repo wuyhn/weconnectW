@@ -24,4 +24,10 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
 
     // Admin notification: lấy reports chưa xem
     List<Report> findByAdminViewedFalseOrderByCreatedAtDesc();
+
+    // Đếm reports nhắm vào một target cụ thể
+    long countByTargetTypeAndTargetId(Report.TargetType targetType, Long targetId);
+
+    // Đếm reports đã xác nhận vi phạm (RESOLVED) nhắm vào một target
+    long countByTargetTypeAndTargetIdAndStatus(Report.TargetType targetType, Long targetId, Report.Status status);
 }

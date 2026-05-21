@@ -38,12 +38,20 @@ public class Post {
 
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private LocalDateTime activityEndTime;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "activity_time_type")
+    private ActivityTimeType activityTimeType;
 
     @Column(name = "expiration_hours")
     private Integer expirationHours;
 
     @Column(columnDefinition = "BOOLEAN DEFAULT false")
     private boolean archived;
+
+    @Column(columnDefinition = "BOOLEAN DEFAULT false")
+    private boolean cancelled;
 
     @Column(name = "expiration_notified", columnDefinition = "BOOLEAN DEFAULT false")
     private boolean expirationNotified;

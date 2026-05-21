@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+
 @Service
 public class ReportService {
 
@@ -40,7 +41,11 @@ public class ReportService {
 
     // User tạo report từ app
     public String createReport(Long reporterId, String targetType, Long targetId,
-                                String reason, String description) {
+                                String reason, String description, List<String> imageUrls) {
+        if (reason == null || reason.trim().isEmpty()) {
+            throw new RuntimeException("Vui lòng chọn lý do báo cáo.");
+        }
+
         Report.TargetType type;
         try {
             type = Report.TargetType.valueOf(targetType.toUpperCase());
@@ -48,12 +53,26 @@ public class ReportService {
             throw new RuntimeException("targetType phải là USER hoặc POST.");
         }
 
+        if (type == Report.TargetType.USER) {
+            if (reporterId.equals(targetId)) {
+                throw new RuntimeException("Không thể báo cáo chính mình.");
+            }
+            userRepository.findById(targetId)
+                    .orElseThrow(() -> new RuntimeException("Người dùng bị báo cáo không tồn tại."));
+        } else {
+            postRepository.findById(targetId)
+                    .orElseThrow(() -> new RuntimeException("Bài viết bị báo cáo không tồn tại."));
+        }
+
+        String imagesJson = urlsToJson(imageUrls);
+
         Report report = Report.builder()
                 .reporterId(reporterId)
                 .targetType(type)
                 .targetId(targetId)
                 .reason(reason)
                 .description(description)
+                .evidenceImages(imagesJson)
                 .status(Report.Status.PENDING)
                 .build();
 
@@ -264,15 +283,18 @@ public class ReportService {
 
     private String handleWarn(Report report) {
         if (report.getTargetType() == Report.TargetType.USER) {
-            userRepository.findById(report.getTargetId())
+            User user = userRepository.findById(report.getTargetId())
                     .orElseThrow(() -> new RuntimeException("User không tồn tại."));
+            // Vi phạm mức thường/trung bình: -20 điểm uy tín
+            deductReputation(user, 20);
             return "Cảnh cáo người dùng";
         } else {
             Post post = postRepository.findById(report.getTargetId())
                     .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
-            // Cảnh cáo chủ bài viết
-            userRepository.findById(post.getAuthorId())
+            User author = userRepository.findById(post.getAuthorId())
                     .orElseThrow(() -> new RuntimeException("Tác giả bài viết không tồn tại."));
+            // Vi phạm mức thường/trung bình: -20 điểm uy tín
+            deductReputation(author, 20);
             return "Cảnh cáo người đăng bài";
         }
     }
@@ -296,9 +318,18 @@ public class ReportService {
     private String handleBlockUser(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User không tồn tại."));
+        // Vi phạm nghiêm trọng: -40 điểm uy tín + khóa tài khoản
+        deductReputation(user, 40);
         user.setBlocked(true);
         userRepository.save(user);
         return "Khóa tài khoản";
+    }
+
+    // Trừ điểm uy tín và clamp về 0–100
+    private void deductReputation(User user, double amount) {
+        double newScore = Math.max(0, Math.min(100, user.getReputationScore() - amount));
+        user.setReputationScore(newScore);
+        userRepository.save(user);
     }
 
     private String handleDeleteUser(Long userId) {
@@ -359,6 +390,7 @@ public class ReportService {
 
         User reporter = userRepository.findById(r.getReporterId()).orElse(null);
         map.put("reporterName", reporter != null ? reporter.getFullName() : "Unknown");
+        map.put("reporterAvatarUrl", reporter != null ? reporter.getAvatarUrl() : null);
 
         map.put("targetType", r.getTargetType().name());
         map.put("targetId", r.getTargetId());
@@ -369,6 +401,8 @@ public class ReportService {
         map.put("createdAt", r.getCreatedAt());
         map.put("reviewedAt", r.getReviewedAt());
         map.put("reviewedBy", r.getReviewedBy());
+
+        map.put("evidenceImages", jsonToUrls(r.getEvidenceImages()));
 
         // Thêm thông tin chi tiết của target
         if (r.getTargetType() == Report.TargetType.POST) {
@@ -388,6 +422,9 @@ public class ReportService {
                 // Lấy tên tác giả
                 User author = userRepository.findById(post.getAuthorId()).orElse(null);
                 targetInfo.put("authorName", author != null ? author.getFullName() : "Unknown");
+                String content = post.getContent() != null ? post.getContent() : "";
+                map.put("targetName", content.length() > 80 ? content.substring(0, 80) + "..." : content);
+                map.put("targetThumbnailUrl", post.getImageUrl());
                 map.put("targetInfo", targetInfo);
             }
         } else if (r.getTargetType() == Report.TargetType.USER) {
@@ -404,11 +441,56 @@ public class ReportService {
                 targetInfo.put("isBlocked", targetUser.isBlocked());
                 targetInfo.put("gender", targetUser.getGender());
                 targetInfo.put("createdAt", targetUser.getCreatedAt());
+                map.put("targetName", targetUser.getFullName());
+                map.put("targetAvatarUrl", targetUser.getAvatarUrl());
                 map.put("targetInfo", targetInfo);
             }
         }
 
         return map;
+    }
+
+    // --- JSON helpers (avoid Jackson dependency) ---
+
+    private static String urlsToJson(List<String> urls) {
+        if (urls == null || urls.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < urls.size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append("\"").append(urls.get(i)
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")).append("\"");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private static List<String> jsonToUrls(String json) {
+        List<String> result = new ArrayList<>();
+        if (json == null || json.isBlank()) return result;
+        String trimmed = json.trim();
+        if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return result;
+        trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
+        if (trimmed.isEmpty()) return result;
+        // Simple token split: find each "..." value
+        int i = 0;
+        while (i < trimmed.length()) {
+            int start = trimmed.indexOf('"', i);
+            if (start < 0) break;
+            int end = start + 1;
+            while (end < trimmed.length()) {
+                if (trimmed.charAt(end) == '\\') { end += 2; continue; }
+                if (trimmed.charAt(end) == '"') break;
+                end++;
+            }
+            if (end < trimmed.length()) {
+                result.add(trimmed.substring(start + 1, end)
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\"));
+            }
+            i = end + 1;
+        }
+        return result;
     }
 }
 

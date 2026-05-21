@@ -42,6 +42,7 @@ public class CreatePostActivity extends AppCompatActivity {
     private String selectedLocation = "";
     private ImageView ivPostImagePreview;
     private Uri selectedImageUri = null;
+    private String editServerImageUrl = null; // server URL of existing post image in edit mode
 
     // Duration
     private ImageView ivDuration;
@@ -49,6 +50,17 @@ public class CreatePostActivity extends AppCompatActivity {
     private TextView tvSelectedDuration;
     private long selectedDurationMillis = 0;
     private String selectedDurationLabel = "";
+
+    // Activity time (start date+time, end date+time — expiry auto = actEnd)
+    private ImageView ivActivityTime;
+    private MaterialCardView cardSelectedActivityTime;
+    private TextView tvSelectedActivityTime;
+    private boolean hasActivityTime = false;
+    private int activityStartYear, activityStartMonth, activityStartDay;
+    private int activityEndYear, activityEndMonth, activityEndDay;
+    private int activityStartHour, activityStartMinute;
+    private int activityEndHour, activityEndMinute;
+    private String selectedActivityTimeType = "DAILY_TIME_SLOT";
 
     private static final long ONE_HOUR = 60L * 60L * 1000L;
     private static final long ONE_DAY = 24L * ONE_HOUR;
@@ -83,6 +95,11 @@ public class CreatePostActivity extends AppCompatActivity {
         ivDuration = findViewById(R.id.ivDuration);
         cardSelectedDuration = findViewById(R.id.cardSelectedDuration);
         tvSelectedDuration = findViewById(R.id.tvSelectedDuration);
+
+        // Activity time views
+        ivActivityTime = findViewById(R.id.ivActivityTime);
+        cardSelectedActivityTime = findViewById(R.id.cardSelectedActivityTime);
+        tvSelectedActivityTime = findViewById(R.id.tvSelectedActivityTime);
 
         ivClose.setOnClickListener(v -> finish());
 
@@ -127,6 +144,7 @@ public class CreatePostActivity extends AppCompatActivity {
         ivTagInterest.setOnClickListener(v -> showTagDialog());
         ivParticipants.setOnClickListener(v -> showParticipantDialog());
         ivDuration.setOnClickListener(v -> showDurationDialog());
+        ivActivityTime.setOnClickListener(v -> showActivityTimeDialog());
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -163,33 +181,67 @@ public class CreatePostActivity extends AppCompatActivity {
                 cardParticipantLimit.setVisibility(View.VISIBLE);
             }
 
-            long editEndTime = getIntent().getLongExtra("edit_end_time", 0);
-            if (editEndTime > 0) {
-                long remaining = editEndTime - System.currentTimeMillis();
-                if (remaining > 0) {
-                    selectedDurationMillis = remaining;
-                    long hours = remaining / ONE_HOUR;
-                    long minutes = (remaining % ONE_HOUR) / (60L * 1000L);
-                    StringBuilder label = new StringBuilder();
-                    if (hours > 0) label.append(hours).append(" giờ");
-                    if (minutes > 0) {
-                        if (hours > 0) label.append(" ");
-                        label.append(minutes).append(" phút");
-                    }
-                    selectedDurationLabel = label.toString();
-                    tvSelectedDuration.setText("⏰ Thời hạn: " + selectedDurationLabel);
-                    cardSelectedDuration.setVisibility(View.VISIBLE);
-                }
+            // Duration is auto-calculated from activity end time — no pre-fill needed
+
+            String editActivityTimeType = getIntent().getStringExtra("edit_activity_time_type");
+            if (editActivityTimeType != null && !editActivityTimeType.isEmpty()) {
+                selectedActivityTimeType = editActivityTimeType;
+            }
+
+            String editActivityStartIso = getIntent().getStringExtra("edit_activity_start_iso");
+            String editActivityEndIso = getIntent().getStringExtra("edit_activity_end_iso");
+            if (editActivityStartIso != null && !editActivityStartIso.isEmpty()
+                    && editActivityEndIso != null && !editActivityEndIso.isEmpty()) {
+                try {
+                    java.text.SimpleDateFormat isoFmt = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+                    java.util.Calendar sc = java.util.Calendar.getInstance();
+                    sc.setTime(isoFmt.parse(editActivityStartIso));
+                    java.util.Calendar ec = java.util.Calendar.getInstance();
+                    ec.setTime(isoFmt.parse(editActivityEndIso));
+                    activityStartYear = sc.get(java.util.Calendar.YEAR);
+                    activityStartMonth = sc.get(java.util.Calendar.MONTH);
+                    activityStartDay = sc.get(java.util.Calendar.DAY_OF_MONTH);
+                    activityStartHour = sc.get(java.util.Calendar.HOUR_OF_DAY);
+                    activityStartMinute = sc.get(java.util.Calendar.MINUTE);
+                    activityEndYear = ec.get(java.util.Calendar.YEAR);
+                    activityEndMonth = ec.get(java.util.Calendar.MONTH);
+                    activityEndDay = ec.get(java.util.Calendar.DAY_OF_MONTH);
+                    activityEndHour = ec.get(java.util.Calendar.HOUR_OF_DAY);
+                    activityEndMinute = ec.get(java.util.Calendar.MINUTE);
+                    hasActivityTime = true;
+                    String startDateStr = String.format("%02d/%02d/%04d", activityStartDay, activityStartMonth + 1, activityStartYear);
+                    String endDateStr = String.format("%02d/%02d/%04d", activityEndDay, activityEndMonth + 1, activityEndYear);
+                    String timeStr = String.format("%02d:%02d - %02d:%02d", activityStartHour, activityStartMinute, activityEndHour, activityEndMinute);
+                    String display = startDateStr.equals(endDateStr)
+                            ? "📅 " + startDateStr + "  🕐 " + timeStr
+                            : "📅 " + startDateStr + " → " + endDateStr + "  🕐 " + timeStr;
+                    tvSelectedActivityTime.setText(display);
+                    cardSelectedActivityTime.setVisibility(View.VISIBLE);
+                } catch (Exception ignored) {}
             }
 
             String editImageUri = getIntent().getStringExtra("edit_image_uri");
-            if (editImageUri != null && !editImageUri.isEmpty()) {
-                selectedImageUri = Uri.parse(editImageUri);
-                if (ivPostImagePreview != null) {
-                    try {
-                        ivPostImagePreview.setImageURI(selectedImageUri);
-                        ivPostImagePreview.setVisibility(View.VISIBLE);
-                    } catch (Exception ignored) {}
+            if (editImageUri != null && !editImageUri.isEmpty() && ivPostImagePreview != null) {
+                ivPostImagePreview.setVisibility(View.VISIBLE);
+                if (editImageUri.startsWith("/") || editImageUri.startsWith("http")) {
+                    // Server-hosted image: build full URL and load via Glide
+                    String fullUrl = editImageUri.startsWith("/")
+                            ? RetrofitClient.getBaseUrl() + editImageUri.substring(1)
+                            : editImageUri;
+                    editServerImageUrl = fullUrl;
+                    com.bumptech.glide.Glide.with(this)
+                            .load(fullUrl)
+                            .placeholder(R.drawable.ic_user_placeholder)
+                            .error(R.drawable.ic_user_placeholder)
+                            .into(ivPostImagePreview);
+                } else {
+                    // Local content:// URI
+                    selectedImageUri = Uri.parse(editImageUri);
+                    com.bumptech.glide.Glide.with(this)
+                            .load(selectedImageUri)
+                            .placeholder(R.drawable.ic_user_placeholder)
+                            .error(R.drawable.ic_user_placeholder)
+                            .into(ivPostImagePreview);
                 }
             }
         }
@@ -237,12 +289,47 @@ public class CreatePostActivity extends AppCompatActivity {
             Toast.makeText(this, "Vui lòng chọn giới hạn người tham gia", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (selectedDurationMillis <= 0) {
-            Toast.makeText(this, "Vui lòng chọn thời hạn bài viết", Toast.LENGTH_SHORT).show();
+        if (!hasActivityTime) {
+            Toast.makeText(this, "Vui lòng chọn thời gian hoạt động", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        java.util.Calendar actStartCal = java.util.Calendar.getInstance();
+        actStartCal.set(activityStartYear, activityStartMonth, activityStartDay, activityStartHour, activityStartMinute, 0);
+        actStartCal.set(java.util.Calendar.MILLISECOND, 0);
+
+        java.util.Calendar nowTruncated = java.util.Calendar.getInstance();
+        nowTruncated.set(java.util.Calendar.SECOND, 0);
+        nowTruncated.set(java.util.Calendar.MILLISECOND, 0);
+        if (actStartCal.before(nowTruncated)) {
+            Toast.makeText(this, "Thời gian bắt đầu không được nhỏ hơn thời gian hiện tại.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        java.util.Calendar actEndCal = java.util.Calendar.getInstance();
+        actEndCal.set(activityEndYear, activityEndMonth, activityEndDay, activityEndHour, activityEndMinute, 0);
+        actEndCal.set(java.util.Calendar.MILLISECOND, 0);
+
         long now = System.currentTimeMillis();
+        long actEndMillis = actEndCal.getTimeInMillis();
+
+        // Validate: activity has not already ended
+        if (actEndMillis <= now) {
+            Toast.makeText(this, "Hoạt động đã kết thúc, không thể đăng bài", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Validate: end > start (should already be enforced in picker, but double-check)
+        if (!actEndCal.after(actStartCal)) {
+            Toast.makeText(this, "Thời gian kết thúc phải sau thời gian bắt đầu hoạt động", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // Post expiry = activity end time (auto-calculated)
+        java.text.SimpleDateFormat isoFmt = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+        String activityStartIso = isoFmt.format(actStartCal.getTime());
+        String activityEndIso = isoFmt.format(actEndCal.getTime());
+
         Intent result = new Intent();
         result.putExtra("post_content", content);
         result.putExtra("post_username", tvUserName.getText().toString());
@@ -250,9 +337,14 @@ public class CreatePostActivity extends AppCompatActivity {
         result.putExtra("post_tag", selectedTag);
         result.putExtra("post_max_members", participantLimit);
         result.putExtra("post_location", selectedLocation);
-        result.putExtra("post_end_time", now + selectedDurationMillis);
+        result.putExtra("post_end_time", actEndMillis); // expiry = activity end
+        result.putExtra("post_activity_start_iso", activityStartIso);
+        result.putExtra("post_activity_end_iso", activityEndIso);
+        result.putExtra("post_activity_time_type", selectedActivityTimeType);
         if (selectedImageUri != null) {
             result.putExtra("post_image_uri", selectedImageUri.toString());
+        } else if (editServerImageUrl != null) {
+            result.putExtra("post_image_uri", editServerImageUrl);
         }
         // Nếu đang ở edit mode, truyền lại post ID
         long editPostId = getIntent().getLongExtra("edit_post_id", -1);
@@ -274,6 +366,322 @@ public class CreatePostActivity extends AppCompatActivity {
         } else {
             finish();
         }
+    }
+
+    private void showActivityTimeDialog() {
+        BottomSheetDialog typeSheet = new BottomSheetDialog(this);
+        typeSheet.getBehavior().setSkipCollapsed(true);
+
+        android.widget.LinearLayout outer = new android.widget.LinearLayout(this);
+        outer.setOrientation(android.widget.LinearLayout.VERTICAL);
+        outer.setPadding(dpPx(16), dpPx(8), dpPx(16), dpPx(24));
+        outer.setBackgroundColor(0xFFFFFFFF);
+
+        // Handle bar
+        View handle = new View(this);
+        android.widget.LinearLayout.LayoutParams hlp =
+                new android.widget.LinearLayout.LayoutParams(dpPx(40), dpPx(4));
+        hlp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        hlp.topMargin = dpPx(12);
+        hlp.bottomMargin = dpPx(16);
+        handle.setLayoutParams(hlp);
+        handle.setBackgroundColor(0xFFD1D1D6);
+        outer.addView(handle);
+
+        // Title
+        android.widget.TextView tvTitle = new android.widget.TextView(this);
+        tvTitle.setText("Loại thời gian hoạt động");
+        tvTitle.setTextSize(17);
+        tvTitle.setTextColor(0xFF1C1C1E);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTitle.setGravity(android.view.Gravity.CENTER);
+        tvTitle.setPadding(0, 0, 0, dpPx(16));
+        outer.addView(tvTitle, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        MaterialCardView card1 = buildTypeOptionCard(
+                "🔄 Diễn ra mỗi ngày",
+                "Khung giờ cố định, lặp lại mỗi ngày trong khoảng ngày đã chọn",
+                "DAILY_TIME_SLOT".equals(selectedActivityTimeType));
+        card1.setOnClickListener(v -> {
+            typeSheet.dismiss();
+            selectedActivityTimeType = "DAILY_TIME_SLOT";
+            showDateTimePickers();
+        });
+        outer.addView(card1, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        View gap = new View(this);
+        gap.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, dpPx(8)));
+        outer.addView(gap);
+
+        MaterialCardView card2 = buildTypeOptionCard(
+                "🗓️ Diễn ra một lần",
+                "Hoạt động có thời điểm bắt đầu và kết thúc cụ thể",
+                "CONTINUOUS_RANGE".equals(selectedActivityTimeType));
+        card2.setOnClickListener(v -> {
+            typeSheet.dismiss();
+            selectedActivityTimeType = "CONTINUOUS_RANGE";
+            showDateTimePickers();
+        });
+        outer.addView(card2, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        typeSheet.setContentView(outer);
+        typeSheet.setOnShowListener(di -> {
+            android.widget.FrameLayout bs = ((BottomSheetDialog) di)
+                    .findViewById(com.google.android.material.R.id.design_bottom_sheet);
+            if (bs != null) {
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xFFFFFFFF);
+                float r = dpPx(24);
+                bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+                bs.setBackground(bg);
+                com.google.android.material.bottomsheet.BottomSheetBehavior.from(bs)
+                        .setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+            }
+        });
+        typeSheet.show();
+    }
+
+    private MaterialCardView buildTypeOptionCard(String title, String subtitle, boolean selected) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setCardBackgroundColor(selected ? 0xFFFFF0F3 : 0xFFF8F8F8);
+        card.setRadius(dpPx(14));
+        card.setCardElevation(0f);
+        card.setStrokeWidth(selected ? dpPx(2) : 0);
+        card.setStrokeColor(0xFFFF4D6D);
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        android.widget.LinearLayout content = new android.widget.LinearLayout(this);
+        content.setOrientation(android.widget.LinearLayout.VERTICAL);
+        content.setPadding(dpPx(16), dpPx(14), dpPx(16), dpPx(14));
+
+        android.widget.TextView tvT = new android.widget.TextView(this);
+        tvT.setText(title);
+        tvT.setTextSize(15);
+        tvT.setTextColor(0xFF1C1C1E);
+        tvT.setTypeface(null, android.graphics.Typeface.BOLD);
+        content.addView(tvT);
+
+        android.widget.TextView tvS = new android.widget.TextView(this);
+        tvS.setText(subtitle);
+        tvS.setTextSize(13);
+        tvS.setTextColor(0xFF8E8E93);
+        tvS.setPadding(0, dpPx(4), 0, 0);
+        content.addView(tvS);
+
+        card.addView(content);
+        return card;
+    }
+
+    // ── Dispatch: chọn flow theo loại ──────────────────────────────────────────
+    private void showDateTimePickers() {
+        if ("CONTINUOUS_RANGE".equals(selectedActivityTimeType)) {
+            showContinuousStartDatePicker();
+        } else {
+            showDailyStartDatePicker();
+        }
+    }
+
+    // ── Helpers chung ─────────────────────────────────────────────────────────
+
+    /** Trả về true nếu startDatetime (year/month/day/hour/min) < thời gian hiện tại (so sánh theo phút). */
+    private boolean isStartInPast(int year, int month, int day, int hour, int min) {
+        java.util.Calendar startCal = java.util.Calendar.getInstance();
+        startCal.set(year, month, day, hour, min, 0);
+        startCal.set(java.util.Calendar.MILLISECOND, 0);
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        now.set(java.util.Calendar.SECOND, 0);
+        now.set(java.util.Calendar.MILLISECOND, 0);
+        return startCal.before(now);
+    }
+
+    private void updateActivityTimeDisplay() {
+        String startDateStr = String.format("%02d/%02d/%04d", activityStartDay, activityStartMonth + 1, activityStartYear);
+        String endDateStr   = String.format("%02d/%02d/%04d", activityEndDay,   activityEndMonth   + 1, activityEndYear);
+        String display;
+        if ("CONTINUOUS_RANGE".equals(selectedActivityTimeType)) {
+            display = "🟢 " + startDateStr + " " + String.format("%02d:%02d", activityStartHour, activityStartMinute)
+                    + "  🔴 " + endDateStr + " " + String.format("%02d:%02d", activityEndHour, activityEndMinute);
+        } else {
+            String timeStr = String.format("%02d:%02d - %02d:%02d",
+                    activityStartHour, activityStartMinute, activityEndHour, activityEndMinute);
+            display = startDateStr.equals(endDateStr)
+                    ? "📅 " + startDateStr + "  ⏰ Mỗi ngày: " + timeStr
+                    : "📅 " + startDateStr + " - " + endDateStr + "  ⏰ Mỗi ngày: " + timeStr;
+        }
+        tvSelectedActivityTime.setText(display);
+        cardSelectedActivityTime.setVisibility(View.VISIBLE);
+    }
+
+    // ── DAILY_TIME_SLOT flow: ngày bắt đầu → ngày kết thúc → giờ bắt đầu → giờ kết thúc ──
+
+    private void showDailyStartDatePicker() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int initY = hasActivityTime ? activityStartYear  : cal.get(java.util.Calendar.YEAR);
+        int initM = hasActivityTime ? activityStartMonth : cal.get(java.util.Calendar.MONTH);
+        int initD = hasActivityTime ? activityStartDay   : cal.get(java.util.Calendar.DAY_OF_MONTH);
+
+        android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this,
+                (v, sYear, sMonth, sDay) -> showDailyEndDatePicker(sYear, sMonth, sDay),
+                initY, initM, initD);
+        dlg.getDatePicker().setMinDate(System.currentTimeMillis() - 1000);
+        dlg.setTitle("Ngày bắt đầu hoạt động");
+        dlg.show();
+    }
+
+    private void showDailyEndDatePicker(int sYear, int sMonth, int sDay) {
+        int initY = hasActivityTime ? activityEndYear  : sYear;
+        int initM = hasActivityTime ? activityEndMonth : sMonth;
+        int initD = hasActivityTime ? activityEndDay   : sDay;
+
+        android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this,
+                (v, eYear, eMonth, eDay) -> {
+                    java.util.Calendar cal = java.util.Calendar.getInstance();
+                    int initH = hasActivityTime ? activityStartHour   : cal.get(java.util.Calendar.HOUR_OF_DAY);
+                    int initMin = hasActivityTime ? activityStartMinute : 0;
+                    showDailyStartTimePicker(sYear, sMonth, sDay, eYear, eMonth, eDay, initH, initMin);
+                },
+                initY, initM, initD);
+        // Ngày kết thúc >= ngày bắt đầu
+        java.util.Calendar minEnd = java.util.Calendar.getInstance();
+        minEnd.set(sYear, sMonth, sDay, 0, 0, 0);
+        dlg.getDatePicker().setMinDate(minEnd.getTimeInMillis());
+        dlg.setTitle("Ngày kết thúc hoạt động");
+        dlg.show();
+    }
+
+    private void showDailyStartTimePicker(int sYear, int sMonth, int sDay,
+                                          int eYear, int eMonth, int eDay,
+                                          int initH, int initMin) {
+        android.app.TimePickerDialog dlg = new android.app.TimePickerDialog(this,
+                (v, sHour, sMin) -> {
+                    if (isStartInPast(sYear, sMonth, sDay, sHour, sMin)) {
+                        Toast.makeText(this, "Thời gian bắt đầu không được nhỏ hơn thời gian hiện tại.", Toast.LENGTH_SHORT).show();
+                        showDailyStartTimePicker(sYear, sMonth, sDay, eYear, eMonth, eDay, sHour, sMin);
+                        return;
+                    }
+                    int initEH = hasActivityTime ? activityEndHour   : (sHour + 1) % 24;
+                    int initEM = hasActivityTime ? activityEndMinute : 0;
+                    showDailyEndTimePicker(sYear, sMonth, sDay, eYear, eMonth, eDay, sHour, sMin, initEH, initEM);
+                },
+                initH, initMin, true);
+        dlg.setTitle("Giờ bắt đầu (mỗi ngày)");
+        dlg.show();
+    }
+
+    private void showDailyEndTimePicker(int sYear, int sMonth, int sDay,
+                                        int eYear, int eMonth, int eDay,
+                                        int sHour, int sMin,
+                                        int initH, int initMin) {
+        android.app.TimePickerDialog dlg = new android.app.TimePickerDialog(this,
+                (v, eHour, eMin) -> {
+                    if (eHour < sHour || (eHour == sHour && eMin <= sMin)) {
+                        Toast.makeText(this, "Giờ kết thúc phải sau giờ bắt đầu hoạt động.", Toast.LENGTH_SHORT).show();
+                        showDailyEndTimePicker(sYear, sMonth, sDay, eYear, eMonth, eDay, sHour, sMin, eHour, eMin);
+                        return;
+                    }
+                    activityStartYear = sYear; activityStartMonth = sMonth; activityStartDay = sDay;
+                    activityStartHour = sHour; activityStartMinute = sMin;
+                    activityEndYear = eYear; activityEndMonth = eMonth; activityEndDay = eDay;
+                    activityEndHour = eHour; activityEndMinute = eMin;
+                    hasActivityTime = true;
+                    updateActivityTimeDisplay();
+                },
+                initH, initMin, true);
+        dlg.setTitle("Giờ kết thúc (mỗi ngày)");
+        dlg.show();
+    }
+
+    // ── CONTINUOUS_RANGE flow: ngày bắt đầu → giờ bắt đầu → ngày kết thúc → giờ kết thúc ──
+
+    private void showContinuousStartDatePicker() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int initY = hasActivityTime ? activityStartYear  : cal.get(java.util.Calendar.YEAR);
+        int initM = hasActivityTime ? activityStartMonth : cal.get(java.util.Calendar.MONTH);
+        int initD = hasActivityTime ? activityStartDay   : cal.get(java.util.Calendar.DAY_OF_MONTH);
+
+        android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this,
+                (v, sYear, sMonth, sDay) -> {
+                    java.util.Calendar c = java.util.Calendar.getInstance();
+                    int initH   = hasActivityTime ? activityStartHour   : c.get(java.util.Calendar.HOUR_OF_DAY);
+                    int initMin = hasActivityTime ? activityStartMinute : 0;
+                    showContinuousStartTimePicker(sYear, sMonth, sDay, initH, initMin);
+                },
+                initY, initM, initD);
+        dlg.getDatePicker().setMinDate(System.currentTimeMillis() - 1000);
+        dlg.setTitle("Ngày bắt đầu hoạt động");
+        dlg.show();
+    }
+
+    private void showContinuousStartTimePicker(int sYear, int sMonth, int sDay,
+                                               int initH, int initMin) {
+        android.app.TimePickerDialog dlg = new android.app.TimePickerDialog(this,
+                (v, sHour, sMin) -> {
+                    if (isStartInPast(sYear, sMonth, sDay, sHour, sMin)) {
+                        Toast.makeText(this, "Thời gian bắt đầu không được nhỏ hơn thời gian hiện tại.", Toast.LENGTH_SHORT).show();
+                        showContinuousStartTimePicker(sYear, sMonth, sDay, sHour, sMin);
+                        return;
+                    }
+                    int initEY = hasActivityTime ? activityEndYear  : sYear;
+                    int initEM = hasActivityTime ? activityEndMonth : sMonth;
+                    int initED = hasActivityTime ? activityEndDay   : sDay;
+                    showContinuousEndDatePicker(sYear, sMonth, sDay, sHour, sMin, initEY, initEM, initED);
+                },
+                initH, initMin, true);
+        dlg.setTitle("Giờ bắt đầu hoạt động");
+        dlg.show();
+    }
+
+    private void showContinuousEndDatePicker(int sYear, int sMonth, int sDay, int sHour, int sMin,
+                                             int initEY, int initEM, int initED) {
+        android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this,
+                (v, eYear, eMonth, eDay) -> {
+                    int initEH  = hasActivityTime ? activityEndHour   : (sHour + 1) % 24;
+                    int initEMin = hasActivityTime ? activityEndMinute : 0;
+                    showContinuousEndTimePicker(sYear, sMonth, sDay, sHour, sMin,
+                            eYear, eMonth, eDay, initEH, initEMin);
+                },
+                initEY, initEM, initED);
+        // Ngày kết thúc >= ngày bắt đầu
+        java.util.Calendar minEnd = java.util.Calendar.getInstance();
+        minEnd.set(sYear, sMonth, sDay, 0, 0, 0);
+        dlg.getDatePicker().setMinDate(minEnd.getTimeInMillis());
+        dlg.setTitle("Ngày kết thúc hoạt động");
+        dlg.show();
+    }
+
+    private void showContinuousEndTimePicker(int sYear, int sMonth, int sDay, int sHour, int sMin,
+                                             int eYear, int eMonth, int eDay,
+                                             int initH, int initMin) {
+        android.app.TimePickerDialog dlg = new android.app.TimePickerDialog(this,
+                (v, eHour, eMin) -> {
+                    java.util.Calendar startCal = java.util.Calendar.getInstance();
+                    startCal.set(sYear, sMonth, sDay, sHour, sMin, 0);
+                    java.util.Calendar endCal = java.util.Calendar.getInstance();
+                    endCal.set(eYear, eMonth, eDay, eHour, eMin, 0);
+                    if (!endCal.after(startCal)) {
+                        Toast.makeText(this, "Thời gian kết thúc phải sau thời gian bắt đầu.", Toast.LENGTH_SHORT).show();
+                        showContinuousEndTimePicker(sYear, sMonth, sDay, sHour, sMin,
+                                eYear, eMonth, eDay, eHour, eMin);
+                        return;
+                    }
+                    activityStartYear = sYear; activityStartMonth = sMonth; activityStartDay = sDay;
+                    activityStartHour = sHour; activityStartMinute = sMin;
+                    activityEndYear = eYear; activityEndMonth = eMonth; activityEndDay = eDay;
+                    activityEndHour = eHour; activityEndMinute = eMin;
+                    hasActivityTime = true;
+                    updateActivityTimeDisplay();
+                },
+                initH, initMin, true);
+        dlg.setTitle("Giờ kết thúc hoạt động");
+        dlg.show();
     }
 
     private void showDurationDialog() {

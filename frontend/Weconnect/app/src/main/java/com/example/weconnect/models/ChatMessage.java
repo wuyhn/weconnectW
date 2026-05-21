@@ -10,18 +10,24 @@ public class ChatMessage implements Serializable {
     private final String content;
     private final String timeLabel;
     private final boolean sentByCurrentUser;
+    private final boolean systemMessage;
 
     public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
+        this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, false);
+    }
+
+    public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser, boolean systemMessage) {
         this.id = id;
         this.senderId = senderId;
         this.senderName = senderName;
         this.content = content;
         this.timeLabel = timeLabel;
         this.sentByCurrentUser = sentByCurrentUser;
+        this.systemMessage = systemMessage;
     }
 
     public ChatMessage(String id, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
-        this(id, 0L, senderName, content, timeLabel, sentByCurrentUser);
+        this(id, 0L, senderName, content, timeLabel, sentByCurrentUser, false);
     }
 
     public String getId() {
@@ -46,5 +52,9 @@ public class ChatMessage implements Serializable {
 
     public boolean isSentByCurrentUser() {
         return sentByCurrentUser;
+    }
+
+    public boolean isSystemMessage() {
+        return systemMessage;
     }
 }

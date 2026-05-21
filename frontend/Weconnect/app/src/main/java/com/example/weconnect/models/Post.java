@@ -18,6 +18,7 @@ public class Post implements java.io.Serializable {
     private long startTimeMillis;
     private long endTimeMillis;
     private boolean archived;
+    private boolean cancelled;
     private long authorId;
     private int expirationHours;
 
@@ -68,25 +69,28 @@ public class Post implements java.io.Serializable {
     public long getStartTimeMillis() { return startTimeMillis; }
     public long getEndTimeMillis() { return endTimeMillis; }
     public boolean isArchived() { return archived; }
+    public boolean isCancelled() { return cancelled; }
 
     public boolean isExpired() {
         return System.currentTimeMillis() > endTimeMillis;
     }
 
     public boolean isActive() {
-        return !archived && !isExpired();
+        return !archived && !cancelled && !isExpired();
     }
 
     public String getStatusLabel() {
-        if (archived || isExpired()) {
-            return "Archived";
-        }
+        if (cancelled) return "Đã hủy";
+        if (archived || isExpired()) return "Archived";
         return "Active";
     }
 
+    public void setMemberCount(int memberCount) { this.memberCount = memberCount; }
+    public void setMaxMembers(int maxMembers) { this.maxMembers = maxMembers; }
     public void setJoined(boolean joined) { this.joined = joined; }
     public void setPendingApproval(boolean pendingApproval) { this.pendingApproval = pendingApproval; }
     public void setArchived(boolean archived) { this.archived = archived; }
+    public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
     public void setContent(String content) { this.content = content; }
     public void setLocation(String location) { this.location = location; }
     public void setInterestTag(String tag) { this.interestTag = tag; }
@@ -105,4 +109,19 @@ public class Post implements java.io.Serializable {
     private String avatarUrl;
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    // Formatted posted date, e.g. "12/05/2026"
+    private String postedDate;
+    public String getPostedDate() { return postedDate; }
+    public void setPostedDate(String postedDate) { this.postedDate = postedDate; }
+
+    // ISO string of activity end time (e.g. "2026-06-01T10:00:00")
+    private String activityEndTimeStr;
+    public String getActivityEndTimeStr() { return activityEndTimeStr; }
+    public void setActivityEndTimeStr(String s) { this.activityEndTimeStr = s; }
+
+    // "DAILY_TIME_SLOT" or "CONTINUOUS_RANGE"
+    private String activityTimeType;
+    public String getActivityTimeType() { return activityTimeType; }
+    public void setActivityTimeType(String t) { this.activityTimeType = t; }
 }

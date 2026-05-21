@@ -19,5 +19,22 @@ public class UserProfileResponse {
     private String bio;
     private String interestTags;
     private float averageRating;
-    private int reputationScore;
+    private double reputationScore;
+    private int totalReviewCount;
+    private boolean isActivityJoinLocked;
+    private boolean isBlockedByMe;
+    private boolean hasBlockedMe;
+    private boolean isBlockedBetweenUsers;
+
+    public boolean getIsBlockedByMe() {
+        return isBlockedByMe;
+    }
+
+    public boolean getHasBlockedMe() {
+        return hasBlockedMe;
+    }
+
+    public boolean getIsBlockedBetweenUsers() {
+        return isBlockedBetweenUsers;
+    }
 }

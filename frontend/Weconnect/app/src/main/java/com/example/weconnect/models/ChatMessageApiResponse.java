@@ -12,6 +12,7 @@ public class ChatMessageApiResponse {
     private String content;
     private boolean sentByCurrentUser;
     private String createdAt;
+    private String type;
 
     // Getters
     public long getId() { return id; }
@@ -21,4 +22,6 @@ public class ChatMessageApiResponse {
     public String getContent() { return content; }
     public boolean isSentByCurrentUser() { return sentByCurrentUser; }
     public String getCreatedAt() { return createdAt; }
+    public String getType() { return type; }
+    public boolean isSystemMessage() { return "SYSTEM".equals(type); }
 }

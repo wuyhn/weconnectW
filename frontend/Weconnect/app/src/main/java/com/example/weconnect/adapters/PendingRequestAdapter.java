@@ -38,6 +38,8 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
     private final List<Map<String, Object>> pendingMembers;
     private final long postId;
     private final OnMemberActionListener listener;
+    private int memberCount = 0;
+    private int maxMembers = 0;
 
     public PendingRequestAdapter(Context context, List<Map<String, Object>> pendingMembers,
                                  long postId, OnMemberActionListener listener) {
@@ -45,6 +47,12 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         this.pendingMembers = pendingMembers;
         this.postId = postId;
         this.listener = listener;
+    }
+
+    public void updateMemberCounts(int current, int max) {
+        this.memberCount = current;
+        this.maxMembers = max;
+        notifyDataSetChanged();
     }
 
     @NonNull
@@ -89,13 +97,12 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             holder.layoutActions.setVisibility(View.VISIBLE);
             holder.tvActioned.setVisibility(View.GONE);
 
-            holder.btnAccept.setOnClickListener(v -> {
-                approveMember(userId, holder, position);
-            });
+            boolean isFull = maxMembers > 0 && memberCount >= maxMembers;
+            holder.btnAccept.setEnabled(!isFull);
+            holder.btnAccept.setAlpha(isFull ? 0.4f : 1.0f);
 
-            holder.btnReject.setOnClickListener(v -> {
-                rejectMember(userId, holder, position);
-            });
+            holder.btnAccept.setOnClickListener(v -> approveMember(member, userId, holder));
+            holder.btnReject.setOnClickListener(v -> rejectMember(userId, holder));
         } else {
             holder.layoutActions.setVisibility(View.GONE);
             holder.tvActioned.setVisibility(View.VISIBLE);
@@ -120,7 +127,55 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         });
     }
 
-    private void approveMember(long userId, ViewHolder holder, int position) {
+    private void approveMember(Map<String, Object> member, long userId, ViewHolder holder) {
+        if (maxMembers > 0 && memberCount >= maxMembers) {
+            Toast.makeText(context,
+                    "Hoạt động đã đủ thành viên, không thể duyệt thêm người tham gia.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        boolean isLocked = Boolean.TRUE.equals(member.get("isActivityJoinLocked"));
+        if (isLocked) {
+            Toast.makeText(context,
+                    "Người dùng này hiện không thể tham gia hoạt động.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        double reputationScore = member.get("reputationScore") != null
+                ? ((Number) member.get("reputationScore")).doubleValue() : 100.0;
+        float averageRating = member.get("averageRating") != null
+                ? ((Number) member.get("averageRating")).floatValue() : 0f;
+        int totalReviewCount = member.get("totalReviewCount") != null
+                ? ((Number) member.get("totalReviewCount")).intValue() : 0;
+
+        boolean hasEnoughReviews = totalReviewCount >= 3;
+        boolean isHighRisk = reputationScore < 30
+                || (hasEnoughReviews && averageRating < 2.0f);
+        boolean isWarning = !isHighRisk && (reputationScore < 50
+                || (hasEnoughReviews && averageRating < 3.0f));
+
+        if (isHighRisk) {
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
+                    .setTitle("Người này có mức uy tín rất thấp")
+                    .setMessage("Người dùng này có mức uy tín rất thấp hoặc nhiều đánh giá không tốt từ các hoạt động trước đó. Bạn có chắc chắn muốn cho người này tham gia không?")
+                    .setNegativeButton("Hủy", null)
+                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) -> doApproveMember(userId, holder))
+                    .show();
+        } else if (isWarning) {
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
+                    .setTitle("Người này có mức uy tín thấp")
+                    .setMessage("Người dùng này có điểm uy tín hoặc trung bình đánh giá thấp. Bạn có chắc chắn muốn cho người này tham gia hoạt động không?")
+                    .setNegativeButton("Hủy", null)
+                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) -> doApproveMember(userId, holder))
+                    .show();
+        } else {
+            doApproveMember(userId, holder);
+        }
+    }
+
+    private void doApproveMember(long userId, ViewHolder holder) {
         RetrofitClient.loadToken(context);
         PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
 
@@ -128,20 +183,20 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             @Override
             public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
                 if (response.isSuccessful()) {
-                    holder.layoutActions.setVisibility(View.GONE);
-                    holder.tvActioned.setVisibility(View.VISIBLE);
-                    holder.tvActioned.setText("✅ Đã chấp nhận");
-
-                    String name = holder.tvName.getText().toString();
-                    new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                            .setTitle("Đã duyệt!")
-                            .setMessage("Bạn đã duyệt " + name + " tham gia hoạt động.")
-                            .setPositiveButton("OK", null)
-                            .show();
-
-                    if (listener != null) listener.onApproved(position);
+                    int pos = holder.getAdapterPosition();
+                    if (listener != null && pos != RecyclerView.NO_ID) {
+                        listener.onApproved(pos);
+                    }
                 } else {
-                    Toast.makeText(context, "Lỗi khi duyệt", Toast.LENGTH_SHORT).show();
+                    String errorMsg = "Lỗi khi duyệt";
+                    try {
+                        if (response.errorBody() != null) {
+                            String body = response.errorBody().string();
+                            org.json.JSONObject json = new org.json.JSONObject(body);
+                            if (json.has("message")) errorMsg = json.getString("message");
+                        }
+                    } catch (Exception ignored) {}
+                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show();
                 }
             }
 
@@ -152,7 +207,7 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         });
     }
 
-    private void rejectMember(long userId, ViewHolder holder, int position) {
+    private void rejectMember(long userId, ViewHolder holder) {
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
                 .setTitle("Xác nhận từ chối")
                 .setMessage("Bạn có chắc chắn muốn từ chối yêu cầu này?")
@@ -165,11 +220,10 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                         public void onResponse(Call<ApiResponse<Void>> call,
                                                Response<ApiResponse<Void>> response) {
                             if (response.isSuccessful()) {
-                                holder.layoutActions.setVisibility(View.GONE);
-                                holder.tvActioned.setVisibility(View.VISIBLE);
-                                holder.tvActioned.setText("❌ Đã từ chối");
-                                Toast.makeText(context, "Đã từ chối yêu cầu", Toast.LENGTH_SHORT).show();
-                                if (listener != null) listener.onRejected(position);
+                                int pos = holder.getAdapterPosition();
+                                if (listener != null && pos != RecyclerView.NO_ID) {
+                                    listener.onRejected(pos);
+                                }
                             } else {
                                 Toast.makeText(context, "Lỗi khi từ chối", Toast.LENGTH_SHORT).show();
                             }

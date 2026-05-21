@@ -12,4 +12,9 @@ public interface ChatRoomMemberRepository extends JpaRepository<ChatRoomMember, 
     List<ChatRoomMember> findByUserId(Long userId);
 
     boolean existsByRoomIdAndUserId(Long roomId, Long userId);
+
+    java.util.Optional<ChatRoomMember> findByRoomIdAndUserId(Long roomId, Long userId);
+
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByRoomIdAndUserId(Long roomId, Long userId);
 }

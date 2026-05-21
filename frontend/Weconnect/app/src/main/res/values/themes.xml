@@ -1,7 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Weconnect" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+    <style name="Theme.Weconnect" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="materialAlertDialogTheme">@style/Dialog.App</item>
+    </style>
+
+    <!-- Dialog theme: bo góc 20dp, font hệ thống -->
+    <style name="Dialog.App" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="alertDialogStyle">@style/MaterialAlertDialog.App</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Dialog.App.ButtonNegative</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Dialog.App.ButtonPositive</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Dialog.App.ButtonNeutral</item>
+    </style>
+
+    <!-- shapeAppearance đặt ở widget style, không phải theme overlay -->
+    <style name="MaterialAlertDialog.App" parent="MaterialAlertDialog.MaterialComponents">
+        <item name="shapeAppearance">@style/ShapeAppearance.App.Dialog</item>
+    </style>
+
+    <style name="ShapeAppearance.App.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">20dp</item>
+    </style>
+
+    <style name="Dialog.App.ButtonPositive" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/primary_pink</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="Dialog.App.ButtonNegative" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/primary_pink</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
+    <style name="Dialog.App.ButtonNeutral" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
 
     <style name="TagCategoryHeader">
         <item name="android:layout_width">match_parent</item>

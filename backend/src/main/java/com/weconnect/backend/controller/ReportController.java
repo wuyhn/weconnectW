@@ -7,6 +7,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -31,8 +33,16 @@ public class ReportController {
         String reason = (String) body.get("reason");
         String description = body.get("description") != null ? (String) body.get("description") : "";
 
+        List<String> evidenceImages = new java.util.ArrayList<>();
+        Object imagesObj = body.get("evidenceImages");
+        if (imagesObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof String s) evidenceImages.add(s);
+            }
+        }
+
         try {
-            String result = reportService.createReport(user.getId(), targetType, targetId, reason, description);
+            String result = reportService.createReport(user.getId(), targetType, targetId, reason, description, evidenceImages);
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000).message(result).build());
         } catch (RuntimeException e) {

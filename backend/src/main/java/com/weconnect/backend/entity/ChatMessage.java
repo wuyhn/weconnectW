@@ -28,6 +28,10 @@ public class ChatMessage {
     @Column(columnDefinition = "TEXT")
     private String content;
 
+    // "SYSTEM" cho tin nhắn hệ thống (null = tin nhắn bình thường)
+    @Column(name = "type")
+    private String type;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

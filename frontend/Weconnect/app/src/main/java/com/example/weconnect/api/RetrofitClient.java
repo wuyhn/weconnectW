@@ -14,8 +14,8 @@ import retrofit2.converter.gson.GsonConverterFactory;
 
 public class RetrofitClient {
 
-//    private static final String BASE_URL = "http://172.16.0.223:8080/";
-    private static final String BASE_URL = "http://10.0.2.2:8080/";
+//    private static final String BASE_URL = "http://192.168.10.234:8080/"; // Điện thoại thật
+    private static final String BASE_URL = "http://10.0.2.2:8080/";       // Emulator
     public static String getBaseUrl() {
         return BASE_URL;
     }

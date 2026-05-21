@@ -10,6 +10,7 @@ public class ChatRoom implements Serializable {
     public static final String TYPE_DIRECT = "direct";
     public static final String TYPE_FRIEND_GROUP = "friend_group";
     public static final String TYPE_ACTIVITY = "activity";
+    public static final String TYPE_MESSAGE_REQUESTS = "message_requests";
 
     private final String id;
     private final String title;
@@ -64,10 +65,69 @@ public class ChatRoom implements Serializable {
     public String getAvatarUrl() { return avatarUrl; }
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
 
+    private boolean friend = true;
+    private boolean messageRequest = false;
+    private long otherUserId = -1;
+    private String otherUserName = "";
+    private String otherUserAvatarUrl = "";
+    private int requestCount = 0;
+    private boolean blockedByMe = false;
+    private boolean hasBlockedMe = false;
+    private boolean blockedBetweenUsers = false;
+
+    public boolean isFriend() { return friend; }
+    public void setFriend(boolean friend) { this.friend = friend; }
+    public boolean isMessageRequest() { return messageRequest; }
+    public void setMessageRequest(boolean messageRequest) { this.messageRequest = messageRequest; }
+    public long getOtherUserId() { return otherUserId; }
+    public void setOtherUserId(long otherUserId) { this.otherUserId = otherUserId; }
+    public String getOtherUserName() { return otherUserName; }
+    public void setOtherUserName(String otherUserName) { this.otherUserName = otherUserName != null ? otherUserName : ""; }
+    public String getOtherUserAvatarUrl() { return otherUserAvatarUrl; }
+    public void setOtherUserAvatarUrl(String otherUserAvatarUrl) {
+        this.otherUserAvatarUrl = otherUserAvatarUrl != null ? otherUserAvatarUrl : "";
+    }
+    public int getRequestCount() { return requestCount; }
+    public void setRequestCount(int requestCount) { this.requestCount = Math.max(0, requestCount); }
+    public boolean isBlockedByMe() { return blockedByMe; }
+    public void setBlockedByMe(boolean blockedByMe) { this.blockedByMe = blockedByMe; }
+    public boolean hasBlockedMe() { return hasBlockedMe; }
+    public void setHasBlockedMe(boolean hasBlockedMe) { this.hasBlockedMe = hasBlockedMe; }
+    public boolean isBlockedBetweenUsers() { return blockedBetweenUsers; }
+    public void setBlockedBetweenUsers(boolean blockedBetweenUsers) { this.blockedBetweenUsers = blockedBetweenUsers; }
+
     // Raw ISO timestamp from API (e.g. "2026-04-18T21:04:10") — dùng để sort danh sách chat
     private String lastMessageTimeRaw = "";
     public String getLastMessageTimeRaw() { return lastMessageTimeRaw != null ? lastMessageTimeRaw : ""; }
     public void setLastMessageTimeRaw(String t) { this.lastMessageTimeRaw = t != null ? t : ""; }
+
+    // ISO timestamp khi phòng được tạo — fallback sort khi chưa có tin nhắn
+    private String createdAt = "";
+    public String getCreatedAt() { return createdAt != null ? createdAt : ""; }
+    public void setCreatedAt(String t) { this.createdAt = t != null ? t : ""; }
+
+    // Số tin chưa đọc trong phòng (0 = đã đọc hết)
+    private int unreadCount = 0;
+    public int getUnreadCount() { return unreadCount; }
+    public void setUnreadCount(int unreadCount) { this.unreadCount = Math.max(0, unreadCount); }
+
+    // Ngày diễn ra hoạt động (chỉ dùng cho activity rooms)
+    private String activityDateDisplay = null;
+    public String getActivityDateDisplay() { return activityDateDisplay; }
+    public void setActivityDateDisplay(String activityDateDisplay) { this.activityDateDisplay = activityDateDisplay; }
+
+    // Số thành viên tối đa (từ post.maxMembers, chỉ dùng cho activity rooms)
+    private int maxMembers = 0;
+    public int getMaxMembers() { return maxMembers; }
+    public void setMaxMembers(int maxMembers) { this.maxMembers = Math.max(0, maxMembers); }
+
+    // Trạng thái hoạt động của người đối diện (chỉ dùng trong direct room)
+    private boolean otherUserOnline = false;
+    private Long otherUserLastActiveMins = null;
+    public boolean isOtherUserOnline() { return otherUserOnline; }
+    public void setOtherUserOnline(boolean otherUserOnline) { this.otherUserOnline = otherUserOnline; }
+    public Long getOtherUserLastActiveMins() { return otherUserLastActiveMins; }
+    public void setOtherUserLastActiveMins(Long mins) { this.otherUserLastActiveMins = mins; }
 
     public String getId() {
         return id;

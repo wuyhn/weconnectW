@@ -29,13 +29,13 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:tint="@color/primary_pink" />
+            app:tint="#1A1208" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Chi tiết bài viết"
-            android:textColor="@color/primary_pink"
+            android:textColor="#1A1208"
             android:textSize="22sp"
             android:textStyle="bold"
             app:layout_constraintTop_toTopOf="parent"
@@ -115,6 +115,26 @@
                     </LinearLayout>
 
                     <TextView
+                        android:id="@+id/tvPostDetailActivityDate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvPostDetailActivityTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
                         android:id="@+id/tvPostDetailTime"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -145,6 +165,22 @@
                         android:textColor="@color/text_primary"
                         android:textSize="15sp" />
 
+                    <!-- Post image (hidden when no image) -->
+                    <androidx.cardview.widget.CardView
+                        android:id="@+id/cvPostDetailImage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:visibility="gone"
+                        app:cardCornerRadius="12dp"
+                        app:cardElevation="0dp">
+                        <ImageView
+                            android:id="@+id/ivPostDetailImage"
+                            android:layout_width="match_parent"
+                            android:layout_height="220dp"
+                            android:scaleType="centerCrop" />
+                    </androidx.cardview.widget.CardView>
+
                     <TextView
                         android:id="@+id/tvPostDetailTag"
                         android:layout_width="wrap_content"
@@ -170,29 +206,43 @@
                         android:textStyle="bold"
                         android:visibility="gone" />
 
-                    <TextView
-                        android:id="@+id/tvPostDetailMembers"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="12dp"
-                        android:background="@drawable/bg_selected_tag"
-                        android:paddingHorizontal="14dp"
-                        android:paddingVertical="8dp"
-                        android:text="👥 0/10"
-                        android:textColor="@android:color/white"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnOpenGroupChat"
+                    <LinearLayout
+                        android:id="@+id/layoutDetailButtons"
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
-                        android:layout_marginTop="16dp"
-                        android:text="Open group chat"
-                        android:textAllCaps="false"
-                        android:textStyle="bold"
-                        app:backgroundTint="@color/primary_pink"
-                        app:cornerRadius="24dp" />
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:weightSum="2"
+                        android:layout_marginTop="16dp">
+
+                        <androidx.appcompat.widget.AppCompatButton
+                            android:id="@+id/btnDetailJoin"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:background="@drawable/bg_button_join"
+                            android:text="Tham gia"
+                            android:textAllCaps="false"
+                            android:textColor="#FFFFFF"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <androidx.appcompat.widget.AppCompatButton
+                            android:id="@+id/btnDetailMembers"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:background="#FFFFFF"
+                            android:text="👥 0/0"
+                            android:textAllCaps="false"
+                            android:textColor="#000000"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            android:gravity="center" />
+
+                    </LinearLayout>
 
                     <!-- Pending approval section (shown when navigated from JOIN_REQUEST notification) -->
                     <LinearLayout

@@ -103,6 +103,11 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                     if (item.getUserId() > 0) {
                         intent.putExtra("user_id", item.getUserId());
                     }
+                    if (item.isBlockedBetweenUsers()) {
+                        intent.putExtra("blocked_profile", true);
+                        intent.putExtra("is_blocked_by_me", item.isBlockedByMe());
+                        intent.putExtra("has_blocked_me", item.hasBlockedMe());
+                    }
                 }
                 context.startActivity(intent);
             });

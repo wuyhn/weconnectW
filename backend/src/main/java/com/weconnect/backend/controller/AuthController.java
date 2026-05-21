@@ -2,6 +2,8 @@ package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.AuthRequest;
 import com.weconnect.backend.dto.AuthResponse;
+import com.weconnect.backend.dto.ResendOtpRequest;
+import com.weconnect.backend.dto.VerifyOtpRequest;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.service.AuthService;
 import org.springframework.http.ResponseEntity;
@@ -22,17 +24,51 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody AuthRequest request) {
-        String result = authService.register(request);
-        if (result.contains("thành công")) {
+        try {
+            String result = authService.register(request);
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000)
                     .message(result)
                     .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1001)
+                    .message(e.getMessage())
+                    .build());
         }
-        return ResponseEntity.badRequest().body(ApiResponse.builder()
-                .code(1001)
-                .message(result)
-                .build());
+    }
+
+    @PostMapping("/verify-otp")
+    public ResponseEntity<?> verifyOtp(@RequestBody VerifyOtpRequest request) {
+        try {
+            AuthResponse response = authService.verifyOtp(request.getEmail(), request.getOtpCode());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000)
+                    .message(response.getMessage())
+                    .result(response)
+                    .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1003)
+                    .message(e.getMessage())
+                    .build());
+        }
+    }
+
+    @PostMapping("/resend-otp")
+    public ResponseEntity<?> resendOtp(@RequestBody ResendOtpRequest request) {
+        try {
+            String result = authService.resendOtp(request.getEmail());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000)
+                    .message(result)
+                    .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1004)
+                    .message(e.getMessage())
+                    .build());
+        }
     }
 
     @PostMapping("/login")

@@ -7,7 +7,12 @@ import com.weconnect.backend.repository.UserReviewRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -57,5 +62,34 @@ public class AdminDashboardController {
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công")
                 .result(stats).build());
+    }
+
+    // Thống kê hoạt động theo ngày (cho chart)
+    @GetMapping("/trends")
+    public ResponseEntity<?> getTrends(@RequestParam(defaultValue = "7") int days) {
+        LocalDateTime now = LocalDateTime.now();
+        DateTimeFormatter labelFmt = DateTimeFormatter.ofPattern("dd/MM");
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (int i = days - 1; i >= 0; i--) {
+            LocalDate date = now.toLocalDate().minusDays(i);
+            LocalDateTime start = date.atStartOfDay();
+            LocalDateTime end = start.plusDays(1);
+
+            long newUsers = userRepository.countByCreatedAtBetween(start, end);
+            long newPosts = postRepository.countByCreatedAtBetween(start, end);
+            long newReviews = userReviewRepository.countByCreatedAtBetween(start, end);
+
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("date", date.format(labelFmt));
+            point.put("users", newUsers);
+            point.put("posts", newPosts);
+            point.put("reviews", newReviews);
+            result.add(point);
+        }
+
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công")
+                .result(result).build());
     }
 }

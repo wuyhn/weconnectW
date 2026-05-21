@@ -38,6 +38,8 @@ import com.example.weconnect.models.UserProfile;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
 import com.example.weconnect.models.UserReview;
+import com.example.weconnect.utils.DirectMessageHelper;
+import com.example.weconnect.utils.UserReportBottomSheet;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
@@ -84,11 +86,21 @@ public class UserProfileActivity extends AppCompatActivity {
     private RecyclerView rvActivePostsProfile;
     private View tvNoActivePosts;
     private TextView tvInterestsTitle;
+    private com.google.android.material.tabs.TabLayout tabLayoutProfile;
+    private LinearLayout containerMyPosts;
+    private LinearLayout containerMyActivities;
 
     private View cardCreatePostProfile;
     private TextView tvCreatePostHint;
     private TextView tvReviewsTitle;
     private android.widget.TextView tvNotifBadge;
+
+    // Cache: tab data + other-user avatar (preserved across onResume without extra API calls)
+    private List<Post> cachedMyPosts = null;
+    private List<Post> cachedMyActivities = null;
+    private String cachedOtherAvatarUrl = null;
+    private PostAdapter myPostsAdapter = null;
+    private PostAdapter myActivitiesAdapter = null;
 
     // Related posts (from other users matching interest tags)
     private TextView tvRelatedPostsTitle;
@@ -97,6 +109,10 @@ public class UserProfileActivity extends AppCompatActivity {
 
     private String username;
     private long viewedUserId = -1; // ID của user đang xem (dùng cho friend API)
+    private boolean blockProfileMode = false;
+    private boolean isBlockedByMe = false;
+    private boolean hasBlockedMe = false;
+    private boolean isBlockedBetweenUsers = false;
     private FakeSocialRepository socialRepository;
     private PostApiService postApiService;
     private ReviewApiService reviewApiService;
@@ -115,13 +131,19 @@ public class UserProfileActivity extends AppCompatActivity {
         friendApiService = RetrofitClient.getClient().create(com.example.weconnect.api.FriendApiService.class);
         setupCreatePostLauncher();
         initViews();
+        blockProfileMode = getIntent().getBooleanExtra("blocked_profile", false);
+        isBlockedByMe = getIntent().getBooleanExtra("is_blocked_by_me", false);
+        hasBlockedMe = getIntent().getBooleanExtra("has_blocked_me", false);
+        isBlockedBetweenUsers = blockProfileMode || isBlockedByMe || hasBlockedMe;
         bindFakeUserProfile();
         setupClickListeners();
         bindSocialState();
         setupDrawerMenu();
         setupProfileTabs();
-        bindActivePosts();
-        loadMyActivities();
+        if (!blockProfileMode) {
+            bindActivePosts();
+            loadMyActivities();
+        }
         // Ẩn phần gợi ý bài viết (chỉ giữ gợi ý user)
         hideRelatedPosts();
     }
@@ -139,29 +161,32 @@ public class UserProfileActivity extends AppCompatActivity {
                         String imageUri = data.getStringExtra("post_image_uri");
                         long endTimeMillis = data.getLongExtra("post_end_time",
                                 System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
-                        createPostViaApi(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                        String activityStartIso = data.getStringExtra("post_activity_start_iso");
+                        String activityEndIso = data.getStringExtra("post_activity_end_iso");
+                        createPostViaApi(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso);
                     }
                 }
         );
     }
 
     private void createPostViaApi(String content, String tag, String location,
-                                  int maxMembers, String imageUri, long endTimeMillis) {
+                                  int maxMembers, String imageUri, long endTimeMillis,
+                                  String activityStartIso, String activityEndIso) {
         if (imageUri != null) {
-            // Upload image first, then create post with server URL
-            uploadImageThenCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
+            uploadImageThenCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso);
         } else {
-            sendCreatePostProfile(content, tag, location, maxMembers, null, endTimeMillis);
+            sendCreatePostProfile(content, tag, location, maxMembers, null, endTimeMillis, activityStartIso, activityEndIso);
         }
     }
 
     private void uploadImageThenCreatePost(String content, String tag, String location,
-                                           int maxMembers, String imageUri, long endTimeMillis) {
+                                           int maxMembers, String imageUri, long endTimeMillis,
+                                           String activityStartIso, String activityEndIso) {
         try {
             android.net.Uri uri = android.net.Uri.parse(imageUri);
             java.io.InputStream inputStream = getContentResolver().openInputStream(uri);
             if (inputStream == null) {
-                sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso);
                 return;
             }
             byte[] bytes = readAllBytesProfile(inputStream);
@@ -184,15 +209,15 @@ public class UserProfileActivity extends AppCompatActivity {
                     if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                         serverUrl = response.body().getResult();
                     }
-                    sendCreatePostProfile(content, tag, location, maxMembers, serverUrl, endTimeMillis);
+                    sendCreatePostProfile(content, tag, location, maxMembers, serverUrl, endTimeMillis, activityStartIso, activityEndIso);
                 }
                 @Override
                 public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
-                    sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                    sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso);
                 }
             });
         } catch (Exception e) {
-            sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis);
+            sendCreatePostProfile(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso);
         }
     }
 
@@ -207,7 +232,8 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void sendCreatePostProfile(String content, String tag, String location,
-                                       int maxMembers, String imageUrl, long endTimeMillis) {
+                                       int maxMembers, String imageUrl, long endTimeMillis,
+                                       String activityStartIso, String activityEndIso) {
         Map<String, Object> body = new HashMap<>();
         body.put("content", content);
         body.put("interestTag", tag);
@@ -217,8 +243,11 @@ public class UserProfileActivity extends AppCompatActivity {
             body.put("imageUrl", imageUrl);
         }
         SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
-        body.put("startTime", isoFormat.format(new Date()));
+        body.put("startTime", activityStartIso != null ? activityStartIso : isoFormat.format(new Date()));
         body.put("endTime", isoFormat.format(new Date(endTimeMillis)));
+        if (activityEndIso != null) {
+            body.put("activityEndTime", activityEndIso);
+        }
 
         postApiService.createPost(body).enqueue(new Callback<ApiResponse<PostResponse>>() {
             @Override
@@ -226,6 +255,8 @@ public class UserProfileActivity extends AppCompatActivity {
                                    Response<ApiResponse<PostResponse>> response) {
                 if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     Toast.makeText(UserProfileActivity.this, "Đã tạo bài đăng!", Toast.LENGTH_SHORT).show();
+                    cachedMyPosts = null;
+                    myPostsAdapter = null;
                     bindActivePosts();
                 } else {
                     String errorMsg = "Không thể tạo bài đăng";
@@ -247,15 +278,24 @@ public class UserProfileActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         BadgeManager.applyBadge(tvNotifBadge);
-        // Refresh state khi quay lại (vd: sau khi chấp nhận kết bạn từ thông báo)
+        boolean viewOther = getIntent().getBooleanExtra("view_other", false);
+        if (blockProfileMode) {
+            showBlockedProfileState();
+            return;
+        }
         bindSocialState();
-        // Refresh bài viết khi quay lại (vd: sau khi tạo bài mới)
+        // Reload cached avatar for other user (no API call needed)
+        if (viewOther && cachedOtherAvatarUrl != null && !cachedOtherAvatarUrl.isEmpty()) {
+            com.bumptech.glide.Glide.with(this)
+                    .load(cachedOtherAvatarUrl)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .circleCrop()
+                    .into(ivUserProfileAvatar);
+        }
         bindActivePosts();
         loadMyActivities();
-        // Ẩn phần gợi ý bài viết (chỉ giữ gợi ý user)
         hideRelatedPosts();
-        // Refresh profile data từ API (sau khi chỉnh sửa profile)
-        boolean viewOther = getIntent().getBooleanExtra("view_other", false);
         if (!viewOther) {
             loadOwnProfileName();
         }
@@ -291,6 +331,9 @@ public class UserProfileActivity extends AppCompatActivity {
         rvActivePostsProfile = findViewById(R.id.rvActivePostsProfile);
         tvNoActivePosts = findViewById(R.id.tvNoActivePosts);
         tvInterestsTitle = findViewById(R.id.tvInterestsTitle);
+        tabLayoutProfile = findViewById(R.id.tabLayoutProfile);
+        containerMyPosts = findViewById(R.id.containerMyPosts);
+        containerMyActivities = findViewById(R.id.containerMyActivities);
 
         cardCreatePostProfile = findViewById(R.id.cardCreatePostProfile);
         tvCreatePostHint = findViewById(R.id.tvCreatePostHint);
@@ -304,20 +347,42 @@ public class UserProfileActivity extends AppCompatActivity {
         com.google.android.material.tabs.TabLayout tabLayout = findViewById(R.id.tabLayoutProfile);
         LinearLayout containerMyPosts = findViewById(R.id.containerMyPosts);
         LinearLayout containerMyActivities = findViewById(R.id.containerMyActivities);
+        androidx.core.widget.NestedScrollView scrollView = findViewById(R.id.nestedScrollProfile);
 
         if (tabLayout == null) return;
+
+        // Per-tab scroll positions — index 0 = Bài viết, 1 = Hoạt động
+        final int[] tabScrollY = {0, 0};
+        final int[] currentTab = {0};
 
         tabLayout.addOnTabSelectedListener(new com.google.android.material.tabs.TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(com.google.android.material.tabs.TabLayout.Tab tab) {
-                if (tab.getPosition() == 0) {
-                    // Bài viết của tôi
+                int newTab = tab.getPosition();
+                if (newTab == currentTab[0]) return;
+
+                if (scrollView != null) {
+                    // Save outgoing tab's scroll
+                    tabScrollY[currentTab[0]] = scrollView.getScrollY();
+                    // First visit to new tab: inherit current position so screen doesn't jump
+                    if (tabScrollY[newTab] == 0) {
+                        tabScrollY[newTab] = scrollView.getScrollY();
+                    }
+                }
+                currentTab[0] = newTab;
+
+                if (newTab == 0) {
                     if (containerMyPosts != null) containerMyPosts.setVisibility(View.VISIBLE);
                     if (containerMyActivities != null) containerMyActivities.setVisibility(View.GONE);
                 } else {
-                    // Hoạt động của tôi
                     if (containerMyPosts != null) containerMyPosts.setVisibility(View.GONE);
                     if (containerMyActivities != null) containerMyActivities.setVisibility(View.VISIBLE);
+                }
+
+                // Restore scroll after layout pass
+                if (scrollView != null) {
+                    final int targetY = tabScrollY[newTab];
+                    scrollView.post(() -> scrollView.scrollTo(0, targetY));
                 }
             }
             @Override
@@ -493,6 +558,11 @@ public class UserProfileActivity extends AppCompatActivity {
         ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
         tvUserProfileName.setText(username);
         tvUserReputation.setText("0");
+
+        if (blockProfileMode) {
+            showBlockedProfileState();
+            return;
+        }
         
         rvUserReviews.setLayoutManager(new LinearLayoutManager(this));
         // Load reviews from backend
@@ -521,12 +591,54 @@ public class UserProfileActivity extends AppCompatActivity {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     java.util.Map<String, Object> profile = response.body().getResult();
+                    isBlockedByMe = asBoolean(profile.get("isBlockedByMe"));
+                    hasBlockedMe = asBoolean(profile.get("hasBlockedMe"));
+                    isBlockedBetweenUsers = asBoolean(profile.get("isBlockedBetweenUsers"));
+                    if (isBlockedBetweenUsers) {
+                        blockProfileMode = true;
+                        showBlockedProfileState();
+                        return;
+                    }
                     String fullName = profile.get("fullName") != null
                             ? profile.get("fullName").toString() : null;
                     if (fullName != null && !fullName.isEmpty()) {
                         username = fullName;
                         tvUserProfileName.setText(fullName);
                     }
+
+                    // Bio
+                    String bio = profile.get("bio") != null
+                            ? profile.get("bio").toString() : "";
+                    if (tvUserBio != null) {
+                        tvUserBio.setText(bio.isEmpty() ? "" : bio);
+                        tvUserBio.setVisibility(bio.isEmpty() ? View.GONE : View.VISIBLE);
+                    }
+
+                    // Gender
+                    String gender = profile.get("gender") != null
+                            ? profile.get("gender").toString() : "";
+                    if (tvUserGender != null) {
+                        tvUserGender.setText(gender.isEmpty() ? "" : "Giới tính: " + gender);
+                        tvUserGender.setVisibility(gender.isEmpty() ? View.GONE : View.VISIBLE);
+                    }
+
+                    // Birthday
+                    String birthday = profile.get("birthday") != null
+                            ? profile.get("birthday").toString() : "";
+                    if (tvUserBirthday != null) {
+                        tvUserBirthday.setText(birthday.isEmpty() ? "" : "🎂 " + birthday);
+                        tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
+                    }
+
+                    // Điểm uy tín
+                    if (tvUserReputation != null) {
+                        Object repObj = profile.get("reputationScore");
+                        int rep = repObj != null
+                                ? (int) Math.round(((Number) repObj).doubleValue())
+                                : 100;
+                        tvUserReputation.setText(String.valueOf(rep));
+                    }
+
                     // Load avatar with Glide
                     String avatarUrl = profile.get("avatarUrl") != null
                             ? profile.get("avatarUrl").toString() : null;
@@ -534,6 +646,7 @@ public class UserProfileActivity extends AppCompatActivity {
                         if (avatarUrl.startsWith("/")) {
                             avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
                         }
+                        cachedOtherAvatarUrl = avatarUrl;
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
                                 .load(avatarUrl)
                                 .placeholder(R.drawable.ic_user_placeholder)
@@ -607,10 +720,12 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
-                    // Reputation (từ API thay vì hardcode)
-                    Object repObj = profile.get("reputationScore");
-                    if (repObj != null && tvUserReputation != null) {
-                        int rep = ((Number) repObj).intValue();
+                    // Điểm uy tín — default 100 nếu API không trả về
+                    if (tvUserReputation != null) {
+                        Object repObj = profile.get("reputationScore");
+                        int rep = repObj != null
+                                ? (int) Math.round(((Number) repObj).doubleValue())
+                                : 100;
                         tvUserReputation.setText(String.valueOf(rep));
                     }
 
@@ -656,6 +771,10 @@ public class UserProfileActivity extends AppCompatActivity {
                 // Giữ tên từ SharedPreferences
             }
         });
+    }
+
+    private boolean asBoolean(Object value) {
+        return value instanceof Boolean && (Boolean) value;
     }
 
     private void loadInterestsFromBackend() {
@@ -766,6 +885,10 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void bindActivePosts() {
+        if (cachedMyPosts != null) {
+            showActivePosts(cachedMyPosts);
+            return;
+        }
         long targetUserId = getIntent().getLongExtra("user_id", -1);
         if (targetUserId <= 0) {
             // Own profile - load from shared prefs
@@ -808,21 +931,23 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void showActivePosts(List<Post> activePosts) {
+        cachedMyPosts = activePosts;
         if (activePosts.isEmpty()) {
             tvNoActivePosts.setVisibility(View.VISIBLE);
             rvActivePostsProfile.setVisibility(View.GONE);
         } else {
             tvNoActivePosts.setVisibility(View.GONE);
             rvActivePostsProfile.setVisibility(View.VISIBLE);
-            rvActivePostsProfile.setLayoutManager(new LinearLayoutManager(this));
-
-            // Nếu xem profile người khác → truyền viewer interests để kiểm soát nút tham gia
-            boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-            if (viewOther) {
-                java.util.Set<String> myInterests = getMyInterestSet();
-                rvActivePostsProfile.setAdapter(new PostAdapter(this, activePosts, myInterests));
-            } else {
-                rvActivePostsProfile.setAdapter(new PostAdapter(this, activePosts));
+            // Only create adapter once — preserves scroll position across onResume
+            if (myPostsAdapter == null) {
+                rvActivePostsProfile.setLayoutManager(new LinearLayoutManager(this));
+                boolean viewOther = getIntent().getBooleanExtra("view_other", false);
+                if (viewOther) {
+                    myPostsAdapter = new PostAdapter(this, activePosts, getMyInterestSet());
+                } else {
+                    myPostsAdapter = new PostAdapter(this, activePosts);
+                }
+                rvActivePostsProfile.setAdapter(myPostsAdapter);
             }
         }
     }
@@ -831,6 +956,10 @@ public class UserProfileActivity extends AppCompatActivity {
      * Load hoạt động đã tham gia: cho cả profile mình và profile người khác
      */
     private void loadMyActivities() {
+        if (cachedMyActivities != null) {
+            showMyActivities(cachedMyActivities);
+            return;
+        }
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
         long targetUserId = getIntent().getLongExtra("user_id", -1);
 
@@ -890,6 +1019,7 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void showMyActivities(List<Post> activities) {
+        cachedMyActivities = activities;
         View tvEmpty = findViewById(R.id.tvNoMyActivities);
         RecyclerView rv = findViewById(R.id.rvMyActivities);
 
@@ -900,14 +1030,16 @@ public class UserProfileActivity extends AppCompatActivity {
             if (tvEmpty != null) tvEmpty.setVisibility(View.GONE);
             if (rv != null) {
                 rv.setVisibility(View.VISIBLE);
-                rv.setLayoutManager(new LinearLayoutManager(this));
-                // Truyền viewer interests để PostAdapter quyết định CTA đúng
-                boolean viewOther = getIntent().getBooleanExtra("view_other", false);
-                if (viewOther) {
-                    java.util.Set<String> myInterests = getMyInterestSet();
-                    rv.setAdapter(new PostAdapter(this, activities, myInterests));
-                } else {
-                    rv.setAdapter(new PostAdapter(this, activities));
+                // Only create adapter once — preserves scroll position across onResume
+                if (myActivitiesAdapter == null) {
+                    rv.setLayoutManager(new LinearLayoutManager(this));
+                    boolean viewOther = getIntent().getBooleanExtra("view_other", false);
+                    if (viewOther) {
+                        myActivitiesAdapter = new PostAdapter(this, activities, getMyInterestSet());
+                    } else {
+                        myActivitiesAdapter = new PostAdapter(this, activities);
+                    }
+                    rv.setAdapter(myActivitiesAdapter);
                 }
             }
         }
@@ -1209,6 +1341,11 @@ public class UserProfileActivity extends AppCompatActivity {
         long myUserId = RetrofitClient.getUserId(this);
         boolean isOwnProfile = !viewOther && (viewedUserId == -1 || viewedUserId == myUserId);
 
+        if (blockProfileMode || isBlockedBetweenUsers) {
+            showBlockedProfileState();
+            return;
+        }
+
         if (isOwnProfile) {
             // === Hồ sơ của mình ===
             ivBackUserProfile.setVisibility(View.GONE);
@@ -1256,28 +1393,34 @@ public class UserProfileActivity extends AppCompatActivity {
         rvUserReviews.setVisibility(View.VISIBLE);
 
         // loadSuggestedUsers(); // Tạm ẩn phần "Gợi ý cho bạn"
-        btnRateUser.setOnClickListener(v -> showRateUserDialog());
+        if (viewedUserId > 0) {
+            checkAndSetupRateButton(viewedUserId);
+        } else {
+            btnRateUser.setEnabled(false);
+        }
 
-        // 3-dots menu ở header (ivMenuProfile) cho profile người khác
-        ivMenuProfile.setOnClickListener(v -> {
-            android.widget.PopupMenu popup = new android.widget.PopupMenu(this, ivMenuProfile);
-            popup.getMenu().add(0, 1, 0, "🚫 Chặn người dùng");
-            popup.getMenu().add(0, 2, 1, "⚠️ Báo cáo");
-            popup.setOnMenuItemClickListener(item -> {
-                if (item.getItemId() == 1) {
-                    showBlockUserConfirmDialog();
-                    return true;
-                } else if (item.getItemId() == 2) {
-                    showReportUserDialog();
-                    return true;
-                }
-                return false;
-            });
-            popup.show();
+        // 3-dots menu ở header cho profile người khác — dùng iOS-style BottomSheet
+        ivMenuProfile.setImageResource(R.drawable.ic_more);
+        ivMenuProfile.setOnClickListener(v -> showOtherUserActionSheet());
+
+        ivUserProfileAvatar.setClickable(true);
+        ivUserProfileAvatar.setOnClickListener(v -> {
+            android.app.Dialog dialog = new android.app.Dialog(
+                    UserProfileActivity.this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+            dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+            ImageView imgFull = new ImageView(UserProfileActivity.this);
+            android.graphics.drawable.Drawable drawable = ivUserProfileAvatar.getDrawable();
+            if (drawable != null) {
+                imgFull.setImageDrawable(drawable);
+            } else {
+                imgFull.setImageResource(R.drawable.ic_user_placeholder);
+            }
+            imgFull.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            imgFull.setBackgroundColor(Color.BLACK);
+            imgFull.setOnClickListener(v2 -> dialog.dismiss());
+            dialog.setContentView(imgFull);
+            dialog.show();
         });
-
-        ivUserProfileAvatar.setOnClickListener(null);
-        ivUserProfileAvatar.setClickable(false);
 
         // Load trạng thái bạn bè từ backend
         if (viewedUserId > 0) {
@@ -1290,6 +1433,89 @@ public class UserProfileActivity extends AppCompatActivity {
         }
     }
 
+    private void showBlockedProfileState() {
+        blockProfileMode = true;
+        isBlockedBetweenUsers = true;
+
+        ivBackUserProfile.setVisibility(View.VISIBLE);
+        ivMenuProfile.setVisibility(View.GONE);
+        footerNavigationProfile.setVisibility(View.GONE);
+        tvFriendCount.setVisibility(View.GONE);
+        btnViewArchive.setVisibility(View.GONE);
+        layoutRateReport.setVisibility(View.GONE);
+        cardCreatePostProfile.setVisibility(View.GONE);
+
+        ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        if (hasBlockedMe && !isBlockedByMe) {
+            // Người này đã chặn tôi — hiển thị như không tồn tại
+            tvUserProfileName.setText("Người dùng không tồn tại");
+            tvUserBio.setText("Tài khoản này không khả dụng.");
+        } else {
+            // Tôi đã chặn họ — hiển thị nội dung bị ẩn
+            tvUserProfileName.setText("Nội dung này không hiển thị");
+            tvUserBio.setText("Bạn đã chặn người dùng này. Bỏ chặn để xem nội dung của họ.");
+        }
+        tvUserBio.setVisibility(View.VISIBLE);
+        tvUserBirthday.setVisibility(View.GONE);
+        tvUserGender.setVisibility(View.GONE);
+        tvUserReputation.setText("0");
+
+        tvInterestsTitle.setVisibility(View.GONE);
+        chipGroupUserInterests.setVisibility(View.GONE);
+        tabLayoutProfile.setVisibility(View.GONE);
+        containerMyPosts.setVisibility(View.GONE);
+        containerMyActivities.setVisibility(View.GONE);
+        tvNoActivePosts.setVisibility(View.GONE);
+        tvReviewsTitle.setVisibility(View.GONE);
+        rvUserReviews.setVisibility(View.GONE);
+        tvRelatedPostsTitle.setVisibility(View.GONE);
+        tvNoRelatedPosts.setVisibility(View.GONE);
+        rvRelatedPosts.setVisibility(View.GONE);
+
+        if (isBlockedByMe && viewedUserId > 0) {
+            layoutSocialButtons.setVisibility(View.VISIBLE);
+            btnAddFriend.setVisibility(View.VISIBLE);
+            btnAddFriend.setText("Bỏ chặn");
+            btnAddFriend.setEnabled(true);
+            btnAddFriend.setAlpha(1.0f);
+            btnAddFriend.setOnClickListener(v -> unblockUserFromBlockedProfile());
+            btnMessage.setVisibility(View.GONE);
+        } else {
+            layoutSocialButtons.setVisibility(View.GONE);
+        }
+    }
+
+    private void unblockUserFromBlockedProfile() {
+        if (viewedUserId <= 0) {
+            Toast.makeText(this, "Không tìm thấy thông tin người dùng.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        friendApiService.unblockUser(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                if (response.isSuccessful()) {
+                    Toast.makeText(UserProfileActivity.this, "Đã bỏ chặn", Toast.LENGTH_SHORT).show();
+                    blockProfileMode = false;
+                    isBlockedByMe = false;
+                    hasBlockedMe = false;
+                    isBlockedBetweenUsers = false;
+                    getIntent().removeExtra("blocked_profile");
+                    getIntent().removeExtra("is_blocked_by_me");
+                    getIntent().removeExtra("has_blocked_me");
+                    recreate();
+                } else {
+                    Toast.makeText(UserProfileActivity.this, "Không thể bỏ chặn", Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     private void loadFriendCountFromApi() {
         friendApiService.getFriendCount().enqueue(new Callback<ApiResponse<Integer>>() {
             @Override
@@ -1300,13 +1526,13 @@ public class UserProfileActivity extends AppCompatActivity {
                 }
                 int finalCount = count;
                 tvFriendCount.setText("👥 Bạn bè: " + finalCount);
-                tvFriendCount.setOnClickListener(v -> showFriendListDialog());
+                tvFriendCount.setOnClickListener(v -> openFriendsList());
             }
 
             @Override
             public void onFailure(Call<ApiResponse<Integer>> call, Throwable t) {
                 tvFriendCount.setText("👥 Bạn bè: 0");
-                tvFriendCount.setOnClickListener(v -> showFriendListDialog());
+                tvFriendCount.setOnClickListener(v -> openFriendsList());
             }
         });
     }
@@ -1364,12 +1590,14 @@ public class UserProfileActivity extends AppCompatActivity {
     }
 
     private void setupFriendButton(String status) {
+        btnMessage.setVisibility(View.VISIBLE);
+        btnMessage.setOnClickListener(v -> openDirectMessageFromProfile());
+
         switch (status) {
             case "BLOCKED":
                 btnAddFriend.setText("Đã chặn");
                 btnAddFriend.setEnabled(false);
                 btnAddFriend.setAlpha(0.5f);
-                btnMessage.setVisibility(View.GONE);
                 tvInterestsTitle.setVisibility(View.GONE);
                 chipGroupUserInterests.setVisibility(View.GONE);
                 rvActivePostsProfile.setVisibility(View.GONE);
@@ -1382,49 +1610,13 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnAddFriend.setText("Bạn bè");
                 btnAddFriend.setEnabled(true);
                 btnAddFriend.setAlpha(1.0f);
-                btnMessage.setVisibility(View.VISIBLE);
                 btnAddFriend.setOnClickListener(v -> showFriendOptionsMenu());
-                btnMessage.setOnClickListener(v -> {
-                    if (viewedUserId <= 0) {
-                        Toast.makeText(this, "Không thể nhắn tin", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    // Gọi API lấy hoặc tạo phòng DM
-                    RetrofitClient.loadToken(this);
-                    com.example.weconnect.api.ChatApiService chatApi =
-                            RetrofitClient.getClient().create(com.example.weconnect.api.ChatApiService.class);
-                    chatApi.getDirectRoom(viewedUserId).enqueue(new Callback<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>>() {
-                        @Override
-                        public void onResponse(Call<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call,
-                                               Response<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> response) {
-                            if (response.isSuccessful() && response.body() != null
-                                    && response.body().getResult() != null) {
-                                com.example.weconnect.models.ChatRoomApiResponse room = response.body().getResult();
-                                Intent intent = new Intent(UserProfileActivity.this, ConversationActivity.class);
-                                intent.putExtra("room_id", room.getId());
-                                intent.putExtra("chat_name", username);
-                                startActivity(intent);
-                            } else {
-                                String msg = "Không thể mở phòng chat";
-                                if (response.body() != null && response.body().getMessage() != null) {
-                                    msg = response.body().getMessage();
-                                }
-                                Toast.makeText(UserProfileActivity.this, msg, Toast.LENGTH_SHORT).show();
-                            }
-                        }
-                        @Override
-                        public void onFailure(Call<ApiResponse<com.example.weconnect.models.ChatRoomApiResponse>> call, Throwable t) {
-                            Toast.makeText(UserProfileActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
-                        }
-                    });
-                });
                 break;
 
             case "PENDING_SENT":
                 btnAddFriend.setText("Đã gửi lời mời");
                 btnAddFriend.setEnabled(true);
                 btnAddFriend.setAlpha(0.8f);
-                btnMessage.setVisibility(View.GONE);
                 btnAddFriend.setOnClickListener(v -> {
                     // Hủy lời mời đã gửi
                     friendApiService.cancelFriend(viewedUserId).enqueue(new Callback<ApiResponse<Void>>() {
@@ -1447,7 +1639,6 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnAddFriend.setText("Phản hồi");
                 btnAddFriend.setEnabled(true);
                 btnAddFriend.setAlpha(1.0f);
-                btnMessage.setVisibility(View.GONE);
                 btnAddFriend.setOnClickListener(v -> showFriendResponseDialog());
                 break;
 
@@ -1455,7 +1646,6 @@ public class UserProfileActivity extends AppCompatActivity {
                 btnAddFriend.setText("+ Thêm bạn bè");
                 btnAddFriend.setEnabled(true);
                 btnAddFriend.setAlpha(1.0f);
-                btnMessage.setVisibility(View.GONE);
                 btnAddFriend.setOnClickListener(v -> {
                     if (viewedUserId <= 0) {
                         Toast.makeText(this, "Không thể thêm bạn bè", Toast.LENGTH_SHORT).show();
@@ -1488,6 +1678,64 @@ public class UserProfileActivity extends AppCompatActivity {
                 });
                 break;
         }
+    }
+
+    private void openDirectMessageFromProfile() {
+        if (isBlockedBetweenUsers || blockProfileMode) {
+            Toast.makeText(this, "Bạn không thể nhắn tin cho người này.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (viewedUserId <= 0) {
+            Toast.makeText(this, "Không thể nhắn tin", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        DirectMessageHelper.openDirectMessage(this, viewedUserId, username);
+    }
+
+    private void showOtherUserActionSheet() {
+        com.google.android.material.bottomsheet.BottomSheetDialog sheet =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
+
+        LinearLayout group1 = buildIosGroup();
+        TextView tvHeader = new TextView(this);
+        tvHeader.setText(username != null ? username : "Người dùng");
+        tvHeader.setTextSize(13);
+        tvHeader.setTextColor(0xFF8E8E93);
+        tvHeader.setGravity(Gravity.CENTER);
+        tvHeader.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(tvHeader, matchW());
+        addIosSep(group1);
+        addIosRow(group1, "Nhắn tin", 0xFF1C1C1E, v -> {
+            sheet.dismiss();
+            openDirectMessageFromProfile();
+        });
+        addIosSep(group1);
+        addIosRow(group1, "Chặn người dùng", 0xFFFF3B30, v -> {
+            sheet.dismiss();
+            showBlockUserConfirmDialog();
+        });
+        addIosSep(group1);
+        addIosRow(group1, "Báo cáo người dùng", 0xFF1C1C1E, v -> {
+            sheet.dismiss();
+            UserReportBottomSheet.show(this, viewedUserId, username);
+        });
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        LinearLayout group2 = buildIosGroup();
+        addIosRow(group2, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group2, matchW());
+
+        sheet.setContentView(root);
+        sheet.show();
+    }
+
+    private void openFriendsList() {
+        Intent intent = new Intent(this, FriendsListActivity.class);
+        startActivity(intent);
     }
 
     private void showFriendListDialog() {
@@ -1716,182 +1964,731 @@ public class UserProfileActivity extends AppCompatActivity {
         sheet.show();
     }
 
-    private void showRateUserDialog() {
-        long targetId = getIntent().getLongExtra("user_id", -1);
-        if (targetId <= 0) {
-            Toast.makeText(this, "Không thể đánh giá người dùng này", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Fetch common activities trước, rồi show dialog
-        Toast.makeText(this, "Đang tải hoạt động chung...", Toast.LENGTH_SHORT).show();
-
-        reviewApiService.getCommonActivities(targetId).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
+    // Gọi canReview API để quyết định trạng thái nút "Đánh giá"
+    private void checkAndSetupRateButton(long targetUserId) {
+        reviewApiService.canReview(targetUserId).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
             @Override
-            public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
-                                   Response<ApiResponse<List<Map<String, Object>>>> response) {
-                List<String> activityNames = new ArrayList<>();
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                   Response<ApiResponse<Map<String, Object>>> response) {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
-                    for (Map<String, Object> item : response.body().getResult()) {
-                        String name = item.get("activityName") != null
-                                ? item.get("activityName").toString() : "";
-                        String tag = item.get("interestTag") != null
-                                ? item.get("interestTag").toString() : "";
-                        // Ghép tag + content cho rõ ràng
-                        String display = tag.isEmpty() ? name : "[" + tag + "] " + name;
-                        if (!display.isEmpty()) {
-                            activityNames.add(display);
+                    Map<String, Object> result = response.body().getResult();
+                    boolean canReview = Boolean.TRUE.equals(result.get("canReview"));
+                    Object existingIdObj = result.get("existingReviewId");
+
+                    if (canReview) {
+                        // Có thể viết đánh giá mới
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> activities =
+                                (List<Map<String, Object>>) result.get("commonActivities");
+                        btnRateUser.setText("Viết đánh giá");
+                        btnRateUser.setEnabled(true);
+                        btnRateUser.setAlpha(1f);
+                        btnRateUser.setOnClickListener(v -> {
+                            if (activities != null && !activities.isEmpty()) {
+                                showWriteReviewDialog(activities);
+                            } else {
+                                Toast.makeText(UserProfileActivity.this,
+                                        "Không tìm thấy hoạt động chung đã kết thúc", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    } else if (existingIdObj != null) {
+                        // Đã đánh giá rồi — chuyển sang chỉnh sửa
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> existingReview =
+                                (Map<String, Object>) result.get("existingReview");
+                        btnRateUser.setText("Chỉnh sửa đánh giá");
+                        btnRateUser.setEnabled(true);
+                        btnRateUser.setAlpha(1f);
+                        btnRateUser.setOnClickListener(v -> {
+                            if (existingReview != null) {
+                                showEditReviewDialog(existingReview);
+                            }
+                        });
+                    } else {
+                        // Không đủ điều kiện đánh giá
+                        String reason = result.get("reason") != null ? result.get("reason").toString() : "";
+                        btnRateUser.setText("Đánh giá");
+                        btnRateUser.setEnabled(false);
+                        btnRateUser.setAlpha(0.45f);
+                        if (!reason.isEmpty()) {
+                            btnRateUser.setOnClickListener(v ->
+                                    Toast.makeText(UserProfileActivity.this, reason, Toast.LENGTH_LONG).show());
+                            btnRateUser.setEnabled(true);
                         }
                     }
                 }
-
-                if (activityNames.isEmpty()) {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Không tìm thấy hoạt động chung", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-
-                showRateUserDialogWithActivities(activityNames);
             }
 
             @Override
-            public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
+                btnRateUser.setEnabled(false);
+                btnRateUser.setAlpha(0.45f);
             }
         });
     }
 
-    private void showRateUserDialogWithActivities(List<String> activityNames) {
+    // Dialog viết đánh giá mới — iOS style
+    private void showWriteReviewDialog(List<Map<String, Object>> activities) {
+        // Build display names và giữ postId tương ứng
+        List<String> displayNames = new ArrayList<>();
+        List<Long> postIds = new ArrayList<>();
+        for (Map<String, Object> item : activities) {
+            String dateDisplay = item.get("activityDateDisplay") != null
+                    ? item.get("activityDateDisplay").toString() : "";
+            String tag = item.get("interestTag") != null ? item.get("interestTag").toString() : "";
+            String display = !dateDisplay.isEmpty() ? dateDisplay
+                    : (!tag.isEmpty() ? tag : "Hoạt động chung");
+            displayNames.add(display);
+            long pid = item.get("postId") != null ? ((Number) item.get("postId")).longValue() : 0L;
+            postIds.add(pid);
+        }
+
+        final int[] selectedActivityIndex = {0};
+        final TextView[] activityViews = new TextView[displayNames.size()];
+        final RatingBar[] ratingBarHolder = new RatingBar[1];
+        final EditText[] etHolder = new EditText[1];
+
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFFFFFFFF);
-        root.setPadding(64, 48, 64, 48);
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
 
-        // Header
-        TextView header = new TextView(this);
-        header.setText("Đánh giá " + username);
-        header.setTextSize(13);
-        header.setTextColor(0xFF8E8E93);
-        header.setGravity(Gravity.CENTER);
-        root.addView(header);
+        // Group 1 — Header + chọn hoạt động
+        LinearLayout group1 = buildIosGroup();
 
-        // Activity selector label
-        TextView actLabel = new TextView(this);
-        actLabel.setText("Hoạt động chung:");
-        actLabel.setTextSize(14);
-        actLabel.setTextColor(getResources().getColor(R.color.text_secondary, null));
-        LinearLayout.LayoutParams actLabelParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        actLabelParams.topMargin = 24;
-        actLabel.setLayoutParams(actLabelParams);
-        root.addView(actLabel);
+        TextView tvHeader = new TextView(this);
+        tvHeader.setText("Đánh giá " + username);
+        tvHeader.setTextSize(13);
+        tvHeader.setTextColor(0xFF8E8E93);
+        tvHeader.setGravity(Gravity.CENTER);
+        tvHeader.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group1.addView(tvHeader, matchW());
 
-        // Spinner for activity selection
-        android.widget.Spinner spinnerActivity = new android.widget.Spinner(this);
-        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(
-                this, android.R.layout.simple_spinner_item, activityNames);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerActivity.setAdapter(adapter);
-        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        spinnerParams.topMargin = 8;
-        spinnerActivity.setLayoutParams(spinnerParams);
-        root.addView(spinnerActivity);
+        if (displayNames.size() == 1) {
+            addIosSep(group1);
+            TextView tvSingle = new TextView(this);
+            tvSingle.setText(displayNames.get(0));
+            tvSingle.setTextSize(15);
+            tvSingle.setTextColor(0xFF8E8E93);
+            tvSingle.setGravity(Gravity.CENTER);
+            tvSingle.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+            group1.addView(tvSingle, matchW());
+        } else {
+            for (int i = 0; i < displayNames.size(); i++) {
+                final int idx = i;
+                addIosSep(group1);
+                TextView tvAct = new TextView(this);
+                tvAct.setText(displayNames.get(i));
+                tvAct.setTextSize(17);
+                tvAct.setTextColor(i == 0 ? 0xFF007AFF : 0xFF1C1C1E);
+                tvAct.setGravity(Gravity.CENTER);
+                tvAct.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+                tvAct.setClickable(true);
+                tvAct.setFocusable(true);
+                android.util.TypedValue ripple = new android.util.TypedValue();
+                getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+                tvAct.setBackgroundResource(ripple.resourceId);
+                tvAct.setOnClickListener(v -> {
+                    if (activityViews[selectedActivityIndex[0]] != null)
+                        activityViews[selectedActivityIndex[0]].setTextColor(0xFF1C1C1E);
+                    selectedActivityIndex[0] = idx;
+                    tvAct.setTextColor(0xFF007AFF);
+                });
+                activityViews[i] = tvAct;
+                group1.addView(tvAct, matchW());
+            }
+        }
 
-        // Rating stars
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // Group 2 — RatingBar
+        LinearLayout group2 = buildIosGroup();
+        TextView tvRatingLabel = new TextView(this);
+        tvRatingLabel.setText("Số sao đánh giá");
+        tvRatingLabel.setTextSize(17);
+        tvRatingLabel.setTextColor(0xFF1C1C1E);
+        tvRatingLabel.setGravity(Gravity.CENTER);
+        tvRatingLabel.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        group2.addView(tvRatingLabel, matchW());
+
+        addIosSep(group2);
+
+        LinearLayout ratingContainer = new LinearLayout(this);
+        ratingContainer.setGravity(Gravity.CENTER);
+        ratingContainer.setPadding(dpPx(20), dpPx(14), dpPx(20), dpPx(14));
         RatingBar ratingBar = new RatingBar(this, null, android.R.attr.ratingBarStyle);
         ratingBar.setNumStars(5);
         ratingBar.setStepSize(1f);
         ratingBar.setRating(0f);
-        LinearLayout.LayoutParams ratingParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        ratingParams.gravity = Gravity.CENTER;
-        ratingParams.topMargin = 24;
-        ratingBar.setLayoutParams(ratingParams);
-        root.addView(ratingBar);
+        ratingContainer.addView(ratingBar);
+        ratingBarHolder[0] = ratingBar;
+        group2.addView(ratingContainer, matchW());
+        root.addView(group2, matchW());
+        addGroupGap(root);
 
-        // Comment input
+        // Group 3 — EditText nhận xét
+        LinearLayout group3 = buildIosGroup();
         EditText etComment = new EditText(this);
         etComment.setHint("Nhận xét (không bắt buộc)");
-        etComment.setBackground(new ColorDrawable(Color.TRANSPARENT));
-        etComment.setBackgroundResource(android.R.drawable.edit_text);
-        etComment.setPadding(24, 24, 24, 24);
-        etComment.setTextSize(14);
+        etComment.setTextSize(17);
+        etComment.setBackground(null);
         etComment.setMinLines(2);
-        LinearLayout.LayoutParams commentParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        commentParams.topMargin = 24;
-        etComment.setLayoutParams(commentParams);
-        root.addView(etComment);
+        etComment.setMaxLines(5);
+        etComment.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+        etHolder[0] = etComment;
+        group3.addView(etComment, matchW());
+        root.addView(group3, matchW());
+        addGroupGap(root);
 
-        // Submit button
-        MaterialButton btnSubmit = new MaterialButton(this);
-        btnSubmit.setText("Gửi đánh giá");
-        btnSubmit.setAllCaps(false);
-        btnSubmit.setCornerRadius(48);
-        btnSubmit.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF007AFF));
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 120);
-        btnParams.topMargin = 32;
-        btnSubmit.setLayoutParams(btnParams);
-        btnSubmit.setOnClickListener(v -> {
-            if (ratingBar.getRating() == 0) {
+        // Group 4 — Gửi đánh giá
+        LinearLayout group4 = buildIosGroup();
+        addIosRow(group4, "Gửi đánh giá", 0xFF007AFF, v -> {
+            if (ratingBarHolder[0].getRating() == 0) {
                 Toast.makeText(this, "Vui lòng chọn số sao", Toast.LENGTH_SHORT).show();
                 return;
             }
-            String selectedActivity = spinnerActivity.getSelectedItem().toString();
+            long selectedPostId = postIds.get(selectedActivityIndex[0]);
             sheet.dismiss();
-            submitReviewToBackend((int) ratingBar.getRating(),
-                    etComment.getText().toString().trim(), selectedActivity);
+            submitNewReview((int) ratingBarHolder[0].getRating(),
+                    etHolder[0].getText().toString().trim(), selectedPostId);
         });
-        root.addView(btnSubmit);
+        root.addView(group4, matchW());
+        addGroupGap(root);
+
+        // Group 5 — Huỷ
+        LinearLayout group5 = buildIosGroup();
+        addIosRow(group5, "Huỷ", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(group5, matchW());
 
         sheet.setContentView(root);
         sheet.show();
     }
 
-    private void submitReviewToBackend(int stars, String comment, String activityName) {
+    // Dialog chỉnh sửa đánh giá — bottom sheet nổi từ dưới, overlay tối
+    private void showEditReviewDialog(Map<String, Object> existingReview) {
+        long reviewId = existingReview.get("id") != null
+                ? ((Number) existingReview.get("id")).longValue() : 0L;
+        int currentRating = existingReview.get("rating") != null
+                ? ((Number) existingReview.get("rating")).intValue() : 0;
+        String currentComment = existingReview.get("comment") != null
+                ? existingReview.get("comment").toString() : "";
+        String activityDisplay = existingReview.get("activityDateDisplay") != null
+                ? existingReview.get("activityDateDisplay").toString() : "";
+
+        final RatingBar[] ratingBarHolder = new RatingBar[1];
+        final EditText[] etHolder = new EditText[1];
+
+        com.google.android.material.bottomsheet.BottomSheetDialog sheet =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+
+        // ── Root container — nền trắng, bo góc trên 24dp ──
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable sheetBg = new android.graphics.drawable.GradientDrawable();
+        sheetBg.setColor(0xFFFFFFFF);
+        float r = dpPx(24);
+        sheetBg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        root.setBackground(sheetBg);
+
+        // ── Handle bar (drag indicator) ──
+        LinearLayout handleWrap = new LinearLayout(this);
+        handleWrap.setGravity(Gravity.CENTER_HORIZONTAL);
+        handleWrap.setPadding(0, dpPx(12), 0, dpPx(4));
+        View handle = new View(this);
+        android.graphics.drawable.GradientDrawable handleBg = new android.graphics.drawable.GradientDrawable();
+        handleBg.setColor(0xFFD1D1D6);
+        handleBg.setCornerRadius(dpPx(3));
+        handle.setBackground(handleBg);
+        handleWrap.addView(handle, new LinearLayout.LayoutParams(dpPx(36), dpPx(4)));
+        root.addView(handleWrap, matchW());
+
+        // ── Content padding wrapper ──
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dpPx(20), dpPx(8), dpPx(20), dpPx(32));
+
+        // ── Header row: title + nút đóng ──
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("Chỉnh sửa đánh giá");
+        tvTitle.setTextSize(18);
+        tvTitle.setTextColor(0xFF1C1C1E);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        headerRow.addView(tvTitle, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView tvClose = new TextView(this);
+        tvClose.setText("✕");
+        tvClose.setTextSize(18);
+        tvClose.setTextColor(0xFFAEAEB2);
+        tvClose.setPadding(dpPx(8), dpPx(4), 0, dpPx(4));
+        tvClose.setClickable(true);
+        tvClose.setFocusable(true);
+        android.util.TypedValue rippleClose = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleClose, true);
+        tvClose.setBackgroundResource(rippleClose.resourceId);
+        tvClose.setOnClickListener(v -> sheet.dismiss());
+        headerRow.addView(tvClose);
+
+        content.addView(headerRow, matchW());
+
+        // ── Activity chip ──
+        if (!activityDisplay.isEmpty()) {
+            TextView tvAct = new TextView(this);
+            tvAct.setText("📌 " + activityDisplay);
+            tvAct.setTextSize(12);
+            tvAct.setTextColor(0xFF6D6D72);
+            tvAct.setPadding(dpPx(10), dpPx(5), dpPx(10), dpPx(5));
+            android.graphics.drawable.GradientDrawable chipBg = new android.graphics.drawable.GradientDrawable();
+            chipBg.setColor(0xFFF2F2F7);
+            chipBg.setCornerRadius(dpPx(20));
+            tvAct.setBackground(chipBg);
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            chipParams.topMargin = dpPx(8);
+            content.addView(tvAct, chipParams);
+        }
+
+        // ── Divider ──
+        content.addView(makeDivider(dpPx(16)));
+
+        // ── Rating ──
+        TextView tvRatingLabel = new TextView(this);
+        tvRatingLabel.setText("Đánh giá của bạn");
+        tvRatingLabel.setTextSize(14);
+        tvRatingLabel.setTextColor(0xFF3A3A3C);
+        tvRatingLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rlp.topMargin = dpPx(16);
+        content.addView(tvRatingLabel, rlp);
+
+        LinearLayout ratingRow = new LinearLayout(this);
+        ratingRow.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams rrp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rrp.topMargin = dpPx(8);
+        RatingBar ratingBar = new RatingBar(this, null, android.R.attr.ratingBarStyle);
+        ratingBar.setNumStars(5);
+        ratingBar.setStepSize(1f);
+        ratingBar.setRating(currentRating);
+        ratingBarHolder[0] = ratingBar;
+        ratingRow.addView(ratingBar);
+        content.addView(ratingRow, rrp);
+
+        // ── Divider ──
+        content.addView(makeDivider(dpPx(16)));
+
+        // ── Comment ──
+        TextView tvCommentLabel = new TextView(this);
+        tvCommentLabel.setText("Nhận xét");
+        tvCommentLabel.setTextSize(14);
+        tvCommentLabel.setTextColor(0xFF3A3A3C);
+        tvCommentLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        clp.topMargin = dpPx(16);
+        content.addView(tvCommentLabel, clp);
+
+        EditText etComment = new EditText(this);
+        etComment.setHint("Chia sẻ trải nghiệm của bạn...");
+        etComment.setText(currentComment);
+        etComment.setTextSize(15);
+        etComment.setTextColor(0xFF1C1C1E);
+        etComment.setHintTextColor(0xFFAEAEB2);
+        etComment.setMinLines(3);
+        etComment.setMaxLines(6);
+        etComment.setGravity(Gravity.TOP | Gravity.START);
+        etComment.setPadding(dpPx(14), dpPx(12), dpPx(14), dpPx(12));
+        android.graphics.drawable.GradientDrawable etBg = new android.graphics.drawable.GradientDrawable();
+        etBg.setColor(0xFFF2F2F7);
+        etBg.setCornerRadius(dpPx(10));
+        etComment.setBackground(etBg);
+        LinearLayout.LayoutParams etp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        etp.topMargin = dpPx(8);
+        etHolder[0] = etComment;
+        content.addView(etComment, etp);
+
+        // ── CTA chính: Lưu chỉnh sửa ──
+        MaterialButton btnSave = new MaterialButton(this);
+        btnSave.setText("Lưu chỉnh sửa");
+        btnSave.setAllCaps(false);
+        btnSave.setCornerRadius(dpPx(12));
+        btnSave.setTextSize(16);
+        btnSave.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF007AFF));
+        LinearLayout.LayoutParams sbp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(48));
+        sbp.topMargin = dpPx(20);
+        btnSave.setOnClickListener(v -> {
+            if (ratingBarHolder[0].getRating() == 0) {
+                Toast.makeText(this, "Vui lòng chọn số sao", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            sheet.dismiss();
+            updateExistingReview(reviewId, (int) ratingBarHolder[0].getRating(),
+                    etHolder[0].getText().toString().trim());
+        });
+        content.addView(btnSave, sbp);
+
+        // ── Row phụ: Xóa | Hủy ──
+        LinearLayout secondaryRow = new LinearLayout(this);
+        secondaryRow.setOrientation(LinearLayout.HORIZONTAL);
+        secondaryRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams srp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        srp.topMargin = dpPx(4);
+
+        TextView tvDelete = makeTextAction("Xóa đánh giá", 0xFFFF3B30);
+        tvDelete.setOnClickListener(v -> {
+            sheet.dismiss();
+            new AlertDialog.Builder(this)
+                    .setTitle("Xóa đánh giá")
+                    .setMessage("Bạn có chắc muốn xóa đánh giá này?")
+                    .setPositiveButton("Xóa", (d, w) -> deleteReview(reviewId))
+                    .setNegativeButton("Huỷ", null)
+                    .show();
+        });
+        secondaryRow.addView(tvDelete, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        View vDivider = new View(this);
+        vDivider.setBackgroundColor(0xFFE5E5EA);
+        LinearLayout.LayoutParams vdp = new LinearLayout.LayoutParams(1, dpPx(18));
+        vdp.gravity = Gravity.CENTER_VERTICAL;
+        vDivider.setLayoutParams(vdp);
+        secondaryRow.addView(vDivider);
+
+        TextView tvCancel = makeTextAction("Hủy", 0xFF8E8E93);
+        tvCancel.setOnClickListener(v -> sheet.dismiss());
+        secondaryRow.addView(tvCancel, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        content.addView(secondaryRow, srp);
+        root.addView(content, matchW());
+
+        sheet.setContentView(root);
+
+        // Xóa nền Material của design_bottom_sheet để lộ nền trắng bo góc, giữ overlay tối
+        sheet.setOnShowListener(d -> {
+            android.view.View bottomSheet = sheet.findViewById(
+                    com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet != null) {
+                bottomSheet.setBackground(null);
+                com.google.android.material.bottomsheet.BottomSheetBehavior<android.view.View> behavior =
+                        com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
+                behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
+                behavior.setSkipCollapsed(true);
+            }
+        });
+
+        sheet.show();
+    }
+
+    private View makeDivider(int topMargin) {
+        View div = new View(this);
+        div.setBackgroundColor(0xFFE5E5EA);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        p.topMargin = topMargin;
+        div.setLayoutParams(p);
+        return div;
+    }
+
+    private TextView makeTextAction(String text, int color) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(15);
+        tv.setTextColor(color);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dpPx(8), dpPx(14), dpPx(8), dpPx(14));
+        tv.setClickable(true);
+        tv.setFocusable(true);
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        tv.setBackgroundResource(ripple.resourceId);
+        return tv;
+    }
+
+    // Bottom sheet chi tiết đánh giá — iOS style
+    private void showReviewDetailSheet(UserReview review) {
+        long currentUserId = RetrofitClient.getUserId(this);
+        boolean isOwner = currentUserId > 0 && review.getReviewerId() == currentUserId;
+
+        com.google.android.material.bottomsheet.BottomSheetDialog sheet =
+                new com.google.android.material.bottomsheet.BottomSheetDialog(this);
+        sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+
+        LinearLayout root = buildIosRoot();
+        makeSheetTransparent(root);
+
+        // Group 1 — nội dung chi tiết
+        LinearLayout group1 = buildIosGroup();
+
+        // Header: avatar + tên người viết đánh giá (clickable → profile)
+        LinearLayout profileRow = new LinearLayout(this);
+        profileRow.setOrientation(LinearLayout.HORIZONTAL);
+        profileRow.setGravity(Gravity.CENTER_VERTICAL);
+        profileRow.setPadding(dpPx(20), dpPx(14), dpPx(20), dpPx(14));
+        profileRow.setClickable(true);
+        profileRow.setFocusable(true);
+        android.util.TypedValue profileRipple = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, profileRipple, true);
+        profileRow.setBackgroundResource(profileRipple.resourceId);
+        profileRow.setOnClickListener(v -> {
+            sheet.dismiss();
+            if (review.getReviewerId() > 0) {
+                Intent profileIntent = new Intent(this, UserProfileActivity.class);
+                profileIntent.putExtra("user_id", review.getReviewerId());
+                profileIntent.putExtra("view_other", true);
+                startActivity(profileIntent);
+            }
+        });
+
+        android.widget.ImageView ivDetailAvatar = new android.widget.ImageView(this);
+        int avSize = dpPx(40);
+        LinearLayout.LayoutParams avp = new LinearLayout.LayoutParams(avSize, avSize);
+        ivDetailAvatar.setLayoutParams(avp);
+        ivDetailAvatar.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+        String avUrl = review.getReviewerAvatarUrl();
+        if (avUrl != null && !avUrl.isEmpty()) {
+            if (!avUrl.startsWith("http")) {
+                String base = RetrofitClient.getBaseUrl();
+                avUrl = avUrl.startsWith("/") ? base + avUrl.substring(1) : base + avUrl;
+            }
+            com.bumptech.glide.Glide.with(this)
+                    .load(avUrl)
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder)
+                    .circleCrop()
+                    .into(ivDetailAvatar);
+        } else {
+            ivDetailAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        }
+        profileRow.addView(ivDetailAvatar);
+
+        TextView tvDetailName = new TextView(this);
+        tvDetailName.setText(review.getReviewerName() != null ? review.getReviewerName() : "Ẩn danh");
+        tvDetailName.setTextSize(15);
+        tvDetailName.setTextColor(0xFF1C1C1E);
+        tvDetailName.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        nlp.setMarginStart(dpPx(12));
+        tvDetailName.setLayoutParams(nlp);
+        profileRow.addView(tvDetailName);
+
+        group1.addView(profileRow, matchW());
+
+        // Rating — ★★★★☆ với sao vàng / xám
+        if (review.getRating() != null && review.getRating() > 0) {
+            addIosSep(group1);
+            int starCount = review.getRating();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 5; i++) sb.append(i < starCount ? "★" : "☆");
+            android.text.SpannableStringBuilder ssb = new android.text.SpannableStringBuilder(sb.toString());
+            ssb.setSpan(new android.text.style.ForegroundColorSpan(0xFFFFC107),
+                    0, starCount, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (starCount < 5) {
+                ssb.setSpan(new android.text.style.ForegroundColorSpan(0xFFD1D1D6),
+                        starCount, 5, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            TextView tvRating = new TextView(this);
+            tvRating.setText(ssb);
+            tvRating.setTextSize(22);
+            tvRating.setGravity(Gravity.CENTER);
+            tvRating.setPadding(dpPx(20), dpPx(14), dpPx(20),
+                    (review.getReputationLabel() != null && !review.getReputationLabel().isEmpty()) ? dpPx(4) : dpPx(14));
+            group1.addView(tvRating, matchW());
+
+            if (review.getReputationLabel() != null && !review.getReputationLabel().isEmpty()) {
+                TextView tvLabel = new TextView(this);
+                tvLabel.setText(review.getReputationLabel());
+                tvLabel.setTextSize(13);
+                tvLabel.setTextColor(0xFF8E8E93);
+                tvLabel.setGravity(Gravity.CENTER);
+                tvLabel.setPadding(dpPx(20), 0, dpPx(20), dpPx(12));
+                group1.addView(tvLabel, matchW());
+            }
+        }
+
+        // Hoạt động chung — no emoji prefix
+        String actDisplay = review.getActivityDateDisplay();
+        if (actDisplay == null || actDisplay.isEmpty()) actDisplay = review.getActivityName();
+        if (actDisplay != null && !actDisplay.isEmpty()) {
+            addIosSep(group1);
+            TextView tvAct = new TextView(this);
+            tvAct.setText(actDisplay);
+            tvAct.setTextSize(15);
+            tvAct.setTextColor(0xFF8E8E93);
+            tvAct.setGravity(Gravity.CENTER);
+            tvAct.setPadding(dpPx(20), dpPx(14), dpPx(20), dpPx(14));
+            group1.addView(tvAct, matchW());
+        }
+
+        // Comment
+        if (review.getComment() != null && !review.getComment().isEmpty()) {
+            addIosSep(group1);
+            TextView tvComment = new TextView(this);
+            tvComment.setText(review.getComment());
+            tvComment.setTextSize(17);
+            tvComment.setTextColor(0xFF1C1C1E);
+            tvComment.setPadding(dpPx(20), dpPx(15), dpPx(20), dpPx(15));
+            group1.addView(tvComment, matchW());
+        }
+
+        // Ngày tạo / chỉnh sửa
+        String dateText = review.getCreatedAt() != null ? review.getCreatedAt() : "";
+        if (review.isEdited() && review.getUpdatedAt() != null) {
+            dateText += " · Đã chỉnh sửa " + review.getUpdatedAt();
+        }
+        if (!dateText.isEmpty()) {
+            addIosSep(group1);
+            TextView tvDate = new TextView(this);
+            tvDate.setText(dateText);
+            tvDate.setTextSize(13);
+            tvDate.setTextColor(0xFF8E8E93);
+            tvDate.setGravity(Gravity.CENTER);
+            tvDate.setPadding(dpPx(20), dpPx(10), dpPx(20), dpPx(10));
+            group1.addView(tvDate, matchW());
+        }
+
+        root.addView(group1, matchW());
+        addGroupGap(root);
+
+        // Nếu là người viết — hiện Chỉnh sửa và Xóa
+        if (isOwner) {
+            LinearLayout groupEdit = buildIosGroup();
+            addIosRow(groupEdit, "Chỉnh sửa đánh giá", 0xFF007AFF, v -> {
+                sheet.dismiss();
+                Map<String, Object> reviewMap = new HashMap<>();
+                reviewMap.put("id", review.getId());
+                reviewMap.put("rating", review.getRating());
+                reviewMap.put("comment", review.getComment());
+                reviewMap.put("activityDateDisplay", review.getActivityDateDisplay());
+                showEditReviewDialog(reviewMap);
+            });
+            root.addView(groupEdit, matchW());
+            addGroupGap(root);
+
+            LinearLayout groupDelete = buildIosGroup();
+            addIosRow(groupDelete, "Xóa đánh giá", 0xFFFF3B30, v -> {
+                sheet.dismiss();
+                new AlertDialog.Builder(this)
+                        .setTitle("Xóa đánh giá")
+                        .setMessage("Bạn có chắc muốn xóa đánh giá này?")
+                        .setPositiveButton("Xóa", (d, w) -> deleteReview(review.getId()))
+                        .setNegativeButton("Huỷ", null)
+                        .show();
+            });
+            root.addView(groupDelete, matchW());
+            addGroupGap(root);
+        }
+
+        // Đóng
+        LinearLayout groupClose = buildIosGroup();
+        addIosRow(groupClose, "Đóng", 0xFF1C1C1E, v -> sheet.dismiss());
+        root.addView(groupClose, matchW());
+
+        sheet.setContentView(root);
+        sheet.show();
+    }
+
+    private void submitNewReview(int stars, String comment, long postId) {
         long reviewedUserId = getIntent().getLongExtra("user_id", -1);
         if (reviewedUserId <= 0) {
             Toast.makeText(this, "Không thể gửi đánh giá", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // Map stars to reputation label
         String[] labels = {"Cần cải thiện", "Trung bình", "Tích cực", "Đáng tin cậy", "Xuất sắc"};
         String reputationLabel = labels[Math.min(stars - 1, labels.length - 1)];
 
         Map<String, Object> body = new HashMap<>();
         body.put("reviewedUserId", reviewedUserId);
-        body.put("activityName", activityName);
+        body.put("postId", postId);
+        body.put("rating", stars);
         body.put("reputationLabel", reputationLabel);
-        body.put("comment", comment.isEmpty() ? "Đánh giá " + stars + " sao" : comment);
+        body.put("comment", comment.isEmpty() ? "" : comment);
 
-        reviewApiService.createReview(body).enqueue(new Callback<ApiResponse<Void>>() {
+        reviewApiService.createReview(body).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
             @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
-                if (response.isSuccessful()) {
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                   Response<ApiResponse<Map<String, Object>>> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     Toast.makeText(UserProfileActivity.this,
                             "Đã gửi đánh giá " + stars + " sao cho " + username,
                             Toast.LENGTH_SHORT).show();
-                    // Refresh reviews
                     loadReviewsFromBackend();
+                    checkAndSetupRateButton(reviewedUserId);
                 } else {
                     String errorMsg = "Không thể gửi đánh giá";
                     try {
                         if (response.errorBody() != null) {
                             String errorJson = response.errorBody().string();
                             org.json.JSONObject json = new org.json.JSONObject(errorJson);
-                            if (json.has("message")) {
-                                errorMsg = json.getString("message");
-                            }
+                            if (json.has("message")) errorMsg = json.getString("message");
                         }
                     } catch (Exception ignored) {}
                     Toast.makeText(UserProfileActivity.this, errorMsg, Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
+                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void updateExistingReview(long reviewId, int stars, String comment) {
+        String[] labels = {"Cần cải thiện", "Trung bình", "Tích cực", "Đáng tin cậy", "Xuất sắc"};
+        String reputationLabel = labels[Math.min(stars - 1, labels.length - 1)];
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("rating", stars);
+        body.put("reputationLabel", reputationLabel);
+        body.put("comment", comment);
+
+        reviewApiService.updateReview(reviewId, body).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                   Response<ApiResponse<Map<String, Object>>> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
+                    Toast.makeText(UserProfileActivity.this, "Đã cập nhật đánh giá", Toast.LENGTH_SHORT).show();
+                    loadReviewsFromBackend();
+                    long targetId = getIntent().getLongExtra("user_id", -1);
+                    if (targetId > 0) checkAndSetupRateButton(targetId);
+                } else {
+                    Toast.makeText(UserProfileActivity.this, "Không thể cập nhật đánh giá", Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
+                Toast.makeText(UserProfileActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void deleteReview(long reviewId) {
+        reviewApiService.deleteReview(reviewId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                if (response.isSuccessful()) {
+                    Toast.makeText(UserProfileActivity.this, "Đã xóa đánh giá", Toast.LENGTH_SHORT).show();
+                    loadReviewsFromBackend();
+                    long targetId = getIntent().getLongExtra("user_id", -1);
+                    if (targetId > 0) checkAndSetupRateButton(targetId);
+                } else {
+                    Toast.makeText(UserProfileActivity.this, "Không thể xóa đánh giá", Toast.LENGTH_SHORT).show();
                 }
             }
 
@@ -1909,10 +2706,11 @@ public class UserProfileActivity extends AppCompatActivity {
             targetUserId = prefs.getLong("user_id", -1);
         }
         if (targetUserId <= 0) {
-            // Fallback: show empty
-            rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
+            rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>(), 0, null));
             return;
         }
+
+        long currentUserId = RetrofitClient.getUserId(this);
 
         reviewApiService.getReviews(targetUserId).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
             @Override
@@ -1923,21 +2721,34 @@ public class UserProfileActivity extends AppCompatActivity {
                     List<Map<String, Object>> reviewMaps = response.body().getResult();
                     List<UserReview> reviews = new ArrayList<>();
                     for (Map<String, Object> map : reviewMaps) {
-                        String reviewerName = map.get("reviewerName") != null ? map.get("reviewerName").toString() : "Ẩn danh";
-                        String activityName = map.get("activityName") != null ? map.get("activityName").toString() : "";
-                        String reputationLabel = map.get("reputationLabel") != null ? map.get("reputationLabel").toString() : "";
-                        String reviewComment = map.get("comment") != null ? map.get("comment").toString() : "";
-                        reviews.add(new UserReview(reviewerName, activityName, reputationLabel, reviewComment));
+                        UserReview r = new UserReview();
+                        if (map.get("id") != null) r.setId(((Number) map.get("id")).longValue());
+                        if (map.get("reviewerId") != null) r.setReviewerId(((Number) map.get("reviewerId")).longValue());
+                        if (map.get("reviewedUserId") != null) r.setReviewedUserId(((Number) map.get("reviewedUserId")).longValue());
+                        if (map.get("postId") != null) r.setPostId(((Number) map.get("postId")).longValue());
+                        if (map.get("rating") != null) r.setRating(((Number) map.get("rating")).intValue());
+                        r.setReviewerName(map.get("reviewerName") != null ? map.get("reviewerName").toString() : "Ẩn danh");
+                        r.setReviewerAvatarUrl(map.get("reviewerAvatarUrl") != null ? map.get("reviewerAvatarUrl").toString() : null);
+                        r.setReputationLabel(map.get("reputationLabel") != null ? map.get("reputationLabel").toString() : "");
+                        r.setComment(map.get("comment") != null ? map.get("comment").toString() : "");
+                        r.setActivityName(map.get("activityName") != null ? map.get("activityName").toString() : "");
+                        r.setInterestTag(map.get("interestTag") != null ? map.get("interestTag").toString() : "");
+                        r.setActivityDateDisplay(map.get("activityDateDisplay") != null ? map.get("activityDateDisplay").toString() : "");
+                        r.setCreatedAt(map.get("createdAt") != null ? map.get("createdAt").toString() : "");
+                        r.setUpdatedAt(map.get("updatedAt") != null ? map.get("updatedAt").toString() : null);
+                        r.setEdited(Boolean.TRUE.equals(map.get("isEdited")));
+                        reviews.add(r);
                     }
-                    rvUserReviews.setAdapter(new UserReviewAdapter(reviews));
+                    rvUserReviews.setAdapter(new UserReviewAdapter(reviews, currentUserId,
+                            review -> showReviewDetailSheet(review)));
                 } else {
-                    rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
+                    rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>(), 0, null));
                 }
             }
 
             @Override
             public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>()));
+                rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>(), 0, null));
             }
         });
     }
@@ -2484,8 +3295,13 @@ public class UserProfileActivity extends AppCompatActivity {
 
         long endTimeMillis = data.getLongExtra("post_end_time", System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
         java.text.SimpleDateFormat isoFormat = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
-        body.put("startTime", isoFormat.format(new java.util.Date()));
+        String activityStartIso = data.getStringExtra("post_activity_start_iso");
+        String activityEndIso = data.getStringExtra("post_activity_end_iso");
+        body.put("startTime", activityStartIso != null ? activityStartIso : isoFormat.format(new java.util.Date()));
         body.put("endTime", isoFormat.format(new java.util.Date(endTimeMillis)));
+        if (activityEndIso != null) {
+            body.put("activityEndTime", activityEndIso);
+        }
 
         RetrofitClient.loadToken(this);
         com.example.weconnect.api.PostApiService postApi =
@@ -2496,6 +3312,8 @@ public class UserProfileActivity extends AppCompatActivity {
                                    Response<ApiResponse<com.example.weconnect.models.PostResponse>> response) {
                 if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     Toast.makeText(UserProfileActivity.this, "Đã cập nhật bài viết!", Toast.LENGTH_SHORT).show();
+                    cachedMyPosts = null;
+                    myPostsAdapter = null;
                     bindActivePosts();
                 } else {
                     Toast.makeText(UserProfileActivity.this, "Không thể cập nhật bài viết", Toast.LENGTH_SHORT).show();

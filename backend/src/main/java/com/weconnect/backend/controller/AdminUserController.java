@@ -1,8 +1,14 @@
 package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.request.ApiResponse;
+import com.weconnect.backend.entity.PostMember;
+import com.weconnect.backend.entity.Report;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.repository.PostMemberRepository;
+import com.weconnect.backend.repository.PostRepository;
+import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
+import com.weconnect.backend.repository.UserReviewRepository;
 import com.weconnect.backend.service.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,10 +22,20 @@ public class AdminUserController {
 
     private final UserRepository userRepository;
     private final UserService userService;
+    private final PostRepository postRepository;
+    private final PostMemberRepository postMemberRepository;
+    private final UserReviewRepository userReviewRepository;
+    private final ReportRepository reportRepository;
 
-    public AdminUserController(UserRepository userRepository, UserService userService) {
+    public AdminUserController(UserRepository userRepository, UserService userService,
+                               PostRepository postRepository, PostMemberRepository postMemberRepository,
+                               UserReviewRepository userReviewRepository, ReportRepository reportRepository) {
         this.userRepository = userRepository;
         this.userService = userService;
+        this.postRepository = postRepository;
+        this.postMemberRepository = postMemberRepository;
+        this.userReviewRepository = userReviewRepository;
+        this.reportRepository = reportRepository;
     }
 
     // Lấy tất cả users (cho admin web)
@@ -78,6 +94,32 @@ public class AdminUserController {
                 .result(toAdminMap(user)).build());
     }
 
+    // Trừ điểm uy tín thủ công (admin)
+    // reason: NON_ATTENDANCE (-10), LATE_CANCEL (-5)
+    @PostMapping("/{id}/reputation/deduct")
+    public ResponseEntity<?> deductReputation(@PathVariable Long id,
+                                               @RequestBody Map<String, String> body) {
+        Optional<User> userOpt = userRepository.findById(id);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(404).body(ApiResponse.builder()
+                    .code(1003).message("Không tìm thấy user").build());
+        }
+        String reason = body.getOrDefault("reason", "").toUpperCase();
+        double deduction = switch (reason) {
+            case "NON_ATTENDANCE" -> 10.0;
+            case "LATE_CANCEL" -> 5.0;
+            default -> throw new RuntimeException("Lý do không hợp lệ: " + reason + ". Dùng NON_ATTENDANCE hoặc LATE_CANCEL.");
+        };
+        User user = userOpt.get();
+        double newScore = Math.max(0, Math.min(100, user.getReputationScore() - deduction));
+        user.setReputationScore(newScore);
+        userRepository.save(user);
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000)
+                .message("Đã trừ " + (int) deduction + " điểm uy tín (" + reason + ")")
+                .result(toAdminMap(user)).build());
+    }
+
     // Xóa user
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteUser(@PathVariable Long id) {
@@ -89,6 +131,32 @@ public class AdminUserController {
             return ResponseEntity.badRequest().body(ApiResponse.builder()
                     .code(1005).message(e.getMessage()).build());
         }
+    }
+
+    // Lấy thống kê hoạt động của user
+    @GetMapping("/{id}/stats")
+    public ResponseEntity<?> getUserStats(@PathVariable Long id) {
+        if (!userRepository.existsById(id)) {
+            return ResponseEntity.status(404).body(ApiResponse.builder()
+                    .code(1003).message("Không tìm thấy user").build());
+        }
+
+        long totalPostsCreated = postRepository.findByAuthorId(id).size();
+        long totalActivitiesJoined = postMemberRepository.findByUserIdAndStatus(id, PostMember.Status.APPROVED).size();
+        long totalReviewsReceived = userReviewRepository.countByReviewedUserId(id);
+        long totalReportsReceived = reportRepository.countByTargetTypeAndTargetId(Report.TargetType.USER, id);
+        long confirmedViolations = reportRepository.countByTargetTypeAndTargetIdAndStatus(
+                Report.TargetType.USER, id, Report.Status.RESOLVED);
+
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("totalPostsCreated", totalPostsCreated);
+        stats.put("totalActivitiesJoined", totalActivitiesJoined);
+        stats.put("totalReviewsReceived", totalReviewsReceived);
+        stats.put("totalReportsReceived", totalReportsReceived);
+        stats.put("confirmedViolations", confirmedViolations);
+
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công").result(stats).build());
     }
 
     // Helper: convert User entity to admin-friendly Map

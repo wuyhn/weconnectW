@@ -29,4 +29,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     // Bài đăng hết hạn chưa gửi thông báo (cho scheduler)
     List<Post> findByArchivedFalseAndExpirationNotifiedFalseAndEndTimeBefore(LocalDateTime now);
+
+    long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
 }

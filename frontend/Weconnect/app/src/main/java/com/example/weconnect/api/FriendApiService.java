@@ -38,6 +38,10 @@ public interface FriendApiService {
     @GET("api/friends/status/{userId}")
     Call<ApiResponse<String>> getFriendStatus(@Path("userId") long userId);
 
+    // Trạng thái block 2 chiều với user khác
+    @GET("api/friends/block-status/{userId}")
+    Call<ApiResponse<Map<String, Object>>> getBlockStatus(@Path("userId") long userId);
+
     // Số bạn bè
     @GET("api/friends/count")
     Call<ApiResponse<Integer>> getFriendCount();

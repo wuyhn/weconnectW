@@ -26,4 +26,7 @@ public interface PostMemberRepository extends JpaRepository<PostMember, Long> {
 
     // Xóa tất cả members của một post
     void deleteByPostId(Long postId);
+
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByPostIdAndUserId(Long postId, Long userId);
 }

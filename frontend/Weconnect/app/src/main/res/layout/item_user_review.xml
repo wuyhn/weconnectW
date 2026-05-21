@@ -16,43 +16,57 @@
         android:orientation="vertical"
         android:padding="14dp">
 
+        <!-- Header: avatar bên trái, cột (name + sao) bên phải -->
         <LinearLayout
+            android:id="@+id/llReviewerHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <TextView
-                android:id="@+id/tvReviewerName"
+            <ImageView
+                android:id="@+id/ivReviewerAvatar"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_user_placeholder" />
+
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:text="Minh Hoàng" />
+                android:layout_marginStart="10dp"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/tvReviewerRating"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_selected_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                android:textColor="@android:color/white"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:text="Tích cực" />
+                <TextView
+                    android:id="@+id/tvReviewerName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:text="Minh Hoàng" />
+
+                <TextView
+                    android:id="@+id/tvReviewerRating"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textSize="14sp"
+                    android:text="★★★★☆" />
+
+            </LinearLayout>
+
         </LinearLayout>
 
         <TextView
             android:id="@+id/tvReviewActivity"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="6dp"
             android:textColor="@color/primary_pink"
             android:textSize="12sp"
-            android:text="📌 Coffee Meetup" />
+            android:text="Coffee Meetup" />
 
         <TextView
             android:id="@+id/tvReviewerComment"

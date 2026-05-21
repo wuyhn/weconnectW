@@ -13,5 +13,7 @@ public class PostRequest {
     private int maxMembers;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private LocalDateTime activityEndTime;
     private Integer expirationHours;
+    private String activityTimeType;
 }

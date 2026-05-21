@@ -145,32 +145,51 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:visibility="gone"
             tools:visibility="visible">
 
-            <TextView
-                android:id="@+id/post_item_date_range"
-                android:layout_width="0dp"
+            <!-- Row 1: date range + countdown badge -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textColor="@color/text_secondary"
-                android:textSize="13sp"
-                tools:text="📅 25/03 - 28/03" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
+                <TextView
+                    android:id="@+id/post_item_date_range"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    tools:text="📅 Ngày: 14/05/2026 - 15/05/2026" />
+
+                <TextView
+                    android:id="@+id/post_item_countdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_selected_tag"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:textColor="@android:color/white"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:text="⏰ Còn 2 giờ"
+                    tools:visibility="visible" />
+            </LinearLayout>
+
+            <!-- Row 2: daily time slot or continuous end time -->
             <TextView
-                android:id="@+id/post_item_countdown"
+                android:id="@+id/post_item_time_slot"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_selected_tag"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                android:textColor="@android:color/white"
-                android:textSize="11sp"
-                android:textStyle="bold"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
                 android:visibility="gone"
-                tools:text="⏰ Còn 2 giờ"
+                tools:text="⏰ Mỗi ngày: 14:00 - 15:00"
                 tools:visibility="visible" />
         </LinearLayout>
 
@@ -184,7 +203,7 @@
             android:textSize="13sp"
             android:textStyle="italic"
             android:visibility="gone"
-            tools:text="⏳ Thời hạn: 48 giờ"
+            tools:text="⏳ Thời hạn bài viết: 48 giờ"
             tools:visibility="visible" />
 
         <!-- Stats Row Removed -->

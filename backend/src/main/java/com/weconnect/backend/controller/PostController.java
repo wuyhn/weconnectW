@@ -75,6 +75,20 @@ public class PostController {
         }
     }
 
+    // Hủy hoạt động (chủ bài đăng hủy toàn bộ hoạt động + group chat)
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<?> cancelActivity(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            postService.cancelActivity(id, user.getId());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã hủy hoạt động.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1005).message(e.getMessage()).build());
+        }
+    }
+
     // Xóa bài đăng
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deletePost(@PathVariable Long id, Authentication authentication) {

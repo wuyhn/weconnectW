@@ -226,7 +226,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         addIosSep(group1);
         addIosRow(group1, "Chỉnh sửa bài viết", 0xFF1C1C1E, v -> { sheet.dismiss(); showEditPostDialog(post, position); });
         addIosSep(group1);
-        addIosRow(group1, "Xoá bài viết", 0xFFFF3B30, v -> { sheet.dismiss(); showDeleteConfirmation(post, position); });
+        addIosRow(group1, "Hủy hoạt động", 0xFFFF3B30, v -> { sheet.dismiss(); showCancelActivityConfirmation(post, position); });
         root.addView(group1, matchW());
         addGroupGap(root);
         LinearLayout group2 = buildIosGroup();
@@ -246,6 +246,14 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         intent.putExtra("edit_location", post.getLocation());
         intent.putExtra("edit_max_members", post.getMaxMembers());
         intent.putExtra("edit_end_time", post.getEndTimeMillis());
+        if (post.getActivityEndTimeStr() != null && !post.getActivityEndTimeStr().isEmpty()) {
+            java.text.SimpleDateFormat isoFmt = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+            intent.putExtra("edit_activity_start_iso", isoFmt.format(new java.util.Date(post.getStartTimeMillis())));
+            intent.putExtra("edit_activity_end_iso", post.getActivityEndTimeStr());
+        }
+        if (post.getActivityTimeType() != null) {
+            intent.putExtra("edit_activity_time_type", post.getActivityTimeType());
+        }
         if (post.getPostImageUri() != null) {
             intent.putExtra("edit_image_uri", post.getPostImageUri());
         }
@@ -254,19 +262,52 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         }
     }
 
-    private void showDeleteConfirmation(Post post, int position) {
+    private void showCancelActivityConfirmation(Post post, int position) {
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                .setTitle("Xoá bài viết")
-                .setMessage("Bạn có chắc chắn muốn xoá bài viết này không?")
-                .setPositiveButton("Xác nhận xoá", (dialog, which) -> {
-                    FakePostRepository.getInstance().removePost(post.getId());
+                .setTitle("Hủy hoạt động?")
+                .setMessage("Khi hủy hoạt động, bài viết và nhóm chat của hoạt động này sẽ không còn khả dụng với tất cả thành viên.")
+                .setPositiveButton("Xác nhận hủy", (dialog, which) -> doCancelActivity(post, position))
+                .setNegativeButton("Hủy", null)
+                .show();
+    }
+
+    private void doCancelActivity(Post post, int position) {
+        long postId;
+        try {
+            postId = Long.parseLong(post.getId());
+        } catch (Exception e) {
+            Toast.makeText(context, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        com.example.weconnect.api.RetrofitClient.loadToken(context);
+        com.example.weconnect.api.PostApiService postApi =
+                com.example.weconnect.api.RetrofitClient.getClient()
+                        .create(com.example.weconnect.api.PostApiService.class);
+        postApi.cancelActivity(postId).enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<Void>>() {
+            @Override
+            public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call,
+                                   retrofit2.Response<com.example.weconnect.models.ApiResponse<Void>> response) {
+                if (response.isSuccessful()) {
                     postList.remove(position);
                     notifyItemRemoved(position);
                     notifyItemRangeChanged(position, postList.size());
-                    Toast.makeText(context, "Đã xoá bài viết", Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("Huỷ", null)
-                .show();
+                    Toast.makeText(context, "Đã hủy hoạt động", Toast.LENGTH_SHORT).show();
+                } else {
+                    String errMsg = "Không thể hủy hoạt động";
+                    try {
+                        if (response.errorBody() != null) {
+                            org.json.JSONObject json = new org.json.JSONObject(response.errorBody().string());
+                            if (json.has("message")) errMsg = json.getString("message");
+                        }
+                    } catch (Exception ignored) {}
+                    Toast.makeText(context, errMsg, Toast.LENGTH_LONG).show();
+                }
+            }
+            @Override
+            public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call, Throwable t) {
+                Toast.makeText(context, "Lỗi kết nối. Thử lại!", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void showOtherPostMenu(Post post, int position) {
@@ -424,14 +465,54 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private void bindTimeRange(PostViewHolder holder, Post post) {
         long start = post.getStartTimeMillis();
         long end = post.getEndTimeMillis();
+        String activityEndStr = post.getActivityEndTimeStr();
+        String activityTimeType = post.getActivityTimeType();
 
-        if (start > 0 && end > 0) {
-            holder.layoutTimeRange.setVisibility(View.VISIBLE);
+        if (start <= 0) {
+            holder.layoutTimeRange.setVisibility(View.GONE);
+            return;
+        }
 
-            String startDate = DATE_FORMAT.format(new Date(start));
-            String endDate = DATE_FORMAT.format(new Date(end));
-            holder.tvDateRange.setText("📅 " + startDate + " - " + endDate);
+        holder.layoutTimeRange.setVisibility(View.VISIBLE);
 
+        SimpleDateFormat dateFmt = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+        SimpleDateFormat timeFmt = new SimpleDateFormat("HH:mm", Locale.getDefault());
+        SimpleDateFormat isoFmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
+        Date startDate = new Date(start);
+
+        if (activityEndStr != null && !activityEndStr.isEmpty()) {
+            try {
+                Date actEndDate = isoFmt.parse(activityEndStr);
+                if ("CONTINUOUS_RANGE".equals(activityTimeType)) {
+                    holder.tvDateRange.setText("🟢 Bắt đầu: " + dateFmt.format(startDate) + ", " + timeFmt.format(startDate));
+                    holder.tvTimeSlot.setText("🔴 Kết thúc: " + dateFmt.format(actEndDate) + ", " + timeFmt.format(actEndDate));
+                    holder.tvTimeSlot.setVisibility(View.VISIBLE);
+                } else {
+                    // DAILY_TIME_SLOT (default)
+                    String startDateStr = dateFmt.format(startDate);
+                    String endDateStr = dateFmt.format(actEndDate);
+                    if (startDateStr.equals(endDateStr)) {
+                        holder.tvDateRange.setText("📅 Ngày: " + startDateStr);
+                    } else {
+                        holder.tvDateRange.setText("📅 Ngày: " + startDateStr + " - " + endDateStr);
+                    }
+                    holder.tvTimeSlot.setText("⏰ Mỗi ngày: " + timeFmt.format(startDate) + " - " + timeFmt.format(actEndDate));
+                    holder.tvTimeSlot.setVisibility(View.VISIBLE);
+                }
+            } catch (Exception e) {
+                holder.tvDateRange.setText("📅 " + DATE_FORMAT.format(startDate));
+                holder.tvTimeSlot.setVisibility(View.GONE);
+            }
+        } else if (end > 0) {
+            holder.tvDateRange.setText("📅 " + DATE_FORMAT.format(startDate) + " - " + DATE_FORMAT.format(new Date(end)));
+            holder.tvTimeSlot.setVisibility(View.GONE);
+        } else {
+            holder.layoutTimeRange.setVisibility(View.GONE);
+            return;
+        }
+
+        // Countdown badge based on post expiry
+        if (end > 0) {
             long remaining = end - System.currentTimeMillis();
             if (remaining > 0 && remaining <= 24L * 60L * 60L * 1000L) {
                 holder.tvCountdown.setVisibility(View.VISIBLE);
@@ -443,7 +524,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 holder.tvCountdown.setVisibility(View.GONE);
             }
         } else {
-            holder.layoutTimeRange.setVisibility(View.GONE);
+            holder.tvCountdown.setVisibility(View.GONE);
         }
     }
 
@@ -555,6 +636,11 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 holder.btnJoinGroup.setEnabled(false);
                 holder.btnJoinGroup.setAlpha(0.6f);
                 holder.btnJoinGroup.setOnClickListener(null);
+            } else if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
+                holder.btnJoinGroup.setText("Đã đủ thành viên");
+                holder.btnJoinGroup.setEnabled(false);
+                holder.btnJoinGroup.setAlpha(0.6f);
+                holder.btnJoinGroup.setOnClickListener(null);
             } else {
                 // Not joined: show active "Tham gia" button
                 holder.btnJoinGroup.setText("Tham gia");
@@ -581,7 +667,22 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                                     holder.btnJoinGroup.setAlpha(0.6f);
                                     Toast.makeText(context, "Đã gửi yêu cầu tham gia!", Toast.LENGTH_SHORT).show();
                                 } else {
-                                    Toast.makeText(context, "Lỗi khi gửi yêu cầu. Thử lại!", Toast.LENGTH_SHORT).show();
+                                    String errorMsg = "Lỗi khi gửi yêu cầu. Thử lại!";
+                                    try {
+                                        if (response.errorBody() != null) {
+                                            String body = response.errorBody().string();
+                                            org.json.JSONObject json = new org.json.JSONObject(body);
+                                            if (json.has("message")) errorMsg = json.getString("message");
+                                        }
+                                    } catch (Exception ignored) {}
+                                    if (errorMsg.contains("đủ thành viên")) {
+                                        post.setMemberCount(post.getMaxMembers());
+                                        holder.btnJoinGroup.setText("Đã đủ thành viên");
+                                        holder.btnJoinGroup.setEnabled(false);
+                                        holder.btnJoinGroup.setAlpha(0.6f);
+                                        holder.btnJoinGroup.setOnClickListener(null);
+                                    }
+                                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show();
                                 }
                             }
 
@@ -746,7 +847,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         TextView btnJoinGroup, btnViewMembers;
         TextView tvTag, tvLocation;
         LinearLayout layoutTimeRange, layoutActiveButtons;
-        TextView tvDateRange, tvCountdown, tvExpiredLabel, tvExpirationHours;
+        TextView tvDateRange, tvTimeSlot, tvCountdown, tvExpiredLabel, tvExpirationHours;
 
         public PostViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -762,6 +863,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
             tvLocation = itemView.findViewById(R.id.post_item_location);
             layoutTimeRange = itemView.findViewById(R.id.layoutTimeRange);
             tvDateRange = itemView.findViewById(R.id.post_item_date_range);
+            tvTimeSlot = itemView.findViewById(R.id.post_item_time_slot);
             tvCountdown = itemView.findViewById(R.id.post_item_countdown);
             layoutActiveButtons = itemView.findViewById(R.id.layoutActiveButtons);
             tvExpiredLabel = itemView.findViewById(R.id.tvExpiredLabel);

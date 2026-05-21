@@ -37,6 +37,10 @@ public interface PostApiService {
     @DELETE("api/posts/{id}")
     Call<ApiResponse<Void>> deletePost(@Path("id") long id);
 
+    // Hủy hoạt động (chủ bài đăng)
+    @POST("api/posts/{id}/cancel")
+    Call<ApiResponse<Void>> cancelActivity(@Path("id") long id);
+
     // Xin tham gia
     @POST("api/posts/{id}/join")
     Call<ApiResponse<Void>> joinPost(@Path("id") long id);

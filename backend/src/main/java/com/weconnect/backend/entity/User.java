@@ -41,8 +41,9 @@ public class User {
     @Column(columnDefinition = "FLOAT DEFAULT 0")
     private float averageRating;
 
-    @Column(columnDefinition = "INT DEFAULT 0")
-    private int reputationScore;
+    @Builder.Default
+    @Column(columnDefinition = "DOUBLE DEFAULT 100")
+    private double reputationScore = 100;
 
     @Column(name = "is_blocked")
     private boolean isBlocked = false;
@@ -56,6 +57,12 @@ public class User {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    @Column(name = "last_active_at")
+    private LocalDateTime lastActiveAt;
+
+    @Column(name = "activity_status_enabled", columnDefinition = "BOOLEAN DEFAULT TRUE")
+    private Boolean activityStatusEnabled = true;
 
     @PrePersist
     protected void onCreate() {

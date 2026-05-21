@@ -95,6 +95,20 @@ public class FriendController {
                 .code(1000).message("Thành công").result(status).build());
     }
 
+    // Trạng thái block 2 chiều dùng cho quyền nhắn tin direct
+    @GetMapping("/block-status/{userId}")
+    public ResponseEntity<?> getBlockStatus(@PathVariable Long userId, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Thành công")
+                    .result(friendService.getBlockStatus(user.getId(), userId)).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.builder().code(1012).message(e.getMessage()).build());
+        }
+    }
+
     // Số bạn bè
     @GetMapping("/count")
     public ResponseEntity<?> getFriendCount(Authentication authentication) {

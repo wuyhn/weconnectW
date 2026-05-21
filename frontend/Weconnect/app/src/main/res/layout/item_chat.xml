@@ -17,8 +17,9 @@
         android:paddingHorizontal="16dp"
         android:paddingVertical="14dp">
 
-        <!-- Avatar with online indicator -->
+        <!-- Avatar (ẩn cho group rooms) -->
         <FrameLayout
+            android:id="@+id/frameAvatar"
             android:layout_width="52dp"
             android:layout_height="52dp">
 
@@ -47,12 +48,14 @@
 
         <!-- Chat info -->
         <LinearLayout
+            android:id="@+id/layoutChatContent"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="14dp"
             android:layout_weight="1"
             android:orientation="vertical">
 
+            <!-- Row 1: Tên + Thời gian + Badge + Unread dot (dùng cho mọi loại) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -79,9 +82,44 @@
                     android:text="09:20"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/tvUnreadBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="20dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_chat_accent_dot"
+                    android:gravity="center"
+                    android:minWidth="20dp"
+                    android:paddingHorizontal="6dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <!-- Unread dot (dùng cho mọi loại phòng, ở góc trên phải) -->
+                <View
+                    android:id="@+id/viewAccentDot"
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_chat_accent_dot"
+                    android:visibility="gone" />
             </LinearLayout>
 
+            <!-- Trạng thái hoạt động (chỉ dùng cho direct room) -->
+            <TextView
+                android:id="@+id/tvActivityStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp"
+                android:textColor="#4CAF50"
+                android:visibility="gone" />
+
+            <!-- Dòng tin nhắn cuối (chỉ dùng cho direct room) -->
             <LinearLayout
+                android:id="@+id/layoutLastMessage"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
@@ -90,23 +128,36 @@
 
                 <TextView
                     android:id="@+id/tvLastMessage"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:ellipsize="end"
                     android:maxLines="1"
                     android:text="Tin nhắn mới nhất..."
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
-
-                <View
-                    android:id="@+id/viewAccentDot"
-                    android:layout_width="10dp"
-                    android:layout_height="10dp"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_chat_accent_dot"
-                    android:visibility="gone" />
             </LinearLayout>
+
+            <!-- Chủ phòng (chỉ dùng cho group room) -->
+            <TextView
+                android:id="@+id/tvGroupOwner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <!-- Ngày diễn ra hoạt động (chỉ dùng cho group room) -->
+            <TextView
+                android:id="@+id/tvGroupDate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 

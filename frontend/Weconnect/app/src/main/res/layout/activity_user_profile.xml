@@ -75,6 +75,7 @@
             app:layout_constraintTop_toBottomOf="@id/headerUserProfile" />
 
         <androidx.core.widget.NestedScrollView
+            android:id="@+id/nestedScrollProfile"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:fillViewport="true"
@@ -275,9 +276,9 @@
                             android:layout_width="match_parent"
                             android:layout_height="48dp"
                             android:layout_marginTop="12dp"
-                            android:text="Kho luu tru"
+                            android:text="Kho lưu trữ"
                             android:textAllCaps="false"
-                            android:textColor="@color/primary_pink"
+                            android:textColor="@color/text_primary"
                             app:backgroundTint="@color/card_surface"
                             app:cornerRadius="24dp"
                             app:strokeColor="@color/primary_pink"

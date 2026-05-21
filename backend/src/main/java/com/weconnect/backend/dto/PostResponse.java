@@ -27,9 +27,12 @@ public class PostResponse {
     private boolean joined;
     private boolean pendingApproval;
     private boolean archived;
+    private boolean cancelled;
     private boolean expired;
     private Integer expirationHours;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private LocalDateTime activityEndTime;
     private LocalDateTime createdAt;
+    private String activityTimeType;
 }

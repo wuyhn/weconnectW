@@ -32,6 +32,19 @@ public class FileUploadController {
                     .code(1002).message("Chỉ chấp nhận file ảnh").build());
         }
 
+        // Validate allowed image formats
+        if (!contentType.equals("image/jpeg") && !contentType.equals("image/png")
+                && !contentType.equals("image/webp")) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1002).message("Chỉ chấp nhận ảnh jpg, png, webp").build());
+        }
+
+        // Validate file size (5MB max)
+        if (file.getSize() > 5 * 1024 * 1024) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1002).message("Ảnh không được vượt quá 5MB").build());
+        }
+
         try {
             // Create uploads directory if not exists
             Path uploadPath = Paths.get(UPLOAD_DIR);

@@ -30,9 +30,11 @@ public class WebSocketManager {
     private Disposable chatListSubscription;
     private Disposable feedSubscription;
     private Disposable avatarUpdateSubscription;
+    private Disposable roomEventsSubscription;
     private Consumer<String> chatListCallback;
     private Consumer<String> feedCallback;
     private Consumer<String> avatarUpdateCallback;
+    private Consumer<String> roomEventsCallback;
     private boolean connected = false;
 
     private WebSocketManager() {}
@@ -196,6 +198,38 @@ public class WebSocketManager {
     }
 
     /**
+     * Subscribe nhận sự kiện phòng chat (ví dụ: KICKED) gửi riêng cho user hiện tại.
+     * Dùng ở ConversationActivity để phát hiện bị kick realtime.
+     */
+    public void subscribeToRoomEvents(Consumer<String> onEvent) {
+        if (stompClient == null) return;
+        roomEventsCallback = onEvent;
+
+        if (roomEventsSubscription != null && !roomEventsSubscription.isDisposed()) {
+            roomEventsSubscription.dispose();
+        }
+
+        roomEventsSubscription = stompClient.topic("/user/queue/room-events")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (roomEventsCallback != null) {
+                        roomEventsCallback.accept(frame.getPayload());
+                    }
+                }, error -> Log.e(TAG, "RoomEvents subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(roomEventsSubscription);
+    }
+
+    public void unsubscribeFromRoomEvents() {
+        roomEventsCallback = null;
+        if (roomEventsSubscription != null && !roomEventsSubscription.isDisposed()) {
+            roomEventsSubscription.dispose();
+            roomEventsSubscription = null;
+        }
+    }
+
+    /**
      * Subscribe nhận bài đăng mới từ bất kỳ user nào (realtime feed).
      */
     public void subscribeToFeed(Consumer<String> onNewPost) {
@@ -265,6 +299,7 @@ public class WebSocketManager {
         chatListCallback = null;
         feedCallback = null;
         avatarUpdateCallback = null;
+        roomEventsCallback = null;
         roomSubscriptions.clear();
         if (compositeDisposable != null && !compositeDisposable.isDisposed()) {
             compositeDisposable.dispose();

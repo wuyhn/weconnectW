@@ -26,6 +26,7 @@ public class Notification {
         ADMIN_WARNING,
         ADMIN_ACTION,
         POST_EXPIRED,
+        ACTIVITY_CANCELLED,
         GENERAL
     }
 
@@ -56,6 +57,9 @@ public class Notification {
 
     @Column(name = "is_actioned", columnDefinition = "BOOLEAN DEFAULT false")
     private boolean isActioned;
+
+    @Column(name = "action_result", length = 20)
+    private String actionResult;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

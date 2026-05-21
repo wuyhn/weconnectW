@@ -67,11 +67,7 @@ public class OnboardingActivity extends AppCompatActivity {
 
         tvSelectedCount = findViewById(R.id.tvSelectedCount);
         fabNext = findViewById(R.id.fabNext);
-        TextView tvSkip = findViewById(R.id.tvSkip);
-
         setupChipGroups();
-
-        tvSkip.setOnClickListener(v -> goToMain());
 
         fabNext.setOnClickListener(v -> {
             if (selectedInterests.isEmpty()) {

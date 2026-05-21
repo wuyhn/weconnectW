@@ -61,6 +61,15 @@
                 android:lineSpacingExtra="2dp" />
 
             <TextView
+                android:id="@+id/tvNotifSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/tvNotifTime"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

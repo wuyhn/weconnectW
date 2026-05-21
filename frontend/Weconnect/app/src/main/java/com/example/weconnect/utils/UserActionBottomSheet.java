@@ -10,13 +10,10 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.example.weconnect.activities.ConversationActivity;
 import com.example.weconnect.activities.UserProfileActivity;
-import com.example.weconnect.api.ChatApiService;
 import com.example.weconnect.api.FriendApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.models.ApiResponse;
-import com.example.weconnect.models.ChatRoomApiResponse;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import retrofit2.Call;
@@ -40,6 +37,36 @@ public class UserActionBottomSheet {
     private static final int COLOR_BADGE_BLUE = 0xFF007AFF;
 
     public static void show(Context context, long userId, String displayName, String avatarUrl) {
+        long myId = RetrofitClient.getUserId(context);
+        if (userId > 0 && userId == myId) return;
+        if (userId <= 0) {
+            showInternal(context, userId, displayName, avatarUrl, false, false);
+            return;
+        }
+
+        RetrofitClient.loadToken(context);
+        RetrofitClient.getClient().create(FriendApiService.class)
+                .getBlockStatus(userId).enqueue(new Callback<ApiResponse<java.util.Map<String, Object>>>() {
+                    @Override
+                    public void onResponse(Call<ApiResponse<java.util.Map<String, Object>>> call,
+                                           Response<ApiResponse<java.util.Map<String, Object>>> response) {
+                        java.util.Map<String, Object> result = response.isSuccessful()
+                                && response.body() != null ? response.body().getResult() : null;
+                        showInternal(context, userId, displayName, avatarUrl,
+                                asBoolean(result, "isBlockedByMe"),
+                                asBoolean(result, "hasBlockedMe"));
+                    }
+
+                    @Override
+                    public void onFailure(Call<ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
+                        showInternal(context, userId, displayName, avatarUrl, false, false);
+                    }
+                });
+    }
+
+    private static void showInternal(Context context, long userId, String displayName,
+                                     String avatarUrl, boolean isBlockedByMe,
+                                     boolean hasBlockedMe) {
         long myId = RetrofitClient.getUserId(context);
         if (userId > 0 && userId == myId) return;
 
@@ -88,6 +115,14 @@ public class UserActionBottomSheet {
         dynSep.setVisibility(View.GONE);
         group1.addView(dynSep);
 
+        // "Nhắn tin" — không phụ thuộc friendship status
+        addRow(context, group1, "Nhắn tin", COLOR_TEXT, v -> {
+            sheet.dismiss();
+            DirectMessageHelper.openDirectMessage(context, userId, displayName);
+        });
+
+        addSeparator(context, group1);
+
         // "Xem trang cá nhân"
         addRow(context, group1, "Xem trang cá nhân", COLOR_TEXT, v -> {
             sheet.dismiss();
@@ -95,7 +130,19 @@ public class UserActionBottomSheet {
             intent.putExtra("username", displayName);
             intent.putExtra("view_other", true);
             if (userId > 0) intent.putExtra("user_id", userId);
+            if (isBlockedByMe || hasBlockedMe) {
+                intent.putExtra("blocked_profile", true);
+                intent.putExtra("is_blocked_by_me", isBlockedByMe);
+                intent.putExtra("has_blocked_me", hasBlockedMe);
+            }
             context.startActivity(intent);
+        });
+
+        addSeparator(context, group1);
+
+        addRow(context, group1, "Báo cáo người dùng", COLOR_TEXT, v -> {
+            sheet.dismiss();
+            UserReportBottomSheet.show(context, userId, displayName);
         });
 
         addSeparator(context, group1);
@@ -126,6 +173,32 @@ public class UserActionBottomSheet {
                     .setNegativeButton("Huỷ", null)
                     .show();
         });
+
+        if (isBlockedByMe && group1.getChildCount() > 0
+                && group1.getChildAt(group1.getChildCount() - 1) instanceof TextView) {
+            TextView blockRow = (TextView) group1.getChildAt(group1.getChildCount() - 1);
+            blockRow.setText("Bỏ chặn người dùng");
+            blockRow.setTextColor(COLOR_TEXT);
+            blockRow.setOnClickListener(v -> {
+                sheet.dismiss();
+                RetrofitClient.loadToken(context);
+                RetrofitClient.getClient().create(FriendApiService.class)
+                        .unblockUser(userId).enqueue(new Callback<ApiResponse<Void>>() {
+                            @Override
+                            public void onResponse(Call<ApiResponse<Void>> call,
+                                                   Response<ApiResponse<Void>> response) {
+                                Toast.makeText(context,
+                                        response.isSuccessful() ? "Đã bỏ chặn" : "Không thể bỏ chặn",
+                                        Toast.LENGTH_SHORT).show();
+                            }
+
+                            @Override
+                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+            });
+        }
 
         root.addView(group1, matchWidth());
 
@@ -183,10 +256,6 @@ public class UserActionBottomSheet {
 
             if (STATUS_FRIEND.equals(status)) {
                 showBadge(context, badge, "• Bạn bè", COLOR_BADGE_GREEN);
-                addRow(context, container, "Nhắn tin riêng", COLOR_TEXT, v -> {
-                    sheet.dismiss();
-                    openDM(context, userId);
-                });
 
             } else if (STATUS_PENDING_SENT.equals(status)) {
                 showBadge(context, badge, "• Đã gửi lời mời kết bạn", COLOR_BADGE_ORG);
@@ -213,6 +282,10 @@ public class UserActionBottomSheet {
                                 }
                             });
                 });
+
+            } else if ("BLOCKED".equals(status)) {
+                showBadge(context, badge, "• Đã chặn", COLOR_DESTRUCTIVE);
+                // Nhắn tin vẫn là action riêng bên dưới, helper sẽ hiện trạng thái block.
 
             } else {
                 addRow(context, container, "Kết bạn", COLOR_TEXT, v -> {
@@ -251,29 +324,10 @@ public class UserActionBottomSheet {
         });
     }
 
-    private static void openDM(Context context, long userId) {
-        RetrofitClient.loadToken(context);
-        RetrofitClient.getClient().create(ChatApiService.class)
-                .getDirectRoom(userId).enqueue(new Callback<ApiResponse<ChatRoomApiResponse>>() {
-                    @Override
-                    public void onResponse(Call<ApiResponse<ChatRoomApiResponse>> call,
-                                           Response<ApiResponse<ChatRoomApiResponse>> response) {
-                        if (response.isSuccessful() && response.body() != null
-                                && response.body().getResult() != null) {
-                            long roomId = response.body().getResult().getId();
-                            Intent intent = new Intent(context, ConversationActivity.class);
-                            intent.putExtra("room_id", String.valueOf(roomId));
-                            context.startActivity(intent);
-                        } else {
-                            Toast.makeText(context, "Không thể mở đoạn chat",
-                                    Toast.LENGTH_SHORT).show();
-                        }
-                    }
-                    @Override
-                    public void onFailure(Call<ApiResponse<ChatRoomApiResponse>> call, Throwable t) {
-                        Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
-                    }
-                });
+    private static boolean asBoolean(java.util.Map<String, Object> map, String key) {
+        if (map == null || !map.containsKey(key)) return false;
+        Object value = map.get(key);
+        return value instanceof Boolean && (Boolean) value;
     }
 
     // ── Private builders ──

@@ -11,4 +11,10 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 
     // Lấy tin nhắn mới sau 1 ID (cho polling)
     List<ChatMessage> findByRoomIdAndIdGreaterThanOrderByCreatedAtAsc(Long roomId, Long afterId);
+
+    // Đếm tin chưa đọc (id > lastReadMessageId)
+    int countByRoomIdAndIdGreaterThan(Long roomId, Long lastReadMessageId);
+
+    // Lấy id tin nhắn mới nhất trong phòng
+    java.util.Optional<ChatMessage> findTopByRoomIdOrderByIdDesc(Long roomId);
 }

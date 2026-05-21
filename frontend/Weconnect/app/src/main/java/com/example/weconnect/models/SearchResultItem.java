@@ -11,6 +11,9 @@ public class SearchResultItem {
     private String subtitle;
     private int avatarResId;
     private long userId; // Backend user ID
+    private boolean blockedByMe;
+    private boolean hasBlockedMe;
+    private boolean blockedBetweenUsers;
 
     private String username;
     private String content;
@@ -93,6 +96,30 @@ public class SearchResultItem {
 
     public void setUserId(long userId) {
         this.userId = userId;
+    }
+
+    public boolean isBlockedByMe() {
+        return blockedByMe;
+    }
+
+    public void setBlockedByMe(boolean blockedByMe) {
+        this.blockedByMe = blockedByMe;
+    }
+
+    public boolean hasBlockedMe() {
+        return hasBlockedMe;
+    }
+
+    public void setHasBlockedMe(boolean hasBlockedMe) {
+        this.hasBlockedMe = hasBlockedMe;
+    }
+
+    public boolean isBlockedBetweenUsers() {
+        return blockedBetweenUsers;
+    }
+
+    public void setBlockedBetweenUsers(boolean blockedBetweenUsers) {
+        this.blockedBetweenUsers = blockedBetweenUsers;
     }
 
     // Avatar URL from server

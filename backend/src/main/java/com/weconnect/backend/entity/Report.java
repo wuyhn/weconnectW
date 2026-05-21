@@ -60,6 +60,9 @@ public class Report {
     @Builder.Default
     private boolean adminViewed = false;
 
+    @Column(name = "evidence_images", columnDefinition = "TEXT")
+    private String evidenceImages;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

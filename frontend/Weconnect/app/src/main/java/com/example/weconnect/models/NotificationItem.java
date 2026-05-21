@@ -14,6 +14,7 @@ public class NotificationItem {
         ADMIN_WARNING,
         ADMIN_ACTION,
         POST_EXPIRED,
+        ACTIVITY_CANCELLED,
         GENERAL
     }
 
@@ -31,8 +32,11 @@ public class NotificationItem {
     @SerializedName("actioned")
     private boolean isActioned;
 
+    private String actionResult;
+
     private String createdAt;
     private String senderAvatarUrl;
+    private String postTitle;
 
     // Getters
     public long getId() { return id; }
@@ -44,11 +48,15 @@ public class NotificationItem {
     public Long getRelatedUserId() { return relatedUserId; }
     public boolean isRead() { return isRead; }
     public boolean isActioned() { return isActioned; }
+    public String getActionResult() { return actionResult; }
     public String getCreatedAt() { return createdAt; }
     public String getSenderAvatarUrl() { return senderAvatarUrl; }
+    public String getPostTitle() { return postTitle; }
 
     // Setters
     public void setId(long id) { this.id = id; }
     public void setRead(boolean read) { isRead = read; }
     public void setActioned(boolean actioned) { isActioned = actioned; }
+    public void setActionResult(String actionResult) { this.actionResult = actionResult; }
+    public void setPostTitle(String postTitle) { this.postTitle = postTitle; }
 }

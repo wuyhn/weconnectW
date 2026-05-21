@@ -30,14 +30,14 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="@color/primary_pink" />
+            app:tint="@color/text_primary" />
 
         <TextView
             android:id="@+id/tvSearchTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Tìm kiếm"
-            android:textColor="@color/primary_pink"
+            android:textColor="@color/text_primary"
             android:textSize="22sp"
             android:textStyle="bold"
             app:layout_constraintBottom_toBottomOf="parent"
@@ -65,7 +65,7 @@
         app:boxCornerRadiusTopEnd="18dp"
         app:boxCornerRadiusBottomStart="18dp"
         app:boxCornerRadiusBottomEnd="18dp"
-        app:boxStrokeColor="@color/primary_pink"
+        app:boxStrokeColor="@color/text_primary"
         app:layout_constraintTop_toBottomOf="@id/dividerSearch"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">

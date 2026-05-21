@@ -5,7 +5,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -25,8 +24,42 @@ public class ChatRoomResponse {
     private String postStatusLabel;  // e.g., "Hoạt động đã kết thúc" or null
     private String lastMessagePreview;
     private String lastMessageTime;
+    private Boolean isFriend;
+    private Boolean isMessageRequest;
+    private Long otherUserId;
+    private String otherUserName;
+    private String otherUserAvatarUrl;
+    private Boolean isBlockedByMe;
+    private Boolean hasBlockedMe;
+    private Boolean isBlockedBetweenUsers;
+    private Boolean otherUserOnline;
+    private Long otherUserLastActiveMins;
+    private int unreadCount;
+    private String activityDateDisplay;
+    private int memberCount;
+    private int maxMembers;
     private List<MemberInfo> members;
-    private LocalDateTime createdAt;
+    private String createdAt;
+
+    public Boolean getIsFriend() {
+        return isFriend;
+    }
+
+    public Boolean getIsMessageRequest() {
+        return isMessageRequest;
+    }
+
+    public Boolean getIsBlockedByMe() {
+        return isBlockedByMe;
+    }
+
+    public Boolean getHasBlockedMe() {
+        return hasBlockedMe;
+    }
+
+    public Boolean getIsBlockedBetweenUsers() {
+        return isBlockedBetweenUsers;
+    }
 
     @Data
     @Builder
@@ -37,5 +70,8 @@ public class ChatRoomResponse {
         private String fullName;
         private String role;
         private String avatarUrl;
+        private Boolean isBlockedByMe;
+        private Boolean hasBlockedMe;
+        private Boolean isBlockedBetweenUsers;
     }
 }

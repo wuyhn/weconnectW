@@ -139,6 +139,8 @@ public class SearchActivity extends AppCompatActivity {
                         userResults.add(new SearchResultItem(
                                 SearchResultItem.TYPE_SECTION, "Người dùng", "", 0));
                         for (Map<String, Object> u : users) {
+                            // Bỏ qua users đã chặn mình (với họ, tôi không tồn tại và ngược lại)
+                            if (asBoolean(u.get("hasBlockedMe"))) continue;
                             String fullName = u.get("fullName") != null ? u.get("fullName").toString() : "";
                             long userId = u.get("id") != null ? ((Number) u.get("id")).longValue() : 0;
                             String avatarUrl = u.get("avatarUrl") != null ? u.get("avatarUrl").toString() : "";
@@ -146,6 +148,9 @@ public class SearchActivity extends AppCompatActivity {
                                     SearchResultItem.TYPE_USER, fullName, "", R.drawable.ic_user_placeholder);
                             item.setUserId(userId);
                             item.setAvatarUrl(avatarUrl);
+                            item.setBlockedByMe(asBoolean(u.get("isBlockedByMe")));
+                            item.setHasBlockedMe(asBoolean(u.get("hasBlockedMe")));
+                            item.setBlockedBetweenUsers(asBoolean(u.get("isBlockedBetweenUsers")));
                             userResults.add(item);
                         }
                     }
@@ -210,5 +215,9 @@ public class SearchActivity extends AppCompatActivity {
         merged.addAll(userResults);
         merged.addAll(postResults);
         searchResultAdapter.submitList(merged);
+    }
+
+    private boolean asBoolean(Object value) {
+        return value instanceof Boolean && (Boolean) value;
     }
 }

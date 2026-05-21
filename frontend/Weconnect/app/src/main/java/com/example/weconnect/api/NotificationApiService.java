@@ -22,9 +22,14 @@ public interface NotificationApiService {
     @PUT("api/notifications/read-all")
     Call<ApiResponse<Void>> markAllAsRead();
 
-    // Đánh dấu đã xử lý
+    // Đánh dấu đã xử lý (actionResult: "ACCEPTED" | "DECLINED" | null)
     @PUT("api/notifications/{id}/action")
-    Call<ApiResponse<Void>> markAsActioned(@Path("id") long id);
+    Call<ApiResponse<Void>> markAsActioned(@Path("id") long id,
+            @Query("actionResult") String actionResult);
+
+    // Đánh dấu tất cả JOIN_REQUEST của một post là đã đọc
+    @PUT("api/notifications/join-requests/{postId}/read")
+    Call<ApiResponse<Void>> markJoinRequestsRead(@Path("postId") long postId);
 
     // Số chưa đọc
     @GET("api/notifications/unread-count")

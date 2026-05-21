@@ -27,6 +27,10 @@ public class BadgeManager {
         if (unreadCount > 0) unreadCount--;
     }
 
+    public static void decrement(int n) {
+        unreadCount = Math.max(0, unreadCount - n);
+    }
+
     /** Cập nhật visibility + text của một badge TextView theo count hiện tại. */
     public static void applyBadge(TextView badge) {
         if (badge == null) return;

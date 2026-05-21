@@ -108,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
         loadPostsFromApi();
         loadUnreadNotificationCount();
         loadStatusHeaderAvatar();
+        fetchCurrentUserProfile();
         subscribeToRealtimeEvents();
         highlightTab(btnHome);
     }
@@ -215,37 +216,39 @@ public class MainActivity extends AppCompatActivity {
                         int maxMembers = data.getIntExtra("post_max_members", 10);
                         String imageUri = data.getStringExtra("post_image_uri");
                         long endTimeMillis = data.getLongExtra("post_end_time", System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
+                        String activityStartIso = data.getStringExtra("post_activity_start_iso");
+                        String activityEndIso = data.getStringExtra("post_activity_end_iso");
+                        String activityTimeType = data.getStringExtra("post_activity_time_type");
 
                         // Gọi API tạo bài đăng mới
-                        createPostViaApi(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                        createPostViaApi(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
                     }
                 }
         );
     }
 
-    private void createPostViaApi(String content, String tag, String location, int maxMembers, String imageUri, long endTimeMillis) {
+    private void createPostViaApi(String content, String tag, String location, int maxMembers, String imageUri, long endTimeMillis,
+                                  String activityStartIso, String activityEndIso, String activityTimeType) {
         if (imageUri != null) {
-            // Upload image first, then create post with server URL
-            uploadImageAndCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
+            uploadImageAndCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
         } else {
-            // No image, create post directly
-            sendCreatePost(content, tag, location, maxMembers, null, endTimeMillis);
+            sendCreatePost(content, tag, location, maxMembers, null, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
         }
     }
 
-    private void uploadImageAndCreatePost(String content, String tag, String location, int maxMembers, String imageUri, long endTimeMillis) {
+    private void uploadImageAndCreatePost(String content, String tag, String location, int maxMembers, String imageUri, long endTimeMillis,
+                                          String activityStartIso, String activityEndIso, String activityTimeType) {
         try {
             android.net.Uri uri = android.net.Uri.parse(imageUri);
             java.io.InputStream inputStream = getContentResolver().openInputStream(uri);
             if (inputStream == null) {
                 Toast.makeText(this, "Không thể đọc ảnh", Toast.LENGTH_SHORT).show();
-                sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
                 return;
             }
             byte[] bytes = readAllBytes(inputStream);
             inputStream.close();
 
-            // Determine file name and mime type
             String mimeType = getContentResolver().getType(uri);
             if (mimeType == null) mimeType = "image/jpeg";
             String ext = mimeType.contains("png") ? ".png" : mimeType.contains("webp") ? ".webp" : ".jpg";
@@ -263,18 +266,18 @@ public class MainActivity extends AppCompatActivity {
                     if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                         serverUrl = response.body().getResult();
                     }
-                    sendCreatePost(content, tag, location, maxMembers, serverUrl, endTimeMillis);
+                    sendCreatePost(content, tag, location, maxMembers, serverUrl, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
                 }
 
                 @Override
                 public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
                     android.util.Log.e("UPLOAD_IMAGE", "Failed: " + t.getMessage());
-                    sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
+                    sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
                 }
             });
         } catch (Exception e) {
             android.util.Log.e("UPLOAD_IMAGE", "Error: " + e.getMessage());
-            sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis);
+            sendCreatePost(content, tag, location, maxMembers, imageUri, endTimeMillis, activityStartIso, activityEndIso, activityTimeType);
         }
     }
 
@@ -288,7 +291,8 @@ public class MainActivity extends AppCompatActivity {
         return buffer.toByteArray();
     }
 
-    private void sendCreatePost(String content, String tag, String location, int maxMembers, String imageUrl, long endTimeMillis) {
+    private void sendCreatePost(String content, String tag, String location, int maxMembers, String imageUrl, long endTimeMillis,
+                                String activityStartIso, String activityEndIso, String activityTimeType) {
         Map<String, Object> body = new HashMap<>();
         body.put("content", content);
         body.put("interestTag", tag);
@@ -298,10 +302,15 @@ public class MainActivity extends AppCompatActivity {
             body.put("imageUrl", imageUrl);
         }
 
-        // Gửi startTime và endTime cho backend (backend tự tính expirationHours)
         SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
-        body.put("startTime", isoFormat.format(new Date()));
+        body.put("startTime", activityStartIso != null ? activityStartIso : isoFormat.format(new Date()));
         body.put("endTime", isoFormat.format(new Date(endTimeMillis)));
+        if (activityEndIso != null) {
+            body.put("activityEndTime", activityEndIso);
+        }
+        if (activityTimeType != null) {
+            body.put("activityTimeType", activityTimeType);
+        }
 
         final String postTag = tag;
         final String currentUser = RetrofitClient.getUserName(this);
@@ -679,8 +688,17 @@ public class MainActivity extends AppCompatActivity {
 
         long endTimeMillis = data.getLongExtra("post_end_time", System.currentTimeMillis() + 24L * 60L * 60L * 1000L);
         SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
-        body.put("startTime", isoFormat.format(new Date()));
+        String activityStartIso = data.getStringExtra("post_activity_start_iso");
+        String activityEndIso = data.getStringExtra("post_activity_end_iso");
+        String activityTimeType = data.getStringExtra("post_activity_time_type");
+        body.put("startTime", activityStartIso != null ? activityStartIso : isoFormat.format(new Date()));
         body.put("endTime", isoFormat.format(new Date(endTimeMillis)));
+        if (activityEndIso != null) {
+            body.put("activityEndTime", activityEndIso);
+        }
+        if (activityTimeType != null) {
+            body.put("activityTimeType", activityTimeType);
+        }
 
         postApiService.updatePost(postId, body).enqueue(new Callback<ApiResponse<PostResponse>>() {
             @Override
@@ -697,6 +715,34 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onFailure(Call<ApiResponse<PostResponse>> call, Throwable t) {
                 Toast.makeText(MainActivity.this, "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void fetchCurrentUserProfile() {
+        com.example.weconnect.api.UserApiService userApi =
+                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
+        userApi.getMyProfile().enqueue(new Callback<ApiResponse<java.util.Map<String, Object>>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<java.util.Map<String, Object>>> call,
+                                   Response<ApiResponse<java.util.Map<String, Object>>> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
+                    java.util.Map<String, Object> profile = response.body().getResult();
+                    Object avatarObj = profile.get("avatarUrl");
+                    if (avatarObj != null && !avatarObj.toString().isEmpty()) {
+                        RetrofitClient.saveAvatarUrl(MainActivity.this, avatarObj.toString());
+                    }
+                    Object nameObj = profile.get("fullName");
+                    if (nameObj != null && !nameObj.toString().isEmpty()) {
+                        RetrofitClient.saveUserName(MainActivity.this, nameObj.toString());
+                    }
+                    loadStatusHeaderAvatar();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<java.util.Map<String, Object>>> call, Throwable t) {
+                // giữ dữ liệu cache hiện tại
             }
         });
     }

@@ -2,6 +2,7 @@ package com.weconnect.backend.service;
 
 import com.weconnect.backend.dto.PostRequest;
 import com.weconnect.backend.dto.PostResponse;
+import com.weconnect.backend.entity.ActivityTimeType;
 import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.BlockedUser;
 import com.weconnect.backend.entity.Post;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -83,6 +85,8 @@ public class PostService {
                 .maxMembers(request.getMaxMembers() > 0 ? request.getMaxMembers() : 10)
                 .startTime(start)
                 .endTime(end)
+                .activityEndTime(request.getActivityEndTime())
+                .activityTimeType(parseActivityTimeType(request.getActivityTimeType()))
                 .expirationHours(expHours)
                 .archived(false)
                 .expirationNotified(false)
@@ -118,9 +122,59 @@ public class PostService {
         if (request.getMaxMembers() > 0) post.setMaxMembers(request.getMaxMembers());
         if (request.getStartTime() != null) post.setStartTime(request.getStartTime());
         if (request.getEndTime() != null) post.setEndTime(request.getEndTime());
+        if (request.getActivityEndTime() != null) post.setActivityEndTime(request.getActivityEndTime());
+        if (request.getActivityTimeType() != null) post.setActivityTimeType(parseActivityTimeType(request.getActivityTimeType()));
 
         post = postRepository.save(post);
         return toResponse(post, userId);
+    }
+
+    // Hủy hoạt động (chủ bài đăng hủy toàn bộ hoạt động và group chat)
+    @Transactional
+    public void cancelActivity(Long postId, Long userId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy bài đăng."));
+
+        if (!post.getAuthorId().equals(userId)) {
+            throw new RuntimeException("Bạn không có quyền hủy hoạt động này.");
+        }
+        if (post.isCancelled()) {
+            throw new RuntimeException("Hoạt động này đã được hủy trước đó.");
+        }
+
+        post.setArchived(true);
+        post.setCancelled(true);
+        postRepository.save(post);
+
+        // Từ chối tất cả pending requests
+        List<PostMember> pendingMembers = postMemberRepository.findByPostIdAndStatus(postId, PostMember.Status.PENDING);
+        for (PostMember pm : pendingMembers) {
+            pm.setStatus(PostMember.Status.REJECTED);
+            postMemberRepository.save(pm);
+        }
+
+        // Thông báo cho tất cả thành viên đã được duyệt
+        String postTitle = post.getContent();
+        if (postTitle != null && postTitle.length() > 50) {
+            postTitle = postTitle.substring(0, 50) + "...";
+        }
+        String msg = "Hoạt động \"" + postTitle + "\" đã bị hủy bởi người tổ chức.";
+        List<PostMember> approvedMembers = postMemberRepository.findByPostIdAndStatus(postId, PostMember.Status.APPROVED);
+        for (PostMember pm : approvedMembers) {
+            if (!pm.getUserId().equals(userId)) {
+                notificationService.createNotification(
+                        pm.getUserId(),
+                        Notification.NotificationType.ACTIVITY_CANCELLED,
+                        msg,
+                        null,
+                        postId,
+                        userId
+                );
+            }
+        }
+
+        // Hủy phòng chat và gửi WebSocket event đến tất cả thành viên
+        chatService.cancelActivityRoom(postId);
     }
 
     // Xóa bài đăng
@@ -141,9 +195,9 @@ public class PostService {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy bài đăng."));
 
-        // Chặn tham gia bài viết đã hết hạn
-        if (post.isExpired()) {
-            throw new RuntimeException("Bài viết đã hết hạn, không thể tham gia.");
+        // Chặn tham gia bài viết đã hết hạn hoặc đã bị hủy/lưu trữ
+        if (!post.isActive()) {
+            throw new RuntimeException("Hoạt động không khả dụng.");
         }
 
         if (post.getAuthorId().equals(userId)) {
@@ -156,13 +210,24 @@ public class PostService {
             throw new RuntimeException("Tài khoản admin không thể tham gia hoạt động.");
         }
 
-        if (postMemberRepository.existsByPostIdAndUserId(postId, userId)) {
+        PostMember existingMember = postMemberRepository.findByPostIdAndUserId(postId, userId).orElse(null);
+        if (existingMember != null) {
+            if (existingMember.getStatus() == PostMember.Status.REJECTED) {
+                throw new RuntimeException("Hoạt động không khả dụng.");
+            }
             throw new RuntimeException("Bạn đã gửi yêu cầu tham gia rồi.");
         }
 
         int currentMembers = postMemberRepository.countByPostIdAndStatus(postId, PostMember.Status.APPROVED);
-        if (currentMembers >= post.getMaxMembers()) {
+        // +1 vì author không có record trong post_members nhưng vẫn chiếm 1 slot (memberCount = approvedCount + 1)
+        if (currentMembers + 1 >= post.getMaxMembers()) {
             throw new RuntimeException("Hoạt động đã đủ thành viên.");
+        }
+
+        // Rule 1: Không cho join nếu có block relation (2 chiều) với chủ hoạt động
+        if (blockedUserRepository.existsByBlockerIdAndBlockedId(userId, post.getAuthorId())
+                || blockedUserRepository.existsByBlockerIdAndBlockedId(post.getAuthorId(), userId)) {
+            throw new RuntimeException("Hoạt động không khả dụng.");
         }
 
         PostMember member = PostMember.builder()
@@ -201,6 +266,21 @@ public class PostService {
         if (!post.getAuthorId().equals(ownerId)) {
             throw new RuntimeException("Bạn không có quyền duyệt thành viên.");
         }
+        if (!post.isActive()) {
+            throw new RuntimeException("Hoạt động không khả dụng.");
+        }
+
+        int currentMembers = postMemberRepository.countByPostIdAndStatus(postId, PostMember.Status.APPROVED);
+        // +1 vì author không có record trong post_members nhưng vẫn chiếm 1 slot
+        if (currentMembers + 1 >= post.getMaxMembers()) {
+            throw new RuntimeException("Hoạt động đã đủ thành viên, không thể duyệt thêm người tham gia.");
+        }
+
+        User targetUser = userRepository.findById(memberId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng."));
+        if (targetUser.isBlocked()) {
+            throw new RuntimeException("Người dùng này hiện không thể tham gia hoạt động.");
+        }
 
         PostMember member = postMemberRepository.findByPostIdAndUserId(postId, memberId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy yêu cầu tham gia."));
@@ -211,11 +291,18 @@ public class PostService {
         // Tạo thông báo cho người được duyệt
         User owner = userRepository.findById(ownerId).orElse(null);
         String ownerName = owner != null ? owner.getFullName() : "Chủ bài đăng";
-        String postTitle = post.getContent();
-        if (postTitle != null && postTitle.length() > 50) {
-            postTitle = postTitle.substring(0, 50) + "...";
+        String interestTag = post.getInterestTag() != null ? post.getInterestTag() : "hoạt động";
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        String dateStr;
+        if (post.getActivityTimeType() == ActivityTimeType.CONTINUOUS_RANGE
+                && post.getActivityEndTime() != null
+                && post.getStartTime() != null
+                && !post.getStartTime().toLocalDate().equals(post.getActivityEndTime().toLocalDate())) {
+            dateStr = post.getStartTime().format(fmt) + " - " + post.getActivityEndTime().format(fmt);
+        } else {
+            dateStr = post.getStartTime() != null ? post.getStartTime().format(fmt) : "";
         }
-        String message = "Chúc mừng! " + ownerName + " đã chấp nhận yêu cầu của bạn cho kèo \"" + postTitle + "\".";
+        String message = ownerName + " đã chấp nhận yêu cầu tham gia hoạt động " + interestTag + " - " + dateStr + " của bạn.";
         notificationService.createNotification(
                 memberId,
                 Notification.NotificationType.JOIN_APPROVED,
@@ -225,10 +312,13 @@ public class PostService {
                 ownerId
         );
 
-        // Thêm user vào phòng chat hoạt động
-    chatService.addMemberToActivityRoom(postId, memberId);
+        // Đánh dấu JOIN_REQUEST notification tương ứng là đã xử lý
+        notificationService.markJoinRequestActioned(ownerId, memberId, postId);
 
-    return "Đã duyệt thành viên!";
+        // Thêm user vào phòng chat hoạt động
+        chatService.addMemberToActivityRoom(postId, memberId);
+
+        return "Đã duyệt thành viên!";
     }
 
     // Từ chối thành viên
@@ -262,6 +352,9 @@ public class PostService {
                 postId,
                 ownerId
         );
+
+        // Đánh dấu JOIN_REQUEST notification tương ứng là đã xử lý
+        notificationService.markJoinRequestActioned(ownerId, memberId, postId);
 
         return "Đã từ chối thành viên.";
     }
@@ -304,6 +397,7 @@ public class PostService {
         List<Post> posts = postRepository.findByAuthorIdOrderByCreatedAtDesc(userId);
         List<Post> archived = new ArrayList<>();
         for (Post post : posts) {
+            if (post.isCancelled()) continue; // Bài đã hủy không hiện trong kho lưu trữ
             if (post.isArchived() || post.isExpired()) {
                 archived.add(post);
             }
@@ -321,6 +415,8 @@ public class PostService {
                 if (post == null) continue;
                 // Bỏ qua bài của chính user (author) - chỉ lấy bài tham gia
                 if (post.getAuthorId().equals(userId)) continue;
+                // Rule 4: Không hiển thị activityPost nếu groupOwner đã chặn member
+                if (blockedUserRepository.existsByBlockerIdAndBlockedId(post.getAuthorId(), userId)) continue;
                 results.add(toResponse(post, userId));
             } catch (Exception ignored) {}
         }
@@ -337,6 +433,8 @@ public class PostService {
                 if (post == null) continue;
                 // Bỏ qua bài của chính targetUser (author)
                 if (post.getAuthorId().equals(targetUserId)) continue;
+                // Rule 4: Không hiển thị activityPost nếu groupOwner đã chặn targetUser (member)
+                if (blockedUserRepository.existsByBlockerIdAndBlockedId(post.getAuthorId(), targetUserId)) continue;
                 // Resolve CTA theo viewer (joined, pending, etc.)
                 results.add(toResponse(post, viewerId));
             } catch (Exception ignored) {}
@@ -400,12 +498,20 @@ public class PostService {
                 .joined(joined)
                 .pendingApproval(pending)
                 .archived(post.isArchived())
+                .cancelled(post.isCancelled())
                 .expired(post.isExpired())
                 .expirationHours(post.getExpirationHours())
                 .startTime(post.getStartTime())
                 .endTime(post.getEndTime())
+                .activityEndTime(post.getActivityEndTime())
+                .activityTimeType(post.getActivityTimeType() != null ? post.getActivityTimeType().name() : null)
                 .createdAt(post.getCreatedAt())
                 .build();
+    }
+
+    private com.weconnect.backend.entity.ActivityTimeType parseActivityTimeType(String type) {
+        if (type == null) return null;
+        try { return com.weconnect.backend.entity.ActivityTimeType.valueOf(type); } catch (Exception e) { return null; }
     }
 
     private List<PostResponse> toResponseList(List<Post> posts, Long currentUserId) {

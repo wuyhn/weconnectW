@@ -32,7 +32,7 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="@color/primary_pink" />
+            app:tint="@color/text_primary" />
 
         <TextView
             android:id="@+id/tvTitle"
@@ -42,7 +42,7 @@
             android:letterSpacing="-0.01"
             android:text="@string/title_new_post"
             android:textColor="@color/text_primary"
-            android:textSize="20sp"
+            android:textSize="22sp"
             android:textStyle="bold"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
@@ -211,7 +211,7 @@
                             android:focusable="true"
                             android:padding="12dp"
                             android:src="@drawable/ic_image"
-                            app:tint="@color/primary_pink" />
+                            app:tint="@color/text_primary" />
                     </FrameLayout>
 
                     <View
@@ -239,7 +239,7 @@
                             android:focusable="true"
                             android:padding="12dp"
                             android:src="@drawable/ic_location"
-                            app:tint="@color/primary_pink" />
+                            app:tint="@color/text_primary" />
                     </FrameLayout>
 
                     <View
@@ -259,7 +259,7 @@
 
                         <ImageView
                             android:id="@+id/ivTagInterest"
-                            android:layout_width="48dp"
+                            android:layout_width="match_parent"
                             android:layout_height="48dp"
                             android:background="?attr/selectableItemBackgroundBorderless"
                             android:clickable="true"
@@ -267,7 +267,7 @@
                             android:focusable="true"
                             android:padding="12dp"
                             android:src="@drawable/ic_interests"
-                            app:tint="@color/primary_pink" />
+                            app:tint="@color/text_primary" />
                     </FrameLayout>
 
                     <View
@@ -295,17 +295,18 @@
                             android:focusable="true"
                             android:padding="12dp"
                             android:src="@drawable/ic_participants"
-                            app:tint="@color/primary_pink" />
+                            app:tint="@color/text_primary" />
                     </FrameLayout>
 
                     <View
                         android:layout_width="16dp"
                         android:layout_height="0dp" />
 
-                    <!-- Duration Action -->
+                    <!-- Duration Action (hidden — expiry auto-calculated from activity end time) -->
                     <FrameLayout
                         android:layout_width="48dp"
-                        android:layout_height="48dp">
+                        android:layout_height="48dp"
+                        android:visibility="gone">
 
                         <View
                             android:layout_width="44dp"
@@ -324,6 +325,35 @@
                             android:padding="12dp"
                             android:src="@drawable/ic_clock"
                             app:tint="@color/primary_pink" />
+                    </FrameLayout>
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:visibility="gone" />
+
+                    <!-- Activity Time Action -->
+                    <FrameLayout
+                        android:layout_width="48dp"
+                        android:layout_height="48dp">
+
+                        <View
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:layout_gravity="center"
+                            android:background="@drawable/bg_action_icon_circle" />
+
+                        <ImageView
+                            android:id="@+id/ivActivityTime"
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:clickable="true"
+                            android:contentDescription="Thời gian hoạt động"
+                            android:focusable="true"
+                            android:padding="12dp"
+                            android:src="@drawable/ic_calendar"
+                            app:tint="@color/text_primary" />
                     </FrameLayout>
 
                 </LinearLayout>
@@ -432,6 +462,33 @@
                     android:textSize="14sp"
                     android:textStyle="bold"
                     tools:text="⏰ Thoi han: 3 ngay" />
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardSelectedActivityTime"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="12dp"
+                android:visibility="gone"
+                app:cardBackgroundColor="@color/card_surface"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="4dp"
+                app:strokeWidth="0dp">
+
+                <TextView
+                    android:id="@+id/tvSelectedActivityTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="16dp"
+                    android:background="@drawable/bg_selected_tag"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="8dp"
+                    android:textColor="@android:color/white"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    tools:text="📅 01/06/2026  🕐 08:00 - 10:00" />
 
             </com.google.android.material.card.MaterialCardView>
 
