@@ -42,8 +42,14 @@ public class User {
     private float averageRating;
 
     @Builder.Default
-    @Column(columnDefinition = "DOUBLE DEFAULT 100")
-    private double reputationScore = 100;
+    @Column(columnDefinition = "DOUBLE DEFAULT 60")
+    private double reputationScore = 60;
+
+    // Tổng điểm phạt tích lũy từ admin (warn, block, non-attendance, v.v.)
+    // Lưu riêng để recalculateReputation() có thể trừ ra khỏi rating component
+    @Builder.Default
+    @Column(columnDefinition = "DOUBLE DEFAULT 0")
+    private double adminPenalty = 0;
 
     @Column(name = "is_blocked")
     private boolean isBlocked = false;

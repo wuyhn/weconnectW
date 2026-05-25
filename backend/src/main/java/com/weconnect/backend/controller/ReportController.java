@@ -7,7 +7,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -21,9 +20,8 @@ public class ReportController {
         this.reportService = reportService;
     }
 
-    // === User endpoints (từ app) ===
+    // === User endpoints ===
 
-    // User gửi report
     @PostMapping("/reports")
     public ResponseEntity<?> createReport(Authentication authentication,
                                            @RequestBody Map<String, Object> body) {
@@ -51,9 +49,21 @@ public class ReportController {
         }
     }
 
-    // === Admin endpoints (cho web admin) ===
+    @GetMapping("/reports/{id}/my-detail")
+    public ResponseEntity<?> getMyReportDetail(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Thành công")
+                    .result(reportService.getMyReportDetail(id, user.getId())).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1041).message(e.getMessage()).build());
+        }
+    }
 
-    // Lấy tất cả reports
+    // === Admin endpoints ===
+
     @GetMapping("/admin/reports")
     public ResponseEntity<?> getAllReports() {
         return ResponseEntity.ok(ApiResponse.builder()
@@ -61,46 +71,6 @@ public class ReportController {
                 .result(reportService.getAllReports()).build());
     }
 
-    // === Admin Notification (Report-based) ===
-
-    // Lấy danh sách report notifications
-    @GetMapping("/admin/report-notifications")
-    public ResponseEntity<?> getReportNotifications() {
-        return ResponseEntity.ok(ApiResponse.builder()
-                .code(1000).message("Thành công")
-                .result(reportService.getReportNotifications()).build());
-    }
-
-    // Đếm report chưa xem
-    @GetMapping("/admin/report-notifications/unread-count")
-    public ResponseEntity<?> getUnviewedReportCount() {
-        return ResponseEntity.ok(ApiResponse.builder()
-                .code(1000).message("Thành công")
-                .result(reportService.getUnviewedReportCount()).build());
-    }
-
-    // Đánh dấu 1 report đã xem
-    @PutMapping("/admin/report-notifications/{id}/viewed")
-    public ResponseEntity<?> markReportViewed(@PathVariable Long id) {
-        try {
-            reportService.markReportViewed(id);
-            return ResponseEntity.ok(ApiResponse.builder()
-                    .code(1000).message("Đã đánh dấu đã xem.").build());
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.builder()
-                    .code(1044).message(e.getMessage()).build());
-        }
-    }
-
-    // Đánh dấu tất cả reports đã xem
-    @PutMapping("/admin/report-notifications/viewed-all")
-    public ResponseEntity<?> markAllReportsViewed() {
-        reportService.markAllReportsViewed();
-        return ResponseEntity.ok(ApiResponse.builder()
-                .code(1000).message("Đã đánh dấu tất cả đã xem.").build());
-    }
-
-    // Lấy chi tiết 1 report
     @GetMapping("/admin/reports/{id}")
     public ResponseEntity<?> getReportById(@PathVariable Long id) {
         try {
@@ -113,49 +83,120 @@ public class ReportController {
         }
     }
 
-    // Admin cập nhật status report
-    @PutMapping("/admin/reports/{id}/status")
-    public ResponseEntity<?> updateReportStatus(@PathVariable Long id,
-                                                 @RequestBody Map<String, Object> body,
-                                                 Authentication authentication) {
+    // Admin xác nhận báo cáo hợp lệ (VALID) với điểm phạt
+    @PostMapping("/admin/reports/{id}/approve")
+    public ResponseEntity<?> approveReport(@PathVariable Long id,
+                                            @RequestBody(required = false) Map<String, Object> body,
+                                            Authentication authentication) {
         User admin = (User) authentication.getPrincipal();
-        String status = (String) body.get("status");
-
-        try {
-            String result = reportService.updateReportStatus(id, status, admin.getId());
-            return ResponseEntity.ok(ApiResponse.builder()
-                    .code(1000).message(result).build());
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.builder()
-                    .code(1042).message(e.getMessage()).build());
+        Integer penaltyPoint = null;
+        if (body != null && body.get("penaltyPoint") != null) {
+            penaltyPoint = Integer.valueOf(body.get("penaltyPoint").toString());
         }
-    }
-
-    // Admin xử lý report với hành động cụ thể
-    @PostMapping("/admin/reports/{id}/resolve")
-    public ResponseEntity<?> resolveReport(@PathVariable Long id,
-                                             @RequestBody Map<String, Object> body,
-                                             Authentication authentication) {
-        User admin = (User) authentication.getPrincipal();
-        String action = (String) body.get("action");
 
         try {
-            // Bước 1: Xử lý DB (trong transaction)
-            String[] result = reportService.resolveReport(id, action, admin.getId());
+            Map<String, Object> result = reportService.approveReport(id, admin.getId(), penaltyPoint);
 
-            // Bước 2: Gửi notification (ngoài transaction, không ảnh hưởng report)
-            reportService.sendResolveNotifications(
-                    result[0], result[1],
-                    Long.parseLong(result[2]),
-                    result[3],
-                    Long.parseLong(result[4])
+            Long targetUserId = result.get("targetUserId") != null
+                    ? ((Number) result.get("targetUserId")).longValue() : null;
+            reportService.sendApproveNotifications(
+                    ((Number) result.get("reporterId")).longValue(),
+                    String.valueOf(result.get("targetType")),
+                    targetUserId,
+                    (Integer) result.get("penaltyPoint"),
+                    ((Number) result.get("reportId")).longValue()
             );
 
             return ResponseEntity.ok(ApiResponse.builder()
-                    .code(1000).message("Đã xử lý report: " + result[1]).build());
+                    .code(1000)
+                    .message("Đã xác nhận báo cáo hợp lệ. Trừ " + result.get("penaltyPoint") + " điểm uy tín.")
+                    .result(result).build());
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(ApiResponse.builder()
                     .code(1043).message(e.getMessage()).build());
         }
+    }
+
+    // Admin từ chối báo cáo (REJECTED)
+    @PostMapping("/admin/reports/{id}/reject")
+    public ResponseEntity<?> rejectReport(@PathVariable Long id,
+                                           Authentication authentication) {
+        User admin = (User) authentication.getPrincipal();
+
+        try {
+            Map<String, Object> result = reportService.rejectReport(id, admin.getId());
+
+            reportService.sendRejectNotifications(
+                    ((Number) result.get("reporterId")).longValue()
+            );
+
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã từ chối báo cáo.")
+                    .result(result).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1043).message(e.getMessage()).build());
+        }
+    }
+
+    // Admin ẩn bài viết được báo cáo
+    @PostMapping("/admin/reports/{id}/hide-post")
+    public ResponseEntity<?> hidePost(@PathVariable Long id) {
+        try {
+            String msg = reportService.hidePostForReport(id);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message(msg).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1044).message(e.getMessage()).build());
+        }
+    }
+
+    // Admin xóa bài viết được báo cáo
+    @DeleteMapping("/admin/reports/{id}/delete-post")
+    public ResponseEntity<?> deletePost(@PathVariable Long id) {
+        try {
+            String msg = reportService.deletePostForReport(id);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message(msg).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1044).message(e.getMessage()).build());
+        }
+    }
+
+    // === Admin Notification (Report-based) ===
+
+    @GetMapping("/admin/report-notifications")
+    public ResponseEntity<?> getReportNotifications() {
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công")
+                .result(reportService.getReportNotifications()).build());
+    }
+
+    @GetMapping("/admin/report-notifications/unread-count")
+    public ResponseEntity<?> getUnviewedReportCount() {
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công")
+                .result(reportService.getUnviewedReportCount()).build());
+    }
+
+    @PutMapping("/admin/report-notifications/{id}/viewed")
+    public ResponseEntity<?> markReportViewed(@PathVariable Long id) {
+        try {
+            reportService.markReportViewed(id);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã đánh dấu đã xem.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1044).message(e.getMessage()).build());
+        }
+    }
+
+    @PutMapping("/admin/report-notifications/viewed-all")
+    public ResponseEntity<?> markAllReportsViewed() {
+        reportService.markAllReportsViewed();
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Đã đánh dấu tất cả đã xem.").build());
     }
 }

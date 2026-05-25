@@ -1,24 +1,17 @@
 package com.weconnect.backend.config;
 
 import com.weconnect.backend.entity.User;
-import com.weconnect.backend.entity.UserReview;
 import com.weconnect.backend.repository.UserRepository;
-import com.weconnect.backend.repository.UserReviewRepository;
+import com.weconnect.backend.service.ReviewService;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
 
-/**
- * Tự động tạo tài khoản Admin duy nhất khi khởi động server
- * nếu chưa tồn tại trong database.
- *
- * Email: admin@weconnect.com
- * Password: admin123
- */
 @Configuration
 public class AdminAccountInitializer {
 
@@ -26,18 +19,39 @@ public class AdminAccountInitializer {
     private static final String ADMIN_PASSWORD = "admin123";
     private static final String ADMIN_NAME = "Admin WeConnect";
 
+    // Migrate: đổi cột status từ ENUM sang VARCHAR rồi cập nhật giá trị cũ
+    @Bean
+    @Order(0)
+    public CommandLineRunner migrateReportStatuses(JdbcTemplate jdbcTemplate) {
+        return args -> {
+            // Đổi ENUM → VARCHAR để thoát khỏi ràng buộc enum cũ (PENDING/REVIEWED/RESOLVED)
+            // Nếu column đã là VARCHAR thì lệnh này vẫn chạy được (idempotent)
+            try {
+                jdbcTemplate.execute(
+                    "ALTER TABLE reports MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'PENDING'");
+            } catch (Exception ignored) {}
+
+            int toValid = jdbcTemplate.update(
+                    "UPDATE reports SET status = 'VALID' WHERE status = 'RESOLVED'");
+            int toPending = jdbcTemplate.update(
+                    "UPDATE reports SET status = 'PENDING' WHERE status = 'REVIEWED'");
+            if (toValid > 0 || toPending > 0) {
+                System.out.println("✅ Report migration: " + toValid + " RESOLVED→VALID, " + toPending + " REVIEWED→PENDING");
+            }
+        };
+    }
+
     @Bean
     @Order(1)
     public CommandLineRunner initAdminAccount(UserRepository userRepository,
                                               PasswordEncoder passwordEncoder) {
         return args -> {
-            // Kiểm tra nếu admin chưa tồn tại thì tạo mới
             if (userRepository.findByEmail(ADMIN_EMAIL).isEmpty()) {
                 User admin = User.builder()
                         .email(ADMIN_EMAIL)
                         .password(passwordEncoder.encode(ADMIN_PASSWORD))
                         .fullName(ADMIN_NAME)
-                        .role(1) // 1 = Admin
+                        .role(1)
                         .isBlocked(false)
                         .build();
                 userRepository.save(admin);
@@ -48,58 +62,23 @@ public class AdminAccountInitializer {
         };
     }
 
-    // Migration: tính lại reputationScore cho tất cả user có score = 0 (chưa được khởi tạo).
-    // Bắt đầu từ 100, áp dụng delta của toàn bộ review đã nhận + completion bonus.
+    // Tính lại reputationScore cho tất cả user theo công thức mới:
+    // ratingScore = avgRating/5*100 (hoặc 60 nếu chưa có review)
+    // reportPenalty = tổng penaltyPoint từ báo cáo VALID
+    // score = clamp(ratingScore - reportPenalty, 0, 100)
     @Bean
     @Order(2)
     public CommandLineRunner migrateReputationScores(UserRepository userRepository,
-                                                     UserReviewRepository reviewRepository) {
+                                                     ReviewService reviewService) {
         return args -> {
-            long count = 0;
-            for (User user : userRepository.findAll()) {
-                if (user.getReputationScore() == 0.0) {
-                    List<UserReview> reviews =
-                            reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(user.getId());
-
-                    double score = 100.0;
-
-                    // Áp dụng delta theo từng rating đã nhận
-                    for (UserReview review : reviews) {
-                        if (review.getRating() != null) {
-                            score += ratingDelta(review.getRating());
-                        }
-                    }
-
-                    // Cộng completion bonus: +1 cho mỗi hoạt động duy nhất đã nhận review
-                    long uniqueActivities = reviews.stream()
-                            .filter(r -> r.getPostId() != null)
-                            .map(UserReview::getPostId)
-                            .distinct()
-                            .count();
-                    score += uniqueActivities;
-
-                    // Clamp 0–100
-                    score = Math.max(0, Math.min(100, score));
-
-                    user.setReputationScore(score);
-                    userRepository.save(user);
-                    count++;
-                }
+            List<User> users = userRepository.findAll();
+            for (User user : users) {
+                // Reset adminPenalty (không còn dùng trong công thức mới)
+                user.setAdminPenalty(0.0);
+                userRepository.save(user);
+                reviewService.recalculateReputation(user.getId());
             }
-            if (count > 0) {
-                System.out.println("✅ Migrated " + count + " user(s): reputationScore tính lại từ review history");
-            }
-        };
-    }
-
-    private double ratingDelta(int rating) {
-        return switch (rating) {
-            case 1 -> -8.0;
-            case 2 -> -5.0;
-            case 3 -> -2.0;
-            case 4 ->  0.5;
-            case 5 ->  1.0;
-            default -> 0.0;
+            System.out.println("✅ Migrated " + users.size() + " user(s): reputationScore = rating-based - reportPenalty");
         };
     }
 }

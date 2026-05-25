@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 public class Report {
 
     public enum TargetType { USER, POST }
-    public enum Status { PENDING, REVIEWED, RESOLVED }
+    public enum Status { PENDING, VALID, REJECTED }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -40,7 +40,7 @@ public class Report {
     private String description;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'PENDING'")
     @Builder.Default
     private Status status = Status.PENDING;
 
@@ -52,6 +52,10 @@ public class Report {
 
     @Column(name = "reviewed_by")
     private Long reviewedBy;
+
+    @Builder.Default
+    @Column(name = "penalty_point", columnDefinition = "INT DEFAULT 0")
+    private Integer penaltyPoint = 0;
 
     @Column(name = "admin_action", length = 30)
     private String adminAction;

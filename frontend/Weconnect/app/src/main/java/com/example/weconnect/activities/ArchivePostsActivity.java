@@ -102,7 +102,7 @@ public class ArchivePostsActivity extends AppCompatActivity {
 
     private void showArchivedPosts(List<Post> archivedPosts) {
         rvArchivedPosts.setLayoutManager(new LinearLayoutManager(this));
-        rvArchivedPosts.setAdapter(new PostAdapter(this, archivedPosts));
+        rvArchivedPosts.setAdapter(new PostAdapter(this, archivedPosts, true));
         tvArchiveEmpty.setVisibility(archivedPosts.isEmpty() ? View.VISIBLE : View.GONE);
         rvArchivedPosts.setVisibility(archivedPosts.isEmpty() ? View.GONE : View.VISIBLE);
     }

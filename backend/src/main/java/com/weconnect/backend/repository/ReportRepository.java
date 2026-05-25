@@ -2,6 +2,8 @@ package com.weconnect.backend.repository;
 
 import com.weconnect.backend.entity.Report;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -28,6 +30,14 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     // Đếm reports nhắm vào một target cụ thể
     long countByTargetTypeAndTargetId(Report.TargetType targetType, Long targetId);
 
-    // Đếm reports đã xác nhận vi phạm (RESOLVED) nhắm vào một target
+    // Đếm reports đã xác nhận vi phạm (VALID) nhắm vào một target
     long countByTargetTypeAndTargetIdAndStatus(Report.TargetType targetType, Long targetId, Report.Status status);
+
+    // Tổng penaltyPoint từ báo cáo USER hợp lệ nhắm vào user
+    @Query("SELECT COALESCE(SUM(r.penaltyPoint), 0) FROM Report r WHERE r.targetType = com.weconnect.backend.entity.Report.TargetType.USER AND r.targetId = :userId AND r.status = com.weconnect.backend.entity.Report.Status.VALID")
+    int sumValidUserReportPenalties(@Param("userId") Long userId);
+
+    // Tổng penaltyPoint từ báo cáo POST hợp lệ nhắm vào các bài viết của user
+    @Query("SELECT COALESCE(SUM(r.penaltyPoint), 0) FROM Report r WHERE r.targetType = com.weconnect.backend.entity.Report.TargetType.POST AND r.targetId IN :postIds AND r.status = com.weconnect.backend.entity.Report.Status.VALID")
+    int sumValidPostReportPenaltiesByPostIds(@Param("postIds") List<Long> postIds);
 }

@@ -23,6 +23,10 @@ public class BadgeManager {
         unreadCount = 0;
     }
 
+    public static void increment() {
+        unreadCount++;
+    }
+
     public static void decrement() {
         if (unreadCount > 0) unreadCount--;
     }

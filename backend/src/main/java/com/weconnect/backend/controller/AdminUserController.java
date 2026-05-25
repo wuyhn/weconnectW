@@ -94,32 +94,6 @@ public class AdminUserController {
                 .result(toAdminMap(user)).build());
     }
 
-    // Trừ điểm uy tín thủ công (admin)
-    // reason: NON_ATTENDANCE (-10), LATE_CANCEL (-5)
-    @PostMapping("/{id}/reputation/deduct")
-    public ResponseEntity<?> deductReputation(@PathVariable Long id,
-                                               @RequestBody Map<String, String> body) {
-        Optional<User> userOpt = userRepository.findById(id);
-        if (userOpt.isEmpty()) {
-            return ResponseEntity.status(404).body(ApiResponse.builder()
-                    .code(1003).message("Không tìm thấy user").build());
-        }
-        String reason = body.getOrDefault("reason", "").toUpperCase();
-        double deduction = switch (reason) {
-            case "NON_ATTENDANCE" -> 10.0;
-            case "LATE_CANCEL" -> 5.0;
-            default -> throw new RuntimeException("Lý do không hợp lệ: " + reason + ". Dùng NON_ATTENDANCE hoặc LATE_CANCEL.");
-        };
-        User user = userOpt.get();
-        double newScore = Math.max(0, Math.min(100, user.getReputationScore() - deduction));
-        user.setReputationScore(newScore);
-        userRepository.save(user);
-        return ResponseEntity.ok(ApiResponse.builder()
-                .code(1000)
-                .message("Đã trừ " + (int) deduction + " điểm uy tín (" + reason + ")")
-                .result(toAdminMap(user)).build());
-    }
-
     // Xóa user
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteUser(@PathVariable Long id) {
@@ -146,7 +120,7 @@ public class AdminUserController {
         long totalReviewsReceived = userReviewRepository.countByReviewedUserId(id);
         long totalReportsReceived = reportRepository.countByTargetTypeAndTargetId(Report.TargetType.USER, id);
         long confirmedViolations = reportRepository.countByTargetTypeAndTargetIdAndStatus(
-                Report.TargetType.USER, id, Report.Status.RESOLVED);
+                Report.TargetType.USER, id, Report.Status.VALID);
 
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("totalPostsCreated", totalPostsCreated);

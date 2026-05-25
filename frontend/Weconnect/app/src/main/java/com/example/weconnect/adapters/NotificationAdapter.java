@@ -291,7 +291,18 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 });
             }
 
-            if (item.getRelatedPostId() != null) {
+            if ((item.getType() == NotificationItem.NotificationType.REPORT_CONFIRMED
+                    || item.getType() == NotificationItem.NotificationType.REPORT_PENALTY)
+                    && item.getRelatedReportId() != null) {
+                com.example.weconnect.utils.ReportPenaltyDetailBottomSheet.show(
+                        context, item.getRelatedReportId());
+            } else if (item.getType() == NotificationItem.NotificationType.ADMIN_WARNING
+                    && item.getRelatedReportId() != null) {
+                android.content.Intent intent = new android.content.Intent(context,
+                        com.example.weconnect.activities.ReportPenaltyDetailActivity.class);
+                intent.putExtra("report_id", item.getRelatedReportId().longValue());
+                context.startActivity(intent);
+            } else if (item.getRelatedPostId() != null) {
                 navigateToPostDetail(item);
             } else if (item.getType() == NotificationItem.NotificationType.FRIEND_REQUEST_RECEIVED
                     && item.getRelatedUserId() != null) {
@@ -330,7 +341,9 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                         }
                     }
                 });
-            } else if (item.getRelatedUsername() != null && !item.getRelatedUsername().isEmpty()) {
+            } else if (item.getRelatedUsername() != null && !item.getRelatedUsername().isEmpty()
+                    && item.getType() != NotificationItem.NotificationType.ADMIN_WARNING
+                    && item.getType() != NotificationItem.NotificationType.ADMIN_ACTION) {
                 Intent intent = new Intent(context, UserProfileActivity.class);
                 intent.putExtra("username", item.getRelatedUsername());
                 intent.putExtra("view_other", true);

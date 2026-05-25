@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Entity
 @Table(name = "notifications")
@@ -25,6 +26,8 @@ public class Notification {
         JOIN_REJECTED,
         ADMIN_WARNING,
         ADMIN_ACTION,
+        REPORT_CONFIRMED,
+        REPORT_PENALTY,
         POST_EXPIRED,
         ACTIVITY_CANCELLED,
         GENERAL
@@ -52,6 +55,9 @@ public class Notification {
     @Column(name = "related_user_id")
     private Long relatedUserId;
 
+    @Column(name = "related_report_id")
+    private Long relatedReportId;
+
     @Column(name = "is_read", columnDefinition = "BOOLEAN DEFAULT false")
     private boolean isRead;
 
@@ -66,6 +72,6 @@ public class Notification {
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now();
+        createdAt = LocalDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh"));
     }
 }

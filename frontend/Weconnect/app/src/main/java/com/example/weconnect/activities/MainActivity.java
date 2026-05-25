@@ -801,6 +801,12 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignored) {}
         });
 
+        // Nhận notification mới → cập nhật badge
+        ws.subscribeToNotifications(json -> {
+            BadgeManager.increment();
+            runOnUiThread(() -> updateBadge(BadgeManager.getCount()));
+        });
+
         // Nhận cập nhật avatar user bất kỳ
         ws.subscribeToAvatarUpdates(json -> {
             try {

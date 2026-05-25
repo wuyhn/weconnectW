@@ -13,6 +13,8 @@ public class NotificationItem {
         JOIN_REJECTED,
         ADMIN_WARNING,
         ADMIN_ACTION,
+        REPORT_CONFIRMED,
+        REPORT_PENALTY,
         POST_EXPIRED,
         ACTIVITY_CANCELLED,
         GENERAL
@@ -25,6 +27,7 @@ public class NotificationItem {
     private String relatedUsername;
     private Long relatedPostId;
     private Long relatedUserId;
+    private Long relatedReportId;
 
     @SerializedName("read")
     private boolean isRead;
@@ -46,6 +49,7 @@ public class NotificationItem {
     public String getRelatedUsername() { return relatedUsername; }
     public Long getRelatedPostId() { return relatedPostId; }
     public Long getRelatedUserId() { return relatedUserId; }
+    public Long getRelatedReportId() { return relatedReportId; }
     public boolean isRead() { return isRead; }
     public boolean isActioned() { return isActioned; }
     public String getActionResult() { return actionResult; }

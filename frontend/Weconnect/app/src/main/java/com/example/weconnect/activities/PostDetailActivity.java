@@ -129,7 +129,12 @@ public class PostDetailActivity extends AppCompatActivity {
                 || (myId > 0 && post.getAuthorId() == myId);
 
         if (!isOwnPost && !post.isJoined() && !post.isPendingApproval()) {
-            if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
+            if (post.isArchived() || post.isExpired()) {
+                btnDetailJoin.setText("Hoạt động đã kết thúc");
+                btnDetailJoin.setEnabled(false);
+                btnDetailJoin.setAlpha(0.5f);
+                btnDetailJoin.setOnClickListener(null);
+            } else if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
                 btnDetailJoin.setText("Đã đủ thành viên");
                 btnDetailJoin.setEnabled(false);
                 btnDetailJoin.setAlpha(0.6f);
@@ -372,6 +377,11 @@ public class PostDetailActivity extends AppCompatActivity {
             btnDetailJoin.setText("⏳ Đang chờ duyệt");
             btnDetailJoin.setEnabled(false);
             btnDetailJoin.setAlpha(0.6f);
+        } else if (post.isArchived() || post.isExpired()) {
+            btnDetailJoin.setText("Hoạt động đã kết thúc");
+            btnDetailJoin.setEnabled(false);
+            btnDetailJoin.setAlpha(0.5f);
+            btnDetailJoin.setOnClickListener(null);
         } else if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
             btnDetailJoin.setText("Đã đủ thành viên");
             btnDetailJoin.setEnabled(false);

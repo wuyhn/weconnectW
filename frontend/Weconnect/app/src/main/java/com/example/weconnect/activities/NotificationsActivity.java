@@ -20,6 +20,7 @@ import com.example.weconnect.data.FakeNotificationRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.NotificationItem;
 import com.example.weconnect.util.BadgeManager;
+import com.example.weconnect.websocket.WebSocketManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -58,9 +59,20 @@ public class NotificationsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Chỉ hiển thị badge theo state hiện tại, không reset
         BadgeManager.applyBadge(tvNotifBadge);
         loadNotifications();
+        // Lắng nghe notification mới qua STOMP để auto-refresh
+        if (WebSocketManager.getInstance().isConnected()) {
+            WebSocketManager.getInstance().subscribeToNotifications(payload -> {
+                loadNotifications();
+            });
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        WebSocketManager.getInstance().unsubscribeFromNotifications();
     }
 
     private void loadNotifications() {
@@ -95,6 +107,14 @@ public class NotificationsActivity extends AppCompatActivity {
     }
 
     private void displayNotifications(List<NotificationItem> notifications) {
+        // Sync badge với số unread thực tế từ server
+        int unreadCount = 0;
+        for (NotificationItem n : notifications) {
+            if (!n.isRead()) unreadCount++;
+        }
+        BadgeManager.setCount(unreadCount);
+        BadgeManager.applyBadge(tvNotifBadge);
+
         if (notifications.isEmpty()) {
             tvEmpty.setVisibility(View.VISIBLE);
             rvNotifications.setVisibility(View.GONE);

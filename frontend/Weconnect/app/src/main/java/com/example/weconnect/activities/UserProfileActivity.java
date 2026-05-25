@@ -63,6 +63,7 @@ public class UserProfileActivity extends AppCompatActivity {
     private ImageView ivUserProfileAvatar;
     private TextView tvUserProfileName;
     private TextView tvUserReputation;
+    private TextView tvReputationLabel;
     private TextView tvUserBio;
     private TextView tvUserBirthday;
     private TextView tvUserGender;
@@ -293,6 +294,8 @@ public class UserProfileActivity extends AppCompatActivity {
                     .circleCrop()
                     .into(ivUserProfileAvatar);
         }
+        cachedMyPosts = null;
+        myPostsAdapter = null;
         bindActivePosts();
         loadMyActivities();
         hideRelatedPosts();
@@ -307,6 +310,7 @@ public class UserProfileActivity extends AppCompatActivity {
         ivUserProfileAvatar = findViewById(R.id.ivUserProfileAvatar);
         tvUserProfileName = findViewById(R.id.tvUserProfileName);
         tvUserReputation = findViewById(R.id.tvUserReputation);
+        tvReputationLabel = findViewById(R.id.tvReputationLabel);
         tvUserBio = findViewById(R.id.tvUserBio);
         tvUserBirthday = findViewById(R.id.tvUserBirthday);
         tvUserGender = findViewById(R.id.tvUserGender);
@@ -632,11 +636,19 @@ public class UserProfileActivity extends AppCompatActivity {
 
                     // Điểm uy tín
                     if (tvUserReputation != null) {
-                        Object repObj = profile.get("reputationScore");
-                        int rep = repObj != null
-                                ? (int) Math.round(((Number) repObj).doubleValue())
-                                : 100;
-                        tvUserReputation.setText(String.valueOf(rep));
+                        int reviewCount = profile.get("totalReviewCount") != null
+                                ? ((Number) profile.get("totalReviewCount")).intValue() : 0;
+                        if (reviewCount == 0) {
+                            tvUserReputation.setText("—");
+                            if (tvReputationLabel != null) tvReputationLabel.setText("Chưa có đánh giá");
+                        } else {
+                            Object repObj = profile.get("reputationScore");
+                            int rep = repObj != null
+                                    ? (int) Math.round(((Number) repObj).doubleValue())
+                                    : 100;
+                            tvUserReputation.setText(String.valueOf(rep));
+                            if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
+                        }
                     }
 
                     // Load avatar with Glide
@@ -720,13 +732,21 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
-                    // Điểm uy tín — default 100 nếu API không trả về
+                    // Điểm uy tín — hiển thị "—" nếu chưa có đánh giá nào
                     if (tvUserReputation != null) {
-                        Object repObj = profile.get("reputationScore");
-                        int rep = repObj != null
-                                ? (int) Math.round(((Number) repObj).doubleValue())
-                                : 100;
-                        tvUserReputation.setText(String.valueOf(rep));
+                        int reviewCount = profile.get("totalReviewCount") != null
+                                ? ((Number) profile.get("totalReviewCount")).intValue() : 0;
+                        if (reviewCount == 0) {
+                            tvUserReputation.setText("—");
+                            if (tvReputationLabel != null) tvReputationLabel.setText("Chưa có đánh giá");
+                        } else {
+                            Object repObj = profile.get("reputationScore");
+                            int rep = repObj != null
+                                    ? (int) Math.round(((Number) repObj).doubleValue())
+                                    : 100;
+                            tvUserReputation.setText(String.valueOf(rep));
+                            if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
+                        }
                     }
 
                     // Load avatar with Glide + persist URL globally
@@ -1708,11 +1728,6 @@ public class UserProfileActivity extends AppCompatActivity {
         tvHeader.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
         group1.addView(tvHeader, matchW());
         addIosSep(group1);
-        addIosRow(group1, "Nhắn tin", 0xFF1C1C1E, v -> {
-            sheet.dismiss();
-            openDirectMessageFromProfile();
-        });
-        addIosSep(group1);
         addIosRow(group1, "Chặn người dùng", 0xFFFF3B30, v -> {
             sheet.dismiss();
             showBlockUserConfirmDialog();
@@ -2627,6 +2642,7 @@ public class UserProfileActivity extends AppCompatActivity {
                             "Đã gửi đánh giá " + stars + " sao cho " + username,
                             Toast.LENGTH_SHORT).show();
                     loadReviewsFromBackend();
+                    loadOtherUserProfile(reviewedUserId);
                     checkAndSetupRateButton(reviewedUserId);
                 } else {
                     String errorMsg = "Không thể gửi đánh giá";
@@ -2665,7 +2681,10 @@ public class UserProfileActivity extends AppCompatActivity {
                     Toast.makeText(UserProfileActivity.this, "Đã cập nhật đánh giá", Toast.LENGTH_SHORT).show();
                     loadReviewsFromBackend();
                     long targetId = getIntent().getLongExtra("user_id", -1);
-                    if (targetId > 0) checkAndSetupRateButton(targetId);
+                    if (targetId > 0) {
+                        loadOtherUserProfile(targetId);
+                        checkAndSetupRateButton(targetId);
+                    }
                 } else {
                     Toast.makeText(UserProfileActivity.this, "Không thể cập nhật đánh giá", Toast.LENGTH_SHORT).show();
                 }
@@ -2686,7 +2705,10 @@ public class UserProfileActivity extends AppCompatActivity {
                     Toast.makeText(UserProfileActivity.this, "Đã xóa đánh giá", Toast.LENGTH_SHORT).show();
                     loadReviewsFromBackend();
                     long targetId = getIntent().getLongExtra("user_id", -1);
-                    if (targetId > 0) checkAndSetupRateButton(targetId);
+                    if (targetId > 0) {
+                        loadOtherUserProfile(targetId);
+                        checkAndSetupRateButton(targetId);
+                    }
                 } else {
                     Toast.makeText(UserProfileActivity.this, "Không thể xóa đánh giá", Toast.LENGTH_SHORT).show();
                 }

@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.example.weconnect.R;
 import com.example.weconnect.activities.NotificationsActivity;
+import com.example.weconnect.activities.ReportPenaltyDetailActivity;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.models.ApiResponse;
@@ -48,7 +49,43 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
                 body = remoteMessage.getNotification().getBody();
             }
         }
-        showNotification(title, body);
+
+        Map<String, String> data = remoteMessage.getData();
+        String type = data.get("type");
+        String relatedReportId = data.get("relatedReportId");
+
+        if (("REPORT_PENALTY".equals(type) || "REPORT_CONFIRMED".equals(type))
+                && relatedReportId != null) {
+            showNotificationWithReportDeeplink(title, body, relatedReportId);
+        } else {
+            showNotification(title, body);
+        }
+    }
+
+    private void showNotificationWithReportDeeplink(String title, String body, String reportIdStr) {
+        createNotificationChannel();
+        long reportId = -1;
+        try { reportId = Long.parseLong(reportIdStr); } catch (Exception ignored) {}
+
+        Intent intent = new Intent(this, ReportPenaltyDetailActivity.class);
+        intent.putExtra("report_id", reportId);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pendingIntent);
+
+        NotificationManagerCompat manager = NotificationManagerCompat.from(this);
+        manager.notify(requestCode, builder.build());
     }
 
     private void sendTokenToBackend(String fcmToken) {

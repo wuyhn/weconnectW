@@ -48,6 +48,7 @@ public class NotificationController {
             item.put("relatedUsername", n.getRelatedUsername());
             item.put("relatedPostId", n.getRelatedPostId());
             item.put("relatedUserId", n.getRelatedUserId());
+            item.put("relatedReportId", n.getRelatedReportId());
             item.put("read", n.isRead());
             item.put("actioned", n.isActioned());
             item.put("actionResult", n.getActionResult());

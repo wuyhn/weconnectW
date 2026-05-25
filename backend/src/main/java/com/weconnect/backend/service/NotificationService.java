@@ -4,11 +4,15 @@ import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.repository.BlockedUserRepository;
 import com.weconnect.backend.repository.NotificationRepository;
 import com.weconnect.backend.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -16,12 +20,17 @@ import java.util.stream.Collectors;
 @Service
 public class NotificationService {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
     private final BlockedUserRepository blockedUserRepository;
 
     @Autowired(required = false)
     private FCMService fcmService;
+
+    @Autowired(required = false)
+    private SimpMessagingTemplate messagingTemplate;
 
     public NotificationService(NotificationRepository notificationRepository,
                                UserRepository userRepository,
@@ -63,6 +72,18 @@ public class NotificationService {
     public void createNotification(Long userId, Notification.NotificationType type,
                                    String message, String relatedUsername,
                                    Long relatedPostId, Long relatedUserId) {
+        createNotificationInternal(userId, type, message, relatedUsername, relatedPostId, relatedUserId, null);
+    }
+
+    @Transactional
+    public void createNotificationForReport(Long userId, Notification.NotificationType type,
+                                            String message, String relatedUsername, Long relatedReportId) {
+        createNotificationInternal(userId, type, message, relatedUsername, null, null, relatedReportId);
+    }
+
+    private void createNotificationInternal(Long userId, Notification.NotificationType type,
+                                            String message, String relatedUsername,
+                                            Long relatedPostId, Long relatedUserId, Long relatedReportId) {
         Notification notification = Notification.builder()
                 .userId(userId)
                 .type(type)
@@ -70,20 +91,43 @@ public class NotificationService {
                 .relatedUsername(relatedUsername)
                 .relatedPostId(relatedPostId)
                 .relatedUserId(relatedUserId)
+                .relatedReportId(relatedReportId)
                 .isRead(false)
                 .isActioned(false)
                 .build();
         Notification saved = notificationRepository.save(notification);
 
+        // Real-time delivery via STOMP (khi app đang online)
+        if (messagingTemplate != null) {
+            try {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("notificationId", saved.getId());
+                payload.put("type", type.name());
+                payload.put("message", message);
+                if (relatedReportId != null) payload.put("relatedReportId", relatedReportId);
+                if (relatedPostId != null) payload.put("relatedPostId", relatedPostId);
+                if (relatedUserId != null) payload.put("relatedUserId", relatedUserId);
+                messagingTemplate.convertAndSendToUser(
+                        userId.toString(), "/queue/notifications", payload);
+            } catch (Exception ignored) {}
+        }
+
+        // FCM push notification (khi app offline)
         if (fcmService != null) {
-            userRepository.findById(userId).ifPresent(user -> {
-                if (user.getFcmToken() != null && !user.getFcmToken().isBlank()) {
-                    Map<String, String> data = new HashMap<>();
-                    data.put("type", type.name());
-                    data.put("notificationId", String.valueOf(saved.getId()));
-                    fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
-                }
-            });
+            try {
+                userRepository.findById(userId).ifPresent(user -> {
+                    if (user.getFcmToken() != null && !user.getFcmToken().isBlank()) {
+                        Map<String, String> data = new HashMap<>();
+                        data.put("type", type.name());
+                        data.put("notificationId", String.valueOf(saved.getId()));
+                        if (relatedReportId != null) data.put("relatedReportId", String.valueOf(relatedReportId));
+                        if (relatedPostId != null) data.put("relatedPostId", String.valueOf(relatedPostId));
+                        fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
+                    }
+                });
+            } catch (Exception e) {
+                log.warn("FCM delivery failed for user {}: {}", userId, e.getMessage());
+            }
         }
     }
 

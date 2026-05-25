@@ -31,10 +31,12 @@ public class WebSocketManager {
     private Disposable feedSubscription;
     private Disposable avatarUpdateSubscription;
     private Disposable roomEventsSubscription;
+    private Disposable notificationSubscription;
     private Consumer<String> chatListCallback;
     private Consumer<String> feedCallback;
     private Consumer<String> avatarUpdateCallback;
     private Consumer<String> roomEventsCallback;
+    private Consumer<String> notificationCallback;
     private boolean connected = false;
 
     private WebSocketManager() {}
@@ -287,6 +289,38 @@ public class WebSocketManager {
         }
     }
 
+    /**
+     * Subscribe nhận notification realtime (khi server push qua STOMP).
+     * Dùng ở NotificationsActivity và MainActivity để cập nhật badge.
+     */
+    public void subscribeToNotifications(Consumer<String> onNotification) {
+        if (stompClient == null) return;
+        notificationCallback = onNotification;
+
+        if (notificationSubscription != null && !notificationSubscription.isDisposed()) {
+            notificationSubscription.dispose();
+        }
+
+        notificationSubscription = stompClient.topic("/user/queue/notifications")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (notificationCallback != null) {
+                        notificationCallback.accept(frame.getPayload());
+                    }
+                }, error -> Log.e(TAG, "Notification subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(notificationSubscription);
+    }
+
+    public void unsubscribeFromNotifications() {
+        notificationCallback = null;
+        if (notificationSubscription != null && !notificationSubscription.isDisposed()) {
+            notificationSubscription.dispose();
+            notificationSubscription = null;
+        }
+    }
+
     public boolean isConnected() {
         return connected && stompClient != null;
     }
@@ -300,6 +334,7 @@ public class WebSocketManager {
         feedCallback = null;
         avatarUpdateCallback = null;
         roomEventsCallback = null;
+        notificationCallback = null;
         roomSubscriptions.clear();
         if (compositeDisposable != null && !compositeDisposable.isDisposed()) {
             compositeDisposable.dispose();

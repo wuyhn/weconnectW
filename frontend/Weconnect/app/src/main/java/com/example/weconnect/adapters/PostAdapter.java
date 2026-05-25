@@ -38,11 +38,17 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("dd/MM", Locale.getDefault());
     private final String currentUsername;
     private java.util.Set<String> viewerInterests;
+    private boolean isArchive = false;
 
     public PostAdapter(Context context, List<Post> postList) {
         this.context = context;
         this.postList = postList;
         this.currentUsername = FakePostRepository.getInstance().getCurrentUsername();
+    }
+
+    public PostAdapter(Context context, List<Post> postList, boolean isArchive) {
+        this(context, postList);
+        this.isArchive = isArchive;
     }
 
     /**
@@ -223,8 +229,10 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         LinearLayout root = buildIosRoot();
         LinearLayout group1 = buildIosGroup();
         addIosHeader(group1, "Tuỳ chọn bài viết");
-        addIosSep(group1);
-        addIosRow(group1, "Chỉnh sửa bài viết", 0xFF1C1C1E, v -> { sheet.dismiss(); showEditPostDialog(post, position); });
+        if (!isArchive && !post.isArchived() && !post.isExpired()) {
+            addIosSep(group1);
+            addIosRow(group1, "Chỉnh sửa bài viết", 0xFF1C1C1E, v -> { sheet.dismiss(); showEditPostDialog(post, position); });
+        }
         addIosSep(group1);
         addIosRow(group1, "Hủy hoạt động", 0xFFFF3B30, v -> { sheet.dismiss(); showCancelActivityConfirmation(post, position); });
         root.addView(group1, matchW());

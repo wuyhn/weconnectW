@@ -8,6 +8,8 @@ import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,22 +23,27 @@ import java.util.Map;
 @Service
 public class ReportService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReportService.class);
+
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final PostRepository postRepository;
     private final PostMemberRepository postMemberRepository;
     private final NotificationService notificationService;
+    private final ReviewService reviewService;
 
     public ReportService(ReportRepository reportRepository,
                          UserRepository userRepository,
                          PostRepository postRepository,
                          PostMemberRepository postMemberRepository,
-                         NotificationService notificationService) {
+                         NotificationService notificationService,
+                         ReviewService reviewService) {
         this.reportRepository = reportRepository;
         this.userRepository = userRepository;
         this.postRepository = postRepository;
         this.postMemberRepository = postMemberRepository;
         this.notificationService = notificationService;
+        this.reviewService = reviewService;
     }
 
     // User tạo report từ app
@@ -80,14 +87,164 @@ public class ReportService {
         return "Gửi báo cáo thành công!";
     }
 
+    // === Admin: Xác nhận báo cáo hợp lệ (VALID) ===
+
+    @Transactional
+    public Map<String, Object> approveReport(Long reportId, Long adminId, Integer penaltyPoint) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+
+        if (report.getStatus() == Report.Status.VALID) {
+            throw new RuntimeException("Report này đã được xác nhận rồi.");
+        }
+
+        int penalty = penaltyPoint != null ? penaltyPoint
+                : suggestPenaltyPoint(report.getReason(), report.getTargetType());
+
+        report.setStatus(Report.Status.VALID);
+        report.setPenaltyPoint(penalty);
+        report.setReviewedBy(adminId);
+        report.setReviewedAt(LocalDateTime.now());
+        reportRepository.save(report);
+
+        Long targetUserId = resolveTargetUserId(report);
+        if (targetUserId != null) {
+            reviewService.recalculateReputation(targetUserId);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("status", "VALID");
+        result.put("penaltyPoint", penalty);
+        result.put("reportId", reportId);
+        result.put("targetType", report.getTargetType().name());
+        result.put("targetUserId", targetUserId);
+        result.put("reporterId", report.getReporterId());
+        return result;
+    }
+
+    // === Admin: Từ chối báo cáo (REJECTED) ===
+
+    @Transactional
+    public Map<String, Object> rejectReport(Long reportId, Long adminId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+
+        if (report.getStatus() == Report.Status.REJECTED) {
+            throw new RuntimeException("Report này đã bị từ chối rồi.");
+        }
+
+        boolean wasValid = report.getStatus() == Report.Status.VALID;
+
+        report.setStatus(Report.Status.REJECTED);
+        report.setPenaltyPoint(0);
+        report.setReviewedBy(adminId);
+        report.setReviewedAt(LocalDateTime.now());
+        reportRepository.save(report);
+
+        // Chỉ cần recalculate nếu trước đó là VALID (reverting penalty)
+        if (wasValid) {
+            Long targetUserId = resolveTargetUserId(report);
+            if (targetUserId != null) {
+                reviewService.recalculateReputation(targetUserId);
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("status", "REJECTED");
+        result.put("reportId", reportId);
+        result.put("reporterId", report.getReporterId());
+        return result;
+    }
+
+    // === Admin: Ẩn bài viết từ report (POST target only) ===
+
+    @Transactional
+    public String hidePostForReport(Long reportId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+        if (report.getTargetType() != Report.TargetType.POST) {
+            throw new RuntimeException("Báo cáo này không nhắm vào bài viết.");
+        }
+        Post post = postRepository.findById(report.getTargetId())
+                .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
+        post.setArchived(true);
+        postRepository.save(post);
+        return "Đã ẩn bài viết";
+    }
+
+    // === Admin: Xóa bài viết từ report (POST target only) ===
+
+    @Transactional
+    public String deletePostForReport(Long reportId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+        if (report.getTargetType() != Report.TargetType.POST) {
+            throw new RuntimeException("Báo cáo này không nhắm vào bài viết.");
+        }
+        Long postId = report.getTargetId();
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
+        postMemberRepository.deleteByPostId(postId);
+        postRepository.delete(post);
+        return "Đã xóa bài viết";
+    }
+
+    // === Gợi ý mức phạt dựa theo lý do báo cáo ===
+
+    public int suggestPenaltyPoint(String reason, Report.TargetType targetType) {
+        if (reason == null) return 10;
+        String r = reason.trim().toLowerCase();
+        if (targetType == Report.TargetType.USER) {
+            return switch (r) {
+                case "spam/làm phiền" -> 10;
+                case "nội dung không phù hợp" -> 15;
+                case "lừa đảo/giả mạo" -> 30;
+                case "quấy rối/xúc phạm" -> 30;
+                default -> 10;
+            };
+        } else {
+            return switch (r) {
+                case "spam/quảng cáo" -> 5;
+                case "thông tin sai lệch" -> 10;
+                case "nội dung thô tục" -> 10;
+                case "vi phạm quy định" -> 10;
+                case "quấy rối/bắt nạt" -> 20;
+                default -> 10;
+            };
+        }
+    }
+
+    // === Lấy các mức phạt hợp lệ cho lý do báo cáo ===
+
+    public List<Integer> getPenaltyOptions(String reason, Report.TargetType targetType) {
+        if (reason == null) return List.of(5, 10, 15, 20, 30);
+        String r = reason.trim().toLowerCase();
+        if (targetType == Report.TargetType.USER) {
+            return switch (r) {
+                case "spam/làm phiền" -> List.of(10);
+                case "nội dung không phù hợp" -> List.of(15);
+                case "lừa đảo/giả mạo" -> List.of(30);
+                case "quấy rối/xúc phạm" -> List.of(30);
+                default -> List.of(5, 15, 30);
+            };
+        } else {
+            return switch (r) {
+                case "spam/quảng cáo" -> List.of(5);
+                case "thông tin sai lệch" -> List.of(10);
+                case "nội dung thô tục" -> List.of(10);
+                case "vi phạm quy định" -> List.of(10, 20);
+                case "quấy rối/bắt nạt" -> List.of(20);
+                default -> List.of(5, 10, 20);
+            };
+        }
+    }
+
     // === Admin Notification (Report-based) ===
 
-    /** Đếm report chưa xem bởi admin */
     public int getUnviewedReportCount() {
         return reportRepository.countByAdminViewedFalse();
     }
 
-    /** Lấy tất cả reports (cho notification dropdown) */
     public List<Map<String, Object>> getReportNotifications() {
         List<Report> reports = reportRepository.findAllByOrderByCreatedAtDesc();
         List<Map<String, Object>> result = new ArrayList<>();
@@ -106,7 +263,6 @@ public class ReportService {
             map.put("adminViewed", r.isAdminViewed());
             map.put("createdAt", r.getCreatedAt());
 
-            // Tên target
             if (r.getTargetType() == Report.TargetType.POST) {
                 Post post = postRepository.findById(r.getTargetId()).orElse(null);
                 if (post != null) {
@@ -124,7 +280,6 @@ public class ReportService {
         return result;
     }
 
-    /** Đánh dấu 1 report đã xem */
     @Transactional
     public void markReportViewed(Long reportId) {
         Report report = reportRepository.findById(reportId)
@@ -133,7 +288,6 @@ public class ReportService {
         reportRepository.save(report);
     }
 
-    /** Đánh dấu tất cả reports đã xem */
     @Transactional
     public void markAllReportsViewed() {
         List<Report> unviewed = reportRepository.findByAdminViewedFalseOrderByCreatedAtDesc();
@@ -143,7 +297,6 @@ public class ReportService {
         reportRepository.saveAll(unviewed);
     }
 
-    // Lấy tất cả reports (cho admin)
     public List<Map<String, Object>> getAllReports() {
         List<Report> reports = reportRepository.findAllByOrderByCreatedAtDesc();
         List<Map<String, Object>> result = new ArrayList<>();
@@ -153,234 +306,84 @@ public class ReportService {
         return result;
     }
 
-    // Lấy chi tiết report (cho admin)
     public Map<String, Object> getReportById(Long id) {
         Report report = reportRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
         return buildReportMap(report);
     }
 
-    // Admin cập nhật status report
-    public String updateReportStatus(Long id, String status, Long adminId) {
-        Report report = reportRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+    // === Notification helpers ===
 
-        Report.Status newStatus;
-        try {
-            newStatus = Report.Status.valueOf(status.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Status phải là PENDING, REVIEWED hoặc RESOLVED.");
-        }
-
-        report.setStatus(newStatus);
-        report.setReviewedAt(LocalDateTime.now());
-        report.setReviewedBy(adminId);
-        reportRepository.save(report);
-        return "Cập nhật trạng thái thành công!";
-    }
-
-    /**
-     * Admin xử lý report với hành động cụ thể.
-     * Actions: WARN, HIDE_POST, DELETE_POST, BLOCK_USER, DELETE_USER, NO_VIOLATION
-     * Trả về actionLabel để controller gửi notification sau khi transaction commit.
-     */
-    @Transactional
-    public String[] resolveReport(Long reportId, String action, Long adminId) {
-        Report report = reportRepository.findById(reportId)
-                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
-
-        if (report.getStatus() == Report.Status.RESOLVED) {
-            throw new RuntimeException("Report này đã được xử lý rồi.");
-        }
-
-        String actionUpper = action.toUpperCase();
-        Long targetId = report.getTargetId();
-        String actionLabel;
-
-        switch (actionUpper) {
-            case "WARN" -> {
-                actionLabel = handleWarn(report);
-            }
-            case "HIDE_POST" -> {
-                actionLabel = handleHidePost(targetId);
-            }
-            case "DELETE_POST" -> {
-                actionLabel = handleDeletePost(targetId);
-            }
-            case "BLOCK_USER" -> {
-                actionLabel = handleBlockUser(targetId);
-            }
-            case "DELETE_USER" -> {
-                actionLabel = handleDeleteUser(targetId);
-            }
-            case "NO_VIOLATION" -> {
-                actionLabel = "Đánh dấu không vi phạm";
-            }
-            default -> throw new RuntimeException("Action không hợp lệ: " + action);
-        }
-
-        // Cập nhật report
-        report.setStatus(Report.Status.RESOLVED);
-        report.setAdminAction(actionUpper);
-        report.setReviewedAt(LocalDateTime.now());
-        report.setReviewedBy(adminId);
-        reportRepository.save(report);
-
-        // Trả về info để controller gửi notification sau khi transaction xong
-        return new String[]{
-                actionUpper,
-                actionLabel,
-                String.valueOf(report.getReporterId()),
-                report.getTargetType().name(),
-                String.valueOf(report.getTargetId())
-        };
-    }
-
-    /**
-     * Gửi notifications sau khi resolve thành công (gọi từ controller, ngoài transaction)
-     */
-    public void sendResolveNotifications(String action, String actionLabel,
-                                          Long reporterId, String targetType, Long targetId) {
-        // Gửi notification cho người bị report (target)
-        try {
-            Long targetUserId = null;
-            String msg = null;
-
-            if ("USER".equals(targetType)) {
-                if ("NO_VIOLATION".equals(action) || "DELETE_USER".equals(action)) {
-                    // Không gửi nếu không vi phạm hoặc user đã bị xóa
-                } else {
-                    targetUserId = targetId;
-                    msg = "Admin đã xử lý báo cáo liên quan đến bạn: " + actionLabel + ".";
-                }
-            } else {
-                if (!"NO_VIOLATION".equals(action)) {
-                    Post post = postRepository.findById(targetId).orElse(null);
-                    if (post != null) {
-                        targetUserId = post.getAuthorId();
-                        msg = "Admin đã xử lý báo cáo bài viết của bạn: " + actionLabel + ".";
-                    }
-                }
-            }
-
-            if (targetUserId != null && msg != null) {
-                Notification.NotificationType nType = "WARN".equals(action)
-                        ? Notification.NotificationType.ADMIN_WARNING
-                        : Notification.NotificationType.ADMIN_ACTION;
-                notificationService.createNotification(targetUserId, nType, msg, "Admin", null, null);
-            }
-        } catch (Exception ignored) {}
-
-        // Gửi notification cho người đã gửi report
-        try {
-            String msg = "Báo cáo của bạn đã được admin xử lý: " + actionLabel + ". Cảm ơn bạn đã gửi báo cáo!";
-            notificationService.createNotification(reporterId,
-                    Notification.NotificationType.ADMIN_ACTION, msg, "Admin", null, null);
-        } catch (Exception ignored) {}
-    }
-
-    // --- Action handlers ---
-
-    private String handleWarn(Report report) {
-        if (report.getTargetType() == Report.TargetType.USER) {
-            User user = userRepository.findById(report.getTargetId())
-                    .orElseThrow(() -> new RuntimeException("User không tồn tại."));
-            // Vi phạm mức thường/trung bình: -20 điểm uy tín
-            deductReputation(user, 20);
-            return "Cảnh cáo người dùng";
-        } else {
-            Post post = postRepository.findById(report.getTargetId())
-                    .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
-            User author = userRepository.findById(post.getAuthorId())
-                    .orElseThrow(() -> new RuntimeException("Tác giả bài viết không tồn tại."));
-            // Vi phạm mức thường/trung bình: -20 điểm uy tín
-            deductReputation(author, 20);
-            return "Cảnh cáo người đăng bài";
-        }
-    }
-
-    private String handleHidePost(Long postId) {
-        Post post = postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
-        post.setArchived(true);
-        postRepository.save(post);
-        return "Ẩn bài viết";
-    }
-
-    private String handleDeletePost(Long postId) {
-        Post post = postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("Bài viết không tồn tại."));
-        postMemberRepository.deleteByPostId(postId);
-        postRepository.delete(post);
-        return "Xóa bài viết";
-    }
-
-    private String handleBlockUser(Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User không tồn tại."));
-        // Vi phạm nghiêm trọng: -40 điểm uy tín + khóa tài khoản
-        deductReputation(user, 40);
-        user.setBlocked(true);
-        userRepository.save(user);
-        return "Khóa tài khoản";
-    }
-
-    // Trừ điểm uy tín và clamp về 0–100
-    private void deductReputation(User user, double amount) {
-        double newScore = Math.max(0, Math.min(100, user.getReputationScore() - amount));
-        user.setReputationScore(newScore);
-        userRepository.save(user);
-    }
-
-    private String handleDeleteUser(Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User không tồn tại."));
-        userRepository.delete(user);
-        return "Xóa tài khoản";
-    }
-
-    // --- Notification helpers ---
-
-    private void sendTargetNotification(Report report, String action, String actionLabel) {
-        Long targetUserId;
-        String msg;
-
-        if (report.getTargetType() == Report.TargetType.USER) {
-            targetUserId = report.getTargetId();
-            if ("NO_VIOLATION".equals(action)) return; // không thông báo nếu không vi phạm
-            if ("DELETE_USER".equals(action)) return; // user đã bị xóa, không gửi được
-            msg = "Admin đã xử lý báo cáo liên quan đến bạn: " + actionLabel + ".";
-        } else {
-            // POST target — notify author
-            Post post = null;
+    public void sendApproveNotifications(Long reporterId, String targetType, Long targetUserId,
+                                         int penaltyPoint, Long reportId) {
+        if (targetUserId != null) {
             try {
-                post = postRepository.findById(report.getTargetId()).orElse(null);
-            } catch (Exception ignored) {}
+                String msg = "USER".equals(targetType)
+                        ? "Báo cáo về bạn đã được xác nhận. Điểm uy tín của bạn bị trừ " + penaltyPoint + " điểm."
+                        : "Bài viết của bạn đã bị xác nhận vi phạm. Điểm uy tín của bạn bị trừ " + penaltyPoint + " điểm.";
+                notificationService.createNotificationForReport(targetUserId,
+                        Notification.NotificationType.REPORT_PENALTY, msg, "Admin", reportId);
+            } catch (Exception e) {
+                log.warn("Gửi REPORT_PENALTY notification cho user {} thất bại: {}", targetUserId, e.getMessage(), e);
+            }
+        }
+        try {
+            notificationService.createNotification(reporterId,
+                    Notification.NotificationType.ADMIN_ACTION,
+                    "Báo cáo của bạn đã được xác nhận là hợp lệ. Cảm ơn bạn đã đóng góp!",
+                    "Admin", null, null);
+        } catch (Exception e) {
+            log.warn("Gửi ADMIN_ACTION notification cho reporter {} thất bại: {}", reporterId, e.getMessage());
+        }
+    }
 
-            if (post == null) return; // post đã bị xóa
-            targetUserId = post.getAuthorId();
+    public Map<String, Object> getMyReportDetail(Long reportId, Long userId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy báo cáo."));
 
-            if ("NO_VIOLATION".equals(action)) return;
-            msg = "Admin đã xử lý báo cáo bài viết của bạn: " + actionLabel + ".";
+        Long targetUserId = resolveTargetUserId(report);
+        if (!userId.equals(targetUserId)) {
+            throw new RuntimeException("Bạn không có quyền xem báo cáo này.");
         }
 
-        try {
-            Notification.NotificationType nType = "WARN".equals(action)
-                    ? Notification.NotificationType.ADMIN_WARNING
-                    : Notification.NotificationType.ADMIN_ACTION;
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", report.getId());
+        map.put("targetType", report.getTargetType().name());
+        map.put("reason", report.getReason());
+        map.put("status", report.getStatus().name());
+        map.put("penaltyPoint", report.getPenaltyPoint());
+        map.put("adminAction", report.getAdminAction());
+        map.put("reviewedAt", report.getReviewedAt());
 
-            notificationService.createNotification(targetUserId, nType,
-                    msg, "Admin", null, null);
+        User user = userRepository.findById(userId).orElse(null);
+        map.put("currentReputationScore", user != null ? user.getReputationScore() : null);
+
+        if (report.getTargetType() == Report.TargetType.POST) {
+            Post post = postRepository.findById(report.getTargetId()).orElse(null);
+            if (post != null) map.put("postContent", post.getContent());
+        }
+
+        return map;
+    }
+
+    public void sendRejectNotifications(Long reporterId) {
+        try {
+            notificationService.createNotification(reporterId,
+                    Notification.NotificationType.ADMIN_ACTION,
+                    "Báo cáo của bạn đã được xem xét nhưng không đủ cơ sở xác nhận vi phạm.",
+                    "Admin", null, null);
         } catch (Exception ignored) {}
     }
 
-    private void sendReporterNotification(Report report, String actionLabel) {
-        try {
-            String msg = "Báo cáo của bạn đã được admin xử lý: " + actionLabel + ". Cảm ơn bạn đã gửi báo cáo!";
-            notificationService.createNotification(report.getReporterId(),
-                    Notification.NotificationType.ADMIN_ACTION,
-                    msg, "Admin", null, null);
-        } catch (Exception ignored) {}
+    // === Helpers ===
+
+    private Long resolveTargetUserId(Report report) {
+        if (report.getTargetType() == Report.TargetType.USER) {
+            return report.getTargetId();
+        }
+        return postRepository.findById(report.getTargetId())
+                .map(Post::getAuthorId)
+                .orElse(null);
     }
 
     private Map<String, Object> buildReportMap(Report r) {
@@ -397,6 +400,9 @@ public class ReportService {
         map.put("reason", r.getReason());
         map.put("description", r.getDescription());
         map.put("status", r.getStatus().name());
+        map.put("penaltyPoint", r.getPenaltyPoint());
+        map.put("suggestedPenalty", suggestPenaltyPoint(r.getReason(), r.getTargetType()));
+        map.put("penaltyOptions", getPenaltyOptions(r.getReason(), r.getTargetType()));
         map.put("adminAction", r.getAdminAction());
         map.put("createdAt", r.getCreatedAt());
         map.put("reviewedAt", r.getReviewedAt());
@@ -404,7 +410,6 @@ public class ReportService {
 
         map.put("evidenceImages", jsonToUrls(r.getEvidenceImages()));
 
-        // Thêm thông tin chi tiết của target
         if (r.getTargetType() == Report.TargetType.POST) {
             Post post = postRepository.findById(r.getTargetId()).orElse(null);
             if (post != null) {
@@ -419,7 +424,6 @@ public class ReportService {
                 targetInfo.put("endTime", post.getEndTime());
                 targetInfo.put("archived", post.isArchived());
                 targetInfo.put("createdAt", post.getCreatedAt());
-                // Lấy tên tác giả
                 User author = userRepository.findById(post.getAuthorId()).orElse(null);
                 targetInfo.put("authorName", author != null ? author.getFullName() : "Unknown");
                 String content = post.getContent() != null ? post.getContent() : "";
@@ -450,7 +454,7 @@ public class ReportService {
         return map;
     }
 
-    // --- JSON helpers (avoid Jackson dependency) ---
+    // --- JSON helpers ---
 
     private static String urlsToJson(List<String> urls) {
         if (urls == null || urls.isEmpty()) return null;
@@ -472,7 +476,6 @@ public class ReportService {
         if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return result;
         trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
         if (trimmed.isEmpty()) return result;
-        // Simple token split: find each "..." value
         int i = 0;
         while (i < trimmed.length()) {
             int start = trimmed.indexOf('"', i);
@@ -493,4 +496,3 @@ public class ReportService {
         return result;
     }
 }
-

@@ -6,6 +6,7 @@ import com.weconnect.backend.entity.User;
 import com.weconnect.backend.entity.UserReview;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
+import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.repository.UserReviewRepository;
 import org.springframework.stereotype.Service;
@@ -27,15 +28,18 @@ public class ReviewService {
     private final UserRepository userRepository;
     private final PostMemberRepository postMemberRepository;
     private final PostRepository postRepository;
+    private final ReportRepository reportRepository;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public ReviewService(UserReviewRepository reviewRepository, UserRepository userRepository,
-                         PostMemberRepository postMemberRepository, PostRepository postRepository) {
+                         PostMemberRepository postMemberRepository, PostRepository postRepository,
+                         ReportRepository reportRepository) {
         this.reviewRepository = reviewRepository;
         this.userRepository = userRepository;
         this.postMemberRepository = postMemberRepository;
         this.postRepository = postRepository;
+        this.reportRepository = reportRepository;
     }
 
     // Lấy danh sách review của 1 user
@@ -96,10 +100,7 @@ public class ReviewService {
 
         UserReview saved = reviewRepository.save(review);
         recalcAverageRating(reviewedUserId);
-        // Áp dụng delta uy tín theo số sao + bonus hoàn thành (lần đầu được review trong hoạt động này)
-        int reviewCountBefore = reviewRepository.countByReviewedUserIdAndPostId(reviewedUserId, postId) - 1;
-        boolean isFirstReviewForThisActivity = reviewCountBefore == 0;
-        applyReputationDelta(reviewedUserId, reputationDeltaForRating(rating), isFirstReviewForThisActivity ? 1.0 : 0.0);
+        recalculateReputation(reviewedUserId);
         return buildReviewMap(saved);
     }
 
@@ -121,12 +122,7 @@ public class ReviewService {
 
         UserReview saved = reviewRepository.save(review);
         recalcAverageRating(review.getReviewedUserId());
-        // Đảo ngược delta cũ, áp dụng delta mới (không thay đổi completion bonus)
-        if (rating != null && !rating.equals(oldRating)) {
-            double oldDelta = oldRating != null ? reputationDeltaForRating(oldRating) : 0;
-            double newDelta = reputationDeltaForRating(rating);
-            applyReputationDelta(review.getReviewedUserId(), newDelta - oldDelta, 0.0);
-        }
+        recalculateReputation(review.getReviewedUserId());
         return buildReviewMap(saved);
     }
 
@@ -140,15 +136,10 @@ public class ReviewService {
         }
 
         Long reviewedUserId = review.getReviewedUserId();
-        Integer oldRating = review.getRating();
-        Long postId = review.getPostId();
-        int reviewCountForActivity = postId != null ? reviewRepository.countByReviewedUserIdAndPostId(reviewedUserId, postId) : 2;
 
         reviewRepository.delete(review);
         recalcAverageRating(reviewedUserId);
-        // Đảo ngược delta rating; nếu đây là review duy nhất cho hoạt động này → đảo ngược completion bonus
-        boolean wasOnlyReviewForActivity = reviewCountForActivity == 1;
-        applyReputationDelta(reviewedUserId, oldRating != null ? -reputationDeltaForRating(oldRating) : 0, wasOnlyReviewForActivity ? -1.0 : 0.0);
+        recalculateReputation(reviewedUserId);
     }
 
     // Kiểm tra quyền đánh giá
@@ -350,24 +341,39 @@ public class ReviewService {
 
     // ======================== REPUTATION HELPERS ========================
 
-    // Trả về delta điểm uy tín theo số sao
-    private double reputationDeltaForRating(int rating) {
-        return switch (rating) {
-            case 1 -> -8.0;
-            case 2 -> -5.0;
-            case 3 -> -2.0;
-            case 4 -> 0.5;
-            case 5 -> 1.0;
-            default -> 0.0;
-        };
-    }
-
-    // Áp dụng delta điểm uy tín (ratingDelta + completionBonus), clamp về 0–100
-    public void applyReputationDelta(Long userId, double ratingDelta, double completionBonus) {
+    /**
+     * Tính lại reputationScore từ đầu dựa trên:
+     *   ratingScore:    avgRating/5*100, hoặc 60 nếu chưa có review
+     *   reportPenalty:  tổng penaltyPoint của các báo cáo VALID nhắm vào user hoặc bài viết của user
+     *
+     * Công thức: score = clamp(ratingScore - reportPenalty, 0, 100)
+     */
+    public void recalculateReputation(Long userId) {
         userRepository.findById(userId).ifPresent(user -> {
-            double newScore = user.getReputationScore() + ratingDelta + completionBonus;
-            newScore = Math.max(0, Math.min(100, newScore));
-            user.setReputationScore(newScore);
+            List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
+
+            double ratingScore;
+            if (reviews.isEmpty()) {
+                ratingScore = 60.0;
+            } else {
+                double avg = reviews.stream()
+                        .filter(r -> r.getRating() != null && r.getRating() > 0)
+                        .mapToInt(UserReview::getRating)
+                        .average()
+                        .orElse(3.0);
+                ratingScore = (avg / 5.0) * 100.0;
+            }
+
+            // Tổng điểm phạt từ báo cáo VALID
+            int userPenalty = reportRepository.sumValidUserReportPenalties(userId);
+            List<Long> postIds = postRepository.findByAuthorId(userId)
+                    .stream().map(Post::getId).toList();
+            int postPenalty = postIds.isEmpty() ? 0
+                    : reportRepository.sumValidPostReportPenaltiesByPostIds(postIds);
+            int reportPenalty = userPenalty + postPenalty;
+
+            double score = Math.max(0.0, Math.min(100.0, ratingScore - reportPenalty));
+            user.setReputationScore(score);
             userRepository.save(user);
         });
     }
