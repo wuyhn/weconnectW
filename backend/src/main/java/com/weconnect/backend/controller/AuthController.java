@@ -5,6 +5,7 @@ import com.weconnect.backend.dto.AuthResponse;
 import com.weconnect.backend.dto.ResendOtpRequest;
 import com.weconnect.backend.dto.VerifyOtpRequest;
 import com.weconnect.backend.dto.request.ApiResponse;
+import com.weconnect.backend.exception.AccountSanctionException;
 import com.weconnect.backend.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -79,6 +80,11 @@ public class AuthController {
                     .code(1000)
                     .message("Đăng nhập thành công!")
                     .result(response)
+                    .build());
+        } catch (AccountSanctionException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1006)
+                    .message(e.getMessage())
                     .build());
         } catch (RuntimeException e) {
             return ResponseEntity.status(401).body(ApiResponse.builder()

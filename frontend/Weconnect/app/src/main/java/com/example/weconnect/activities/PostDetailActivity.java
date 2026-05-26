@@ -14,11 +14,15 @@ import com.example.weconnect.R;
 import com.example.weconnect.api.ChatApiService;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.ChatRoomApiResponse;
+import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
 import com.google.android.material.button.MaterialButton;
+
+import java.util.Map;
 
 import retrofit2.Call;
 import retrofit2.Callback;
@@ -430,11 +434,40 @@ public class PostDetailActivity extends AppCompatActivity {
         }
 
         RetrofitClient.loadToken(this);
-        PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
+        UserApiService userApi = RetrofitClient.getClient().create(UserApiService.class);
 
-        postApi.approveMember(postId, userId).enqueue(new Callback<ApiResponse<Void>>() {
+        userApi.getUserProfile(userId).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
             @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                   Response<ApiResponse<Map<String, Object>>> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
+                    Map<String, Object> profile = response.body().getResult();
+                    if (asBoolean(profile.get("isActivityJoinLocked"))) {
+                        Toast.makeText(PostDetailActivity.this,
+                                "NgÆ°á»i dÃ¹ng nÃ y hiá»‡n khÃ´ng thá»ƒ tham gia hoáº¡t Ä‘á»™ng.",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+
+                    double reputationScore = asDouble(profile.get("reputationScore"), 100.0);
+                    float averageRating = (float) asDouble(profile.get("averageRating"), 0.0);
+                    int totalReviewCount = (int) asDouble(profile.get("totalReviewCount"), 0.0);
+                    showApprovalRiskDialogIfNeeded(
+                            reputationScore,
+                            averageRating,
+                            totalReviewCount,
+                            () -> doApproveUser(postId, userId, userName)
+                    );
+                    return;
+                }
+
+                if (response.isSuccessful()) {
+                    Toast.makeText(PostDetailActivity.this,
+                            "KhÃ´ng táº£i Ä‘Æ°á»£c thÃ´ng tin uy tÃ­n cá»§a ngÆ°á»i dÃ¹ng. Vui lÃ²ng thá»­ láº¡i.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+
                 if (response.isSuccessful()) {
                     layoutApproveReject.setVisibility(View.GONE);
                     tvApprovalResult.setVisibility(View.VISIBLE);
@@ -463,10 +496,98 @@ public class PostDetailActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
                 Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void showApprovalRiskDialogIfNeeded(double reputationScore, float averageRating,
+                                                int totalReviewCount, Runnable onContinue) {
+        // Reputation score can be low even when the user has no reviews yet.
+        boolean hasEnoughReviews = totalReviewCount >= 3;
+        boolean isHighRisk = reputationScore < 30
+                || (hasEnoughReviews && averageRating < 2.0f);
+        boolean isWarning = !isHighRisk && (reputationScore < 50
+                || (hasEnoughReviews && averageRating < 3.0f));
+
+        if (isHighRisk) {
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("NgÆ°á»i nÃ y cÃ³ má»©c uy tÃ­n ráº¥t tháº¥p")
+                    .setMessage("NgÆ°á»i dÃ¹ng nÃ y cÃ³ má»©c uy tÃ­n ráº¥t tháº¥p hoáº·c nhiá»u Ä‘Ã¡nh giÃ¡ khÃ´ng tá»‘t tá»« cÃ¡c hoáº¡t Ä‘á»™ng trÆ°á»›c Ä‘Ã³. Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n cho ngÆ°á»i nÃ y tham gia khÃ´ng?")
+                    .setNegativeButton("Há»§y", null)
+                    .setPositiveButton("Váº«n cho tham gia", (dialog, which) -> onContinue.run())
+                    .show();
+        } else if (isWarning) {
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setTitle("NgÆ°á»i nÃ y cÃ³ má»©c uy tÃ­n tháº¥p")
+                    .setMessage("NgÆ°á»i dÃ¹ng nÃ y cÃ³ Ä‘iá»ƒm uy tÃ­n hoáº·c trung bÃ¬nh Ä‘Ã¡nh giÃ¡ tháº¥p. Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n cho ngÆ°á»i nÃ y tham gia hoáº¡t Ä‘á»™ng khÃ´ng?")
+                    .setNegativeButton("Há»§y", null)
+                    .setPositiveButton("Váº«n cho tham gia", (dialog, which) -> onContinue.run())
+                    .show();
+        } else {
+            onContinue.run();
+        }
+    }
+
+    private void doApproveUser(long postId, long userId, String userName) {
+        RetrofitClient.loadToken(this);
+        PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
+
+        postApi.approveMember(postId, userId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                if (response.isSuccessful()) {
+                    layoutApproveReject.setVisibility(View.GONE);
+                    tvApprovalResult.setVisibility(View.VISIBLE);
+                    tvApprovalResult.setText("âœ… ÄÃ£ cháº¥p nháº­n " + (userName != null ? userName : "ngÆ°á»i dÃ¹ng"));
+
+                    // Cáº­p nháº­t count ngay láº­p tá»©c khÃ´ng cáº§n chá» onResume
+                    post.setMemberCount(post.getMemberCount() + 1);
+                    updateMemberCountUI();
+
+                    new com.google.android.material.dialog.MaterialAlertDialogBuilder(PostDetailActivity.this)
+                            .setTitle("ÄÃ£ duyá»‡t!")
+                            .setMessage("Báº¡n Ä‘Ã£ duyá»‡t " + (userName != null ? userName : "ngÆ°á»i dÃ¹ng") + " tham gia hoáº¡t Ä‘á»™ng.")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } else {
+                    String errorMsg = "Lá»—i khi duyá»‡t";
+                    try {
+                        if (response.errorBody() != null) {
+                            String body = response.errorBody().string();
+                            org.json.JSONObject json = new org.json.JSONObject(body);
+                            if (json.has("message")) errorMsg = json.getString("message");
+                        }
+                    } catch (Exception ignored) {}
+                    Toast.makeText(PostDetailActivity.this, errorMsg, Toast.LENGTH_LONG).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                Toast.makeText(PostDetailActivity.this, "Lá»—i káº¿t ná»‘i", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private double asDouble(Object value, double fallback) {
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Double.parseDouble((String) value);
+            } catch (NumberFormatException ignored) {}
+        }
+        return fallback;
+    }
+
+    private boolean asBoolean(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        return value instanceof String && Boolean.parseBoolean((String) value);
     }
 
     private void rejectUser(long userId, String userName) {
@@ -519,15 +640,22 @@ public class PostDetailActivity extends AppCompatActivity {
         }
         RetrofitClient.loadToken(this);
         PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
-        postApi.joinPost(postId).enqueue(new Callback<ApiResponse<Void>>() {
+        postApi.joinPost(postId).enqueue(new Callback<ApiResponse<JoinGroupResponse>>() {
             @Override
-            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> resp) {
+            public void onResponse(Call<ApiResponse<JoinGroupResponse>> call, Response<ApiResponse<JoinGroupResponse>> resp) {
                 if (resp.isSuccessful()) {
                     post.setPendingApproval(true);
                     btnDetailJoin.setText("⏳ Đang chờ duyệt");
                     btnDetailJoin.setEnabled(false);
                     btnDetailJoin.setAlpha(0.6f);
-                    Toast.makeText(PostDetailActivity.this, "Đã gửi yêu cầu tham gia!", Toast.LENGTH_SHORT).show();
+
+                    // Backend trả flag true khi tag của hoạt động là tag mới được học ngầm vào behavioralTags.
+                    JoinGroupResponse result = resp.body() != null ? resp.body().getResult() : null;
+                    boolean learnedNewTag = result != null && result.isNewTagSuggested();
+                    String toastMessage = learnedNewTag
+                            ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
+                            : "Tham gia nhóm thành công!";
+                    Toast.makeText(PostDetailActivity.this, toastMessage, Toast.LENGTH_SHORT).show();
                 } else {
                     String errorMsg = "Không thể tham gia. Thử lại.";
                     try {
@@ -549,7 +677,7 @@ public class PostDetailActivity extends AppCompatActivity {
                 }
             }
             @Override
-            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+            public void onFailure(Call<ApiResponse<JoinGroupResponse>> call, Throwable t) {
                 Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
             }
         });

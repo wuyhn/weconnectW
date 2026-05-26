@@ -11,6 +11,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
 import com.example.weconnect.R;
+import com.example.weconnect.activities.ConversationActivity;
 import com.example.weconnect.activities.NotificationsActivity;
 import com.example.weconnect.activities.ReportPenaltyDetailActivity;
 import com.example.weconnect.api.RetrofitClient;
@@ -53,10 +54,13 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
         Map<String, String> data = remoteMessage.getData();
         String type = data.get("type");
         String relatedReportId = data.get("relatedReportId");
+        String relatedRoomId = data.get("relatedRoomId");
 
         if (("REPORT_PENALTY".equals(type) || "REPORT_CONFIRMED".equals(type))
                 && relatedReportId != null) {
             showNotificationWithReportDeeplink(title, body, relatedReportId);
+        } else if ("CHAT_SUMMARY".equals(type) && relatedRoomId != null) {
+            showNotificationWithChatDeeplink(title, body, relatedRoomId);
         } else {
             showNotification(title, body);
         }
@@ -69,6 +73,32 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
 
         Intent intent = new Intent(this, ReportPenaltyDetailActivity.class);
         intent.putExtra("report_id", reportId);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pendingIntent);
+
+        NotificationManagerCompat manager = NotificationManagerCompat.from(this);
+        manager.notify(requestCode, builder.build());
+    }
+
+    private void showNotificationWithChatDeeplink(String title, String body, String roomIdStr) {
+        createNotificationChannel();
+        long roomId = -1;
+        try { roomId = Long.parseLong(roomIdStr); } catch (Exception ignored) {}
+
+        Intent intent = new Intent(this, ConversationActivity.class);
+        intent.putExtra("room_id", roomId);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
         int requestCode = (int) (System.currentTimeMillis() & 0xffff);

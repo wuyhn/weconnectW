@@ -664,16 +664,22 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                                 com.example.weconnect.api.RetrofitClient.getClient()
                                         .create(com.example.weconnect.api.PostApiService.class);
                         
-                        postApi.joinPost(Long.parseLong(post.getId())).enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<Void>>() {
+                        postApi.joinPost(Long.parseLong(post.getId())).enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>>() {
                             @Override
-                            public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call,
-                                                   retrofit2.Response<com.example.weconnect.models.ApiResponse<Void>> response) {
+                            public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> call,
+                                                   retrofit2.Response<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> response) {
                                 if (response.isSuccessful()) {
                                     post.setPendingApproval(true);
                                     holder.btnJoinGroup.setText("⏳ Đang chờ duyệt");
                                     holder.btnJoinGroup.setEnabled(false);
                                     holder.btnJoinGroup.setAlpha(0.6f);
-                                    Toast.makeText(context, "Đã gửi yêu cầu tham gia!", Toast.LENGTH_SHORT).show();
+                                    com.example.weconnect.models.JoinGroupResponse result =
+                                            response.body() != null ? response.body().getResult() : null;
+                                    boolean learnedNewTag = result != null && result.isNewTagSuggested();
+                                    String toastMessage = learnedNewTag
+                                            ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
+                                            : "Tham gia nhóm thành công!";
+                                    Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show();
                                 } else {
                                     String errorMsg = "Lỗi khi gửi yêu cầu. Thử lại!";
                                     try {
@@ -695,7 +701,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                             }
 
                             @Override
-                            public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<Void>> call, Throwable t) {
+                            public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> call, Throwable t) {
                                 Toast.makeText(context, "Lỗi kết nối. Thử lại!", Toast.LENGTH_SHORT).show();
                             }
                         });

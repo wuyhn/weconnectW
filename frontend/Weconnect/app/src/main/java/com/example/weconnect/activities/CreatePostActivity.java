@@ -18,6 +18,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import com.example.weconnect.R;
 import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.data.AdministrativeLocationData;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.chip.Chip;
@@ -1139,17 +1140,18 @@ public class CreatePostActivity extends AppCompatActivity {
 
         ivCloseLocation.setOnClickListener(v -> dialog.dismiss());
 
-        // === Cascading data: City → District → Ward ===
+        // Ha Noi now uses a 2-level official address: province/city -> ward/commune.
+        // The old district dropdown is retained only as a UI filter and is never saved.
         java.util.LinkedHashMap<String, java.util.LinkedHashMap<String, String[]>> locationData = new java.util.LinkedHashMap<>();
 
-        // Hà Nội
-        java.util.LinkedHashMap<String, String[]> hanoiDistricts = new java.util.LinkedHashMap<>();
-        hanoiDistricts.put("Hà Đông", new String[]{"Phường Phú Lương", "Phường Vạn Phúc", "Phường Mỗ Lao", "Phường Yên Nghĩa", "Phường Quang Trung"});
-        hanoiDistricts.put("Cầu Giấy", new String[]{"Phường Dịch Vọng", "Phường Mai Dịch", "Phường Nghĩa Đô", "Phường Nghĩa Tân", "Phường Quan Hoa"});
-        hanoiDistricts.put("Thanh Xuân", new String[]{"Phường Nhân Chính", "Phường Thanh Xuân Trung", "Phường Hạ Đình", "Phường Khương Đình"});
-        hanoiDistricts.put("Ba Đình", new String[]{"Phường Đội Cấn", "Phường Cống Vị", "Phường Kim Mã", "Phường Liễu Giai"});
-        hanoiDistricts.put("Hoàn Kiếm", new String[]{"Phường Hàng Bài", "Phường Tràng Tiền", "Phường Cửa Đông", "Phường Lý Thái Tổ"});
-        locationData.put("Hà Nội", hanoiDistricts);
+        java.util.LinkedHashMap<String, String[]> hanoiDistrictFilters = new java.util.LinkedHashMap<>();
+        hanoiDistrictFilters.put("Tất cả phường/xã", AdministrativeLocationData
+                .hanoiWardDisplayNames(null).toArray(new String[0]));
+        for (String oldDistrict : AdministrativeLocationData.hanoiOldDistrictFilters()) {
+            hanoiDistrictFilters.put(oldDistrict, AdministrativeLocationData
+                    .hanoiWardDisplayNames(oldDistrict).toArray(new String[0]));
+        }
+        locationData.put(AdministrativeLocationData.HANOI_NAME, hanoiDistrictFilters);
 
         // TP.HCM
         java.util.LinkedHashMap<String, String[]> hcmDistricts = new java.util.LinkedHashMap<>();
@@ -1172,7 +1174,7 @@ public class CreatePostActivity extends AppCompatActivity {
                 new android.widget.ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, cities);
         actCity.setAdapter(cityAdapter);
 
-        // When city selected → update districts
+        // When city selected -> update area filters and wards
         actCity.setOnItemClickListener((parent, v, position, id) -> {
             String city = actCity.getText().toString();
             actDistrict.setText("", false);
@@ -1183,13 +1185,21 @@ public class CreatePostActivity extends AppCompatActivity {
                 String[] districtNames = districts.keySet().toArray(new String[0]);
                 actDistrict.setAdapter(new android.widget.ArrayAdapter<>(this,
                         android.R.layout.simple_dropdown_item_1line, districtNames));
+                String[] wards = AdministrativeLocationData.HANOI_NAME.equals(city)
+                        ? districts.get("Tất cả phường/xã")
+                        : new String[]{};
+                if (wards != null) {
+                    actWard.setAdapter(new android.widget.ArrayAdapter<>(this,
+                            android.R.layout.simple_dropdown_item_1line, wards));
+                }
+            } else {
+                actWard.setAdapter(new android.widget.ArrayAdapter<>(this,
+                        android.R.layout.simple_dropdown_item_1line, new String[]{}));
             }
-            actWard.setAdapter(new android.widget.ArrayAdapter<>(this,
-                    android.R.layout.simple_dropdown_item_1line, new String[]{}));
             updateLocationPreview(actCity, actDistrict, actWard, tvLocationPreview);
         });
 
-        // When district selected → update wards
+        // When area filter/district selected -> update wards
         actDistrict.setOnItemClickListener((parent, v, position, id) -> {
             String city = actCity.getText().toString();
             String district = actDistrict.getText().toString();
@@ -1260,13 +1270,21 @@ public class CreatePostActivity extends AppCompatActivity {
                 return;
             }
 
-            StringBuilder builder = new StringBuilder();
-            boolean hasValue = false;
-            if (ward.length() > 0) { builder.append(ward); hasValue = true; }
-            if (district.length() > 0) { if (hasValue) builder.append(", "); builder.append(district); hasValue = true; }
-            if (city.length() > 0) { if (hasValue) builder.append(", "); builder.append(city); }
+            if (AdministrativeLocationData.HANOI_NAME.equals(city)) {
+                if (ward.length() == 0) {
+                    Toast.makeText(this, "Vui lòng chọn phường/xã mới của Hà Nội.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                selectedLocation = ward + ", " + AdministrativeLocationData.HANOI_NAME;
+            } else {
+                StringBuilder builder = new StringBuilder();
+                boolean hasValue = false;
+                if (ward.length() > 0) { builder.append(ward); hasValue = true; }
+                if (district.length() > 0) { if (hasValue) builder.append(", "); builder.append(district); hasValue = true; }
+                if (city.length() > 0) { if (hasValue) builder.append(", "); builder.append(city); }
+                selectedLocation = builder.toString();
+            }
 
-            selectedLocation = builder.toString();
             tvSelectedLocation.setText("📍 " + selectedLocation);
             cardSelectedLocation.setVisibility(View.VISIBLE);
             dialog.dismiss();
@@ -1287,6 +1305,17 @@ public class CreatePostActivity extends AppCompatActivity {
         String ward = actWard.getText() != null ? actWard.getText().toString().trim() : "";
         String district = actDistrict.getText() != null ? actDistrict.getText().toString().trim() : "";
         String city = actCity.getText() != null ? actCity.getText().toString().trim() : "";
+
+        if (AdministrativeLocationData.HANOI_NAME.equals(city)) {
+            if (ward.length() > 0) {
+                tvPreview.setText("📍 " + ward + ", " + AdministrativeLocationData.HANOI_NAME);
+            } else if (district.length() > 0) {
+                tvPreview.setText("📍 Bộ lọc khu vực: " + district + " · Chọn phường/xã để lưu địa chỉ");
+            } else {
+                tvPreview.setText("📍 Hà Nội · Chọn phường/xã mới");
+            }
+            return;
+        }
 
         StringBuilder builder = new StringBuilder("📍 ");
         boolean hasValue = false;

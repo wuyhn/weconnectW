@@ -2,6 +2,9 @@ package com.example.weconnect.utils;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -89,7 +92,17 @@ public class UserReportBottomSheet {
             launcher = registerForActivityResult(
                     new ActivityResultContracts.OpenMultipleDocuments(),
                     uris -> {
-                        if (pendingCallback != null && uris != null) {
+                        if (pendingCallback != null && uris != null && !uris.isEmpty()) {
+                            // Bug #3 fix: "claim" quyền đọc bền vững cho từng URI trước khi dùng.
+                            // Nếu không gọi, URI có thể bị thu hồi sau khi Fragment bị remove
+                            // → SecurityException khi doSubmit() mở lại URI.
+                            for (Uri u : uris) {
+                                try {
+                                    requireActivity().getContentResolver()
+                                            .takePersistableUriPermission(
+                                                    u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                } catch (Exception ignored) {}
+                            }
                             pendingCallback.accept(new ArrayList<>(uris));
                         }
                         pendingCallback = null;
@@ -113,10 +126,13 @@ public class UserReportBottomSheet {
                     .findFragmentByTag(TAG);
             if (f == null) {
                 f = new PickerFragment();
+                // Bug #1 fix: commitNow() ném IllegalStateException nếu Activity đã qua
+                // onSaveInstanceState (màn hình tắt, cuộc gọi, v.v.) → app crash.
+                // commitNowAllowingStateLoss() cho phép commit trong mọi trạng thái lifecycle.
                 activity.getSupportFragmentManager()
                         .beginTransaction()
                         .add(f, TAG)
-                        .commitNow();
+                        .commitNowAllowingStateLoss();
             }
             f.launch(callback);
         }
@@ -549,8 +565,11 @@ public class UserReportBottomSheet {
             delLp.topMargin  = dp(context, 3);
             delLp.rightMargin = dp(context, 3);
             del.setLayoutParams(delLp);
+            // Bug #4 fix: dùng tham chiếu URI trực tiếp thay vì index.
+            // idx bị capture lúc tạo view → xóa ảnh giữa dãy làm lệch index → xóa sai ảnh.
+            final Uri uriRef = uri;
             del.setOnClickListener(v -> {
-                if (idx < images.size()) images.remove(idx);
+                images.remove(uriRef);
                 refreshThumbs(context, container, images, submit, selectedIndexRef, descInput);
             });
             frame.addView(del);
@@ -621,27 +640,20 @@ public class UserReportBottomSheet {
         }
         Uri uri = uris.get(index);
         try {
-            ContentResolver cr   = context.getContentResolver();
-            String mimeType      = cr.getType(uri);
-            if (mimeType == null) mimeType = "image/jpeg";
-
-            InputStream is = cr.openInputStream(uri);
-            if (is == null) { onError.run(); return; }
-            byte[] bytes = readBytes(is);
-            is.close();
-
-            if (bytes.length > 5 * 1024 * 1024) {
+            // Bug #2 fix: thay readBytes() (đọc toàn bộ file vào RAM, gây OOM với ảnh lớn)
+            // bằng compressImageUri() — scale bằng inSampleSize trước khi load, nén JPEG 80%.
+            byte[] bytes = compressImageUri(context, uri);
+            if (bytes == null) {
                 Toast.makeText(context,
-                        "Ảnh " + (index + 1) + " vượt quá 5MB", Toast.LENGTH_SHORT).show();
+                        "Không thể đọc ảnh " + (index + 1), Toast.LENGTH_SHORT).show();
                 onError.run();
                 return;
             }
 
-            String ext = mimeType.contains("png") ? ".png"
-                    : mimeType.contains("webp") ? ".webp" : ".jpg";
-            RequestBody requestBody  = RequestBody.create(MediaType.parse(mimeType), bytes);
-            MultipartBody.Part part  = MultipartBody.Part.createFormData(
-                    "file", "evidence_" + index + ext, requestBody);
+            // Output của compressImageUri luôn là JPEG nén ~ ≤ 300KB
+            RequestBody requestBody = RequestBody.create(MediaType.parse("image/jpeg"), bytes);
+            MultipartBody.Part part = MultipartBody.Part.createFormData(
+                    "file", "evidence_" + index + ".jpg", requestBody);
 
             RetrofitClient.getClient().create(FileUploadApi.class)
                     .uploadImage(part)
@@ -669,12 +681,60 @@ public class UserReportBottomSheet {
         }
     }
 
-    private static byte[] readBytes(InputStream is) throws java.io.IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        byte[] chunk = new byte[4096];
-        int read;
-        while ((read = is.read(chunk)) != -1) buffer.write(chunk, 0, read);
-        return buffer.toByteArray();
+    /**
+     * Nén ảnh từ URI xuống dung lượng nhỏ trước khi upload.
+     * Dùng BitmapFactory với inSampleSize để load ảnh theo dạng thu nhỏ,
+     * tránh OOM khi gặp ảnh gốc kích thước lớn (RAW, HEIC, ảnh 50MP, v.v.).
+     * Output: JPEG byte array, resize về max 1280px, quality 80%, ~ 100-300KB.
+     * Trả về null nếu xảy ra bất kỳ lỗi nào (caller hiển thị Toast, không crash).
+     */
+    private static byte[] compressImageUri(Context context, Uri uri) {
+        try {
+            ContentResolver cr = context.getContentResolver();
+
+            // Bước 1: Đọc CHỈ kích thước ảnh, không load pixel vào RAM
+            BitmapFactory.Options sizeOpts = new BitmapFactory.Options();
+            sizeOpts.inJustDecodeBounds = true;
+            InputStream probe = cr.openInputStream(uri);
+            if (probe == null) return null;
+            BitmapFactory.decodeStream(probe, null, sizeOpts);
+            probe.close();
+
+            // Bước 2: Tính hệ số giảm mẫu để ảnh vừa trong max 1280x1280
+            BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+            decodeOpts.inSampleSize = calculateInSampleSize(sizeOpts, 1280, 1280);
+            // RGB_565 giảm bộ nhớ 50% so với ARGB_8888 (đủ cho ảnh bằng chứng)
+            decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
+
+            InputStream is = cr.openInputStream(uri);
+            if (is == null) return null;
+            Bitmap bitmap = BitmapFactory.decodeStream(is, null, decodeOpts);
+            is.close();
+
+            if (bitmap == null) return null;
+
+            // Bước 3: Nén thành JPEG 80% → đủ chất lượng làm bằng chứng, kích thước nhỏ
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out);
+            bitmap.recycle();
+
+            return out.toByteArray();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Tính inSampleSize (lũy thừa 2) để ảnh gốc thu vừa maxW × maxH
+    private static int calculateInSampleSize(BitmapFactory.Options options, int maxW, int maxH) {
+        int inSampleSize = 1;
+        if (options.outHeight > maxH || options.outWidth > maxW) {
+            int halfH = options.outHeight / 2;
+            int halfW = options.outWidth / 2;
+            while ((halfH / inSampleSize) >= maxH && (halfW / inSampleSize) >= maxW) {
+                inSampleSize *= 2;
+            }
+        }
+        return inSampleSize;
     }
 
     private static void resetSubmit(TextView submit) {

@@ -94,21 +94,36 @@ public class MainActivity extends AppCompatActivity {
         fetchAndRegisterFcmToken();
     }
 
+    // Cờ kiểm soát: true = lần đầu vào màn hình, false = quay lại từ màn hình khác
+    private boolean isFirstResume = true;
+
     @Override
     protected void onResume() {
         super.onResume();
-        // Reconnect WebSocket nếu bị mất kết nối (ví dụ backend restart)
+
+        // Chỉ load token 1 lần (không reset retrofit)
         RetrofitClient.loadToken(this);
         String token = RetrofitClient.getAuthToken();
+
+        // Reconnect WebSocket nếu mất kết nối
         if (token != null && !WebSocketManager.getInstance().isConnected()) {
             WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
         }
-        syncInterestsFromBackend();
-        loadFriendNamesFromBackend();
+
+        if (isFirstResume) {
+            // Lần đầu vào: load đầy đủ tất cả dữ liệu nền
+            isFirstResume = false;
+            syncInterestsFromBackend(); // có loadToken riêng bên trong → đã bỏ ở fix #3
+            loadFriendNamesFromBackend();
+            fetchCurrentUserProfile();
+        }
+
+        // Luôn reload: bài đăng, badge, avatar (nhẹ, cần cập nhật khi quay lại)
         loadPostsFromApi();
         loadUnreadNotificationCount();
         loadStatusHeaderAvatar();
-        fetchCurrentUserProfile();
+
+        // Resubscribe WebSocket (chỉ khi connected)
         subscribeToRealtimeEvents();
         highlightTab(btnHome);
     }
@@ -120,9 +135,7 @@ public class MainActivity extends AppCompatActivity {
     private void syncInterestsFromBackend() {
         android.content.SharedPreferences prefs =
                 getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-        // Luôn sync lại từ backend (khi user cập nhật tag, feed cần làm mới)
-
-        RetrofitClient.loadToken(this);
+        // loadToken() ĐÃ được gọi từ onResume() trước đó, không gọi lại ở đây
         com.example.weconnect.api.UserApiService userApi =
                 RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
         userApi.getInterests().enqueue(new Callback<com.example.weconnect.models.ApiResponse<java.util.List<String>>>() {
@@ -450,57 +463,48 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Lọc và sắp xếp bài đăng:
-     * 1. Chỉ hiện bài có cùng tag sở thích mà user đã chọn
-     * 2. Chỉ hiện bài còn hạn (chưa hết hạn, chưa đóng)
-     * 3. Ưu tiên bài của bạn bè lên trước, sau đó là người lạ
+     * Lọc và sắp xếp bài đăng theo Priority Feed Sorting:
+     * 1. Hiển thị TẤT CẢ bài còn hạn (không bị lọc theo tag)
+     * 2. Nhóm 1: bài có tag trùng sở thích của user → đẩy lên đầu
+     * 3. Nhóm 2: bài không trùng tag → hiển thị phía sau
+     * 4. Trong mỗi nhóm: giữ nguyên thứ tự createdAt DESC từ backend
      */
     private List<Post> filterAndSortPosts(List<Post> allPosts) {
-        // 1. Lấy danh sách sở thích của user từ SharedPreferences
+        // Lấy danh sách sở thích của user từ SharedPreferences
         Set<String> userInterests = getUserInterestTags();
-        Set<String> friendNames = getFriendNames();
-        String currentUser = RetrofitClient.getUserName(this);
 
-        // 2. Lọc: chỉ lấy bài còn hạn + đúng tag sở thích
-        List<Post> friendPosts = new ArrayList<>();
+        // Nhóm 1: bài trùng tag sở thích — hiển thị đầu tiên
+        List<Post> matchedPosts = new ArrayList<>();
+        // Nhóm 2: bài không trùng tag (hoặc không có tag) — hiển thị phía sau
         List<Post> otherPosts = new ArrayList<>();
 
         for (Post post : allPosts) {
             // Bỏ qua bài hết hạn hoặc đã đóng
             if (post.isExpired() || post.isArchived()) continue;
 
-            // Bắt buộc lọc theo tag: bài viết phải có tag trùng sở thích của user
-            // TRỪ KHI user đã tham gia hoặc đang chờ duyệt
-            if (post.getInterestTag() != null && !post.getInterestTag().trim().isEmpty()) {
-                boolean matchTag = false;
+            // Kiểm tra bài có tag trùng sở thích của user không
+            boolean matchTag = false;
+            if (!userInterests.isEmpty()
+                    && post.getInterestTag() != null
+                    && !post.getInterestTag().trim().isEmpty()) {
                 for (String interest : userInterests) {
                     if (interest.equalsIgnoreCase(post.getInterestTag().trim())) {
                         matchTag = true;
                         break;
                     }
                 }
-                // Giữ lại bài user đã joined hoặc pending (không bị ảnh hưởng bởi đổi tag)
-                boolean userParticipating = post.isJoined() || post.isPendingApproval();
-                // Luôn cho phép bài của chính mình hiện
-                if (!matchTag && !userParticipating
-                        && (currentUser == null || !post.getUsername().equalsIgnoreCase(currentUser))) {
-                    continue;
-                }
             }
 
-            // 3. Phân loại: bài của bạn bè vs người lạ
-            String postAuthor = post.getUsername();
-            if (postAuthor != null && (friendNames.contains(postAuthor) ||
-                    (currentUser != null && postAuthor.equalsIgnoreCase(currentUser)))) {
-                friendPosts.add(post);
+            if (matchTag) {
+                matchedPosts.add(post);
             } else {
                 otherPosts.add(post);
             }
         }
 
-        // Ghép: bài bạn bè lên trước, bài người lạ sau
-        List<Post> result = new ArrayList<>();
-        result.addAll(friendPosts);
+        // Gộp: nhóm trùng sở thích lên trước, nhóm còn lại theo sau
+        // Thứ tự trong mỗi nhóm đã đúng do backend sắp sẵn theo createdAt DESC
+        List<Post> result = new ArrayList<>(matchedPosts);
         result.addAll(otherPosts);
         return result;
     }

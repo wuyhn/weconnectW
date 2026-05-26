@@ -66,10 +66,10 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
-                android:layout_marginEnd="8dp"
+                android:layout_marginEnd="4dp"
                 android:orientation="vertical"
                 app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toStartOf="@id/ivChatSettings"
+                app:layout_constraintEnd_toStartOf="@id/ivAiSummary"
                 app:layout_constraintStart_toEndOf="@id/cardAvatar"
                 app:layout_constraintTop_toTopOf="parent">
 
@@ -115,6 +115,23 @@
                     android:layout_height="0dp"
                     android:visibility="gone" />
             </LinearLayout>
+
+            <!-- AI Summary button -->
+            <ImageView
+                android:id="@+id/ivAiSummary"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="AI tóm tắt"
+                android:focusable="true"
+                android:padding="6dp"
+                android:src="@drawable/ic_ai_summary"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/ivChatSettings"
+                app:layout_constraintTop_toTopOf="parent"
+                app:tint="@color/text_primary" />
 
             <!-- Settings -->
             <ImageView

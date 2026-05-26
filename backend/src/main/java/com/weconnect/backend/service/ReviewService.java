@@ -10,6 +10,7 @@ import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.repository.UserReviewRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -342,29 +343,34 @@ public class ReviewService {
     // ======================== REPUTATION HELPERS ========================
 
     /**
-     * Tính lại reputationScore từ đầu dựa trên:
-     *   ratingScore:    avgRating/5*100, hoặc 60 nếu chưa có review
-     *   reportPenalty:  tổng penaltyPoint của các báo cáo VALID nhắm vào user hoặc bài viết của user
+     * Tính lại reputationScore từ đầu dựa trên 2 trường hợp tách biệt:
+     * - Chưa có review: ratingScore mặc định là 60.
+     * - Đã có review: ratingScore = averageRating / 5 * 100.
      *
-     * Công thức: score = clamp(ratingScore - reportPenalty, 0, 100)
+     * Công thức: score = clamp(ratingScore - reportPenalty - violationPenaltySum, 0, 100)
      */
+    @Transactional
     public void recalculateReputation(Long userId) {
         userRepository.findById(userId).ifPresent(user -> {
-            List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
-
+            int reviewCount = reviewRepository.countByReviewedUserId(userId);
             double ratingScore;
-            if (reviews.isEmpty()) {
+
+            if (reviewCount == 0) {
+                // User mới chưa có bất kỳ review nào vẫn phải giữ điểm uy tín nền là 60.
                 ratingScore = 60.0;
             } else {
-                double avg = reviews.stream()
+                List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
+                double averageRating = reviews.stream()
                         .filter(r -> r.getRating() != null && r.getRating() > 0)
                         .mapToInt(UserReview::getRating)
                         .average()
-                        .orElse(3.0);
-                ratingScore = (avg / 5.0) * 100.0;
+                        .orElse(0.0);
+
+                // Đồng bộ averageRating để profile/admin và reputationScore dùng cùng nguồn dữ liệu.
+                user.setAverageRating((float) averageRating);
+                ratingScore = (averageRating / 5.0) * 100.0;
             }
 
-            // Tổng điểm phạt từ báo cáo VALID
             int userPenalty = reportRepository.sumValidUserReportPenalties(userId);
             List<Long> postIds = postRepository.findByAuthorId(userId)
                     .stream().map(Post::getId).toList();
@@ -372,10 +378,38 @@ public class ReviewService {
                     : reportRepository.sumValidPostReportPenaltiesByPostIds(postIds);
             int reportPenalty = userPenalty + postPenalty;
 
-            double score = Math.max(0.0, Math.min(100.0, ratingScore - reportPenalty));
-            user.setReputationScore(score);
+            // violationPenaltySum lưu điểm phạt tự động/AI/WebSocket để không mất sau recalculate.
+            int violationPenalty = Math.max(0, user.getViolationPenaltySum());
+
+            double reputationScore = ratingScore - reportPenalty - violationPenalty;
+            user.setReputationScore(Math.max(0.0, Math.min(100.0, reputationScore)));
             userRepository.save(user);
         });
+    }
+
+    public double calculateReputationBaseScore(Long userId) {
+        List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
+
+        double ratingScore;
+        if (reviews.isEmpty()) {
+            ratingScore = 60.0;
+        } else {
+            double avg = reviews.stream()
+                    .filter(r -> r.getRating() != null && r.getRating() > 0)
+                    .mapToInt(UserReview::getRating)
+                    .average()
+                    .orElse(3.0);
+            ratingScore = (avg / 5.0) * 100.0;
+        }
+
+        int userPenalty = reportRepository.sumValidUserReportPenalties(userId);
+        List<Long> postIds = postRepository.findByAuthorId(userId)
+                .stream().map(Post::getId).toList();
+        int postPenalty = postIds.isEmpty() ? 0
+                : reportRepository.sumValidPostReportPenaltiesByPostIds(postIds);
+        int reportPenalty = userPenalty + postPenalty;
+
+        return Math.max(0.0, Math.min(100.0, ratingScore - reportPenalty));
     }
 
     private void recalcAverageRating(Long userId) {

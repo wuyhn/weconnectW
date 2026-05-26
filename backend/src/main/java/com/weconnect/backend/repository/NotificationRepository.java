@@ -21,4 +21,6 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     List<Notification> findByUserIdAndTypeAndRelatedPostId(Long userId, Notification.NotificationType type, Long relatedPostId);
 
     List<Notification> findByUserIdAndTypeAndRelatedUserIdAndRelatedPostId(Long userId, Notification.NotificationType type, Long relatedUserId, Long relatedPostId);
+
+    List<Notification> findByRelatedReportId(Long relatedReportId);
 }

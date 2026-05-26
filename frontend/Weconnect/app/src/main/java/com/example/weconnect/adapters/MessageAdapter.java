@@ -26,6 +26,7 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
     private static final int TYPE_OUTGOING = 1;
     private static final int TYPE_FRIEND_CARD = 2;
     private static final int TYPE_SYSTEM = 3;
+    private static final int TYPE_SUMMARY = 4;
 
     public interface OnUserClickListener {
         void onUserClick(long userId, String userName, String avatarUrl);
@@ -109,6 +110,7 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         if (showFriendCard && position == 0) return TYPE_FRIEND_CARD;
         int msgPos = showFriendCard ? position - 1 : position;
         ChatMessage msg = messages.get(msgPos);
+        if (msg.isSummaryMessage()) return TYPE_SUMMARY;
         if (msg.isSystemMessage()) return TYPE_SYSTEM;
         return msg.isSentByCurrentUser() ? TYPE_OUTGOING : TYPE_INCOMING;
     }
@@ -126,6 +128,11 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
                     .inflate(R.layout.item_message_system, parent, false);
             return new SystemMessageViewHolder(view);
         }
+        if (viewType == TYPE_SUMMARY) {
+            View view = LayoutInflater.from(parent.getContext())
+                    .inflate(R.layout.item_message_summary, parent, false);
+            return new SummaryMessageViewHolder(view);
+        }
         int layoutId = viewType == TYPE_OUTGOING
                 ? R.layout.item_message_outgoing
                 : R.layout.item_message_incoming;
@@ -140,6 +147,13 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             return;
         }
         int msgPos = showFriendCard ? position - 1 : position;
+        if (holder instanceof SummaryMessageViewHolder) {
+            String raw = messages.get(msgPos).getContent();
+            // Bỏ prefix "🤖 AI tóm tắt:\n" nếu có (header đã hiện trong layout)
+            String display = raw.startsWith("🤖 AI tóm tắt:\n") ? raw.substring("🤖 AI tóm tắt:\n".length()) : raw;
+            ((SummaryMessageViewHolder) holder).tvContent.setText(display);
+            return;
+        }
         if (holder instanceof SystemMessageViewHolder) {
             ((SystemMessageViewHolder) holder).tvContent.setText(messages.get(msgPos).getContent());
             return;
@@ -345,6 +359,15 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         SystemMessageViewHolder(@NonNull View itemView) {
             super(itemView);
             tvContent = itemView.findViewById(R.id.tvSystemMessage);
+        }
+    }
+
+    static class SummaryMessageViewHolder extends RecyclerView.ViewHolder {
+        TextView tvContent;
+
+        SummaryMessageViewHolder(@NonNull View itemView) {
+            super(itemView);
+            tvContent = itemView.findViewById(R.id.tvSummaryContent);
         }
     }
 }

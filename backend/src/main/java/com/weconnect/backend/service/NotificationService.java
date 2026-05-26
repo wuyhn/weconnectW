@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
@@ -68,22 +69,36 @@ public class NotificationService {
         createNotification(userId, type, message, relatedUsername, null, null);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void createNotificationWithoutPush(Long userId, Notification.NotificationType type,
+                                              String message, String relatedUsername) {
+        createNotificationInternal(userId, type, message, relatedUsername, null, null, null, false);
+    }
+
     @Transactional
     public void createNotification(Long userId, Notification.NotificationType type,
                                    String message, String relatedUsername,
                                    Long relatedPostId, Long relatedUserId) {
-        createNotificationInternal(userId, type, message, relatedUsername, relatedPostId, relatedUserId, null);
+        createNotificationInternal(userId, type, message, relatedUsername, relatedPostId, relatedUserId, null, true);
     }
 
     @Transactional
     public void createNotificationForReport(Long userId, Notification.NotificationType type,
                                             String message, String relatedUsername, Long relatedReportId) {
-        createNotificationInternal(userId, type, message, relatedUsername, null, null, relatedReportId);
+        createNotificationInternal(userId, type, message, relatedUsername, null, null, relatedReportId, true);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void createNotificationForReportWithoutPush(Long userId, Notification.NotificationType type,
+                                                       String message, String relatedUsername, Long relatedReportId) {
+        createNotificationInternal(userId, type, message, relatedUsername, null, null, relatedReportId, false);
     }
 
     private void createNotificationInternal(Long userId, Notification.NotificationType type,
                                             String message, String relatedUsername,
-                                            Long relatedPostId, Long relatedUserId, Long relatedReportId) {
+                                            Long relatedPostId, Long relatedUserId, Long relatedReportId,
+                                            boolean sendPush) {
+        log.info("[NOTIFY-INTERNAL] Lưu notification: userId={}, type={}, relatedReportId={}", userId, type, relatedReportId);
         Notification notification = Notification.builder()
                 .userId(userId)
                 .type(type)
@@ -96,6 +111,7 @@ public class NotificationService {
                 .isActioned(false)
                 .build();
         Notification saved = notificationRepository.save(notification);
+        log.info("[NOTIFY-INTERNAL] Đã lưu notification id={} cho userId={}, type={}", saved.getId(), userId, type);
 
         // Real-time delivery via STOMP (khi app đang online)
         if (messagingTemplate != null) {
@@ -112,8 +128,9 @@ public class NotificationService {
             } catch (Exception ignored) {}
         }
 
-        // FCM push notification (khi app offline)
-        if (fcmService != null) {
+        // FCM push notification (khi app offline). Một số luồng cần tự gửi FCM với title/body riêng,
+        // nên sendPush=false sẽ chỉ lưu DB + realtime WebSocket để tránh bắn trùng push.
+        if (sendPush && fcmService != null) {
             try {
                 userRepository.findById(userId).ifPresent(user -> {
                     if (user.getFcmToken() != null && !user.getFcmToken().isBlank()) {
@@ -122,6 +139,46 @@ public class NotificationService {
                         data.put("notificationId", String.valueOf(saved.getId()));
                         if (relatedReportId != null) data.put("relatedReportId", String.valueOf(relatedReportId));
                         if (relatedPostId != null) data.put("relatedPostId", String.valueOf(relatedPostId));
+                        fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
+                    }
+                });
+            } catch (Exception e) {
+                log.warn("FCM delivery failed for user {}: {}", userId, e.getMessage());
+            }
+        }
+    }
+
+    @Transactional
+    public void createChatSummaryNotification(Long userId, String message, Long relatedRoomId) {
+        Notification notification = Notification.builder()
+                .userId(userId)
+                .type(Notification.NotificationType.CHAT_SUMMARY)
+                .message(message)
+                .relatedRoomId(relatedRoomId)
+                .isRead(false)
+                .isActioned(false)
+                .build();
+        Notification saved = notificationRepository.save(notification);
+
+        if (messagingTemplate != null) {
+            try {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("notificationId", saved.getId());
+                payload.put("type", Notification.NotificationType.CHAT_SUMMARY.name());
+                payload.put("message", message);
+                payload.put("relatedRoomId", relatedRoomId);
+                messagingTemplate.convertAndSendToUser(userId.toString(), "/queue/notifications", payload);
+            } catch (Exception ignored) {}
+        }
+
+        if (fcmService != null) {
+            try {
+                userRepository.findById(userId).ifPresent(user -> {
+                    if (user.getFcmToken() != null && !user.getFcmToken().isBlank()) {
+                        Map<String, String> data = new HashMap<>();
+                        data.put("type", Notification.NotificationType.CHAT_SUMMARY.name());
+                        data.put("notificationId", String.valueOf(saved.getId()));
+                        data.put("relatedRoomId", String.valueOf(relatedRoomId));
                         fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
                     }
                 });

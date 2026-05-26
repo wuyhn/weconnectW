@@ -561,7 +561,11 @@ public class UserProfileActivity extends AppCompatActivity {
 
         ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
         tvUserProfileName.setText(username);
-        tvUserReputation.setText("0");
+        if (!viewOther && targetUserId <= 0) {
+            tvUserReputation.setText(String.valueOf(Math.round(RetrofitClient.getReputationScore(this))));
+        } else {
+            tvUserReputation.setText("—");
+        }
 
         if (blockProfileMode) {
             showBlockedProfileState();
@@ -634,21 +638,14 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
-                    // Điểm uy tín
+                    // Điểm uy tín luôn hiển thị theo reputationScore hiện tại, kể cả khi user chưa có review.
                     if (tvUserReputation != null) {
-                        int reviewCount = profile.get("totalReviewCount") != null
-                                ? ((Number) profile.get("totalReviewCount")).intValue() : 0;
-                        if (reviewCount == 0) {
-                            tvUserReputation.setText("—");
-                            if (tvReputationLabel != null) tvReputationLabel.setText("Chưa có đánh giá");
-                        } else {
-                            Object repObj = profile.get("reputationScore");
-                            int rep = repObj != null
-                                    ? (int) Math.round(((Number) repObj).doubleValue())
-                                    : 100;
-                            tvUserReputation.setText(String.valueOf(rep));
-                            if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
-                        }
+                        Object repObj = profile.get("reputationScore");
+                        int rep = repObj != null
+                                ? (int) Math.round(((Number) repObj).doubleValue())
+                                : 60;
+                        tvUserReputation.setText(String.valueOf(rep));
+                        if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
                     }
 
                     // Load avatar with Glide
@@ -732,21 +729,15 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
-                    // Điểm uy tín — hiển thị "—" nếu chưa có đánh giá nào
+                    // Điểm uy tín luôn hiển thị theo reputationScore hiện tại, kể cả khi user chưa có review.
                     if (tvUserReputation != null) {
-                        int reviewCount = profile.get("totalReviewCount") != null
-                                ? ((Number) profile.get("totalReviewCount")).intValue() : 0;
-                        if (reviewCount == 0) {
-                            tvUserReputation.setText("—");
-                            if (tvReputationLabel != null) tvReputationLabel.setText("Chưa có đánh giá");
-                        } else {
-                            Object repObj = profile.get("reputationScore");
-                            int rep = repObj != null
-                                    ? (int) Math.round(((Number) repObj).doubleValue())
-                                    : 100;
-                            tvUserReputation.setText(String.valueOf(rep));
-                            if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
-                        }
+                        Object repObj = profile.get("reputationScore");
+                        int rep = repObj != null
+                                ? (int) Math.round(((Number) repObj).doubleValue())
+                                : 60;
+                        tvUserReputation.setText(String.valueOf(rep));
+                        RetrofitClient.saveReputationScore(UserProfileActivity.this, rep);
+                        if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
                     }
 
                     // Load avatar with Glide + persist URL globally

@@ -147,6 +147,7 @@ public class OtpVerificationActivity extends AppCompatActivity {
                                 RetrofitClient.saveToken(OtpVerificationActivity.this, auth.getToken());
                                 RetrofitClient.saveUserId(OtpVerificationActivity.this, auth.getId());
                                 RetrofitClient.saveUserName(OtpVerificationActivity.this, auth.getFullName());
+                                RetrofitClient.saveReputationScore(OtpVerificationActivity.this, auth.getReputationScore());
                             }
                             Intent intent = new Intent(OtpVerificationActivity.this, OnboardingPersonalInfoActivity.class);
                             startActivity(intent);

@@ -69,4 +69,8 @@ public interface ChatApiService {
     // Rời nhóm (non-owner)
     @POST("api/chat/rooms/{id}/leave")
     Call<ApiResponse<Void>> leaveRoom(@Path("id") long id);
+
+    // Yêu cầu AI tóm tắt cuộc trò chuyện
+    @POST("api/chat/rooms/{roomId}/summary")
+    Call<ApiResponse<ChatMessageApiResponse>> requestAISummary(@Path("roomId") long roomId);
 }

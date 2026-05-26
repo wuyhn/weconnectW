@@ -1,12 +1,16 @@
 package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.request.ApiResponse;
+import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.repository.NotificationRepository;
 import com.weconnect.backend.service.ReportService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -15,9 +19,11 @@ import java.util.Map;
 public class ReportController {
 
     private final ReportService reportService;
+    private final NotificationRepository notificationRepository;
 
-    public ReportController(ReportService reportService) {
+    public ReportController(ReportService reportService, NotificationRepository notificationRepository) {
         this.reportService = reportService;
+        this.notificationRepository = notificationRepository;
     }
 
     // === User endpoints ===
@@ -97,16 +103,6 @@ public class ReportController {
         try {
             Map<String, Object> result = reportService.approveReport(id, admin.getId(), penaltyPoint);
 
-            Long targetUserId = result.get("targetUserId") != null
-                    ? ((Number) result.get("targetUserId")).longValue() : null;
-            reportService.sendApproveNotifications(
-                    ((Number) result.get("reporterId")).longValue(),
-                    String.valueOf(result.get("targetType")),
-                    targetUserId,
-                    (Integer) result.get("penaltyPoint"),
-                    ((Number) result.get("reportId")).longValue()
-            );
-
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000)
                     .message("Đã xác nhận báo cáo hợp lệ. Trừ " + result.get("penaltyPoint") + " điểm uy tín.")
@@ -127,7 +123,8 @@ public class ReportController {
             Map<String, Object> result = reportService.rejectReport(id, admin.getId());
 
             reportService.sendRejectNotifications(
-                    ((Number) result.get("reporterId")).longValue()
+                    ((Number) result.get("reporterId")).longValue(),
+                    ((Number) result.get("reportId")).longValue()
             );
 
             return ResponseEntity.ok(ApiResponse.builder()
@@ -198,5 +195,26 @@ public class ReportController {
         reportService.markAllReportsViewed();
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã đánh dấu tất cả đã xem.").build());
+    }
+
+    // === Diagnostic: kiểm tra notification đã lưu cho report chưa ===
+    @GetMapping("/admin/reports/{id}/notification-status")
+    public ResponseEntity<?> checkNotificationStatus(@PathVariable Long id) {
+        List<Notification> notifs = notificationRepository.findByRelatedReportId(id);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Notification n : notifs) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("notificationId", n.getId());
+            m.put("userId", n.getUserId());
+            m.put("type", n.getType());
+            m.put("message", n.getMessage());
+            m.put("isRead", n.isRead());
+            m.put("createdAt", n.getCreatedAt());
+            result.add(m);
+        }
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000)
+                .message("Tìm thấy " + result.size() + " notification(s) cho reportId=" + id)
+                .result(result).build());
     }
 }

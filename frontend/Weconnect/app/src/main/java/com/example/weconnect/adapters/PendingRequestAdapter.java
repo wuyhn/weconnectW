@@ -150,11 +150,8 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         int totalReviewCount = member.get("totalReviewCount") != null
                 ? ((Number) member.get("totalReviewCount")).intValue() : 0;
 
-        if (totalReviewCount == 0) {
-            doApproveMember(userId, holder);
-            return;
-        }
-
+        // Reputation score is independent from review count. A user with 0 reviews can still have
+        // a low score because of approved reports/violations, so do not bypass the warning here.
         boolean hasEnoughReviews = totalReviewCount >= 3;
         boolean isHighRisk = reputationScore < 30
                 || (hasEnoughReviews && averageRating < 2.0f);

@@ -1,6 +1,7 @@
 package com.example.weconnect.api;
 
 import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.PostResponse;
 
 import java.util.List;
@@ -43,7 +44,7 @@ public interface PostApiService {
 
     // Xin tham gia
     @POST("api/posts/{id}/join")
-    Call<ApiResponse<Void>> joinPost(@Path("id") long id);
+    Call<ApiResponse<JoinGroupResponse>> joinPost(@Path("id") long id);
 
     // Duyệt thành viên
     @POST("api/posts/{id}/approve/{userId}")

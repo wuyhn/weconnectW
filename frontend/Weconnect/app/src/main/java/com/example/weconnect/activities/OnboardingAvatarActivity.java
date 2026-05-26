@@ -1,6 +1,8 @@
 package com.example.weconnect.activities;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
@@ -19,6 +21,7 @@ import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.models.ApiResponse;
 import com.google.android.material.button.MaterialButton;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -64,7 +67,6 @@ public class OnboardingAvatarActivity extends AppCompatActivity {
         MaterialButton btnConfirm = findViewById(R.id.btnConfirm);
         View tvSkip = findViewById(R.id.tvSkip);
 
-        // Make avatar circle via Glide with placeholder
         Glide.with(this).load(R.drawable.ic_user_placeholder).circleCrop().into(ivAvatar);
 
         findViewById(R.id.ivBack).setOnClickListener(v -> finish());
@@ -95,13 +97,20 @@ public class OnboardingAvatarActivity extends AppCompatActivity {
 
         RetrofitClient.loadToken(this);
         String token = RetrofitClient.getAuthToken();
-        if (token == null) { goToInterests(); return; }
+        if (token == null) {
+            goToInterests();
+            return;
+        }
 
         try {
-            File file = uriToFile(uri);
-            if (file == null) { goToInterests(); return; }
+            File file = compressAvatarToFile(uri);
+            if (file == null) {
+                restoreConfirmButton(btn);
+                Toast.makeText(this, "Không thể đọc ảnh đã chọn. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
+                return;
+            }
 
-            RequestBody reqBody = RequestBody.create(MediaType.parse("image/*"), file);
+            RequestBody reqBody = RequestBody.create(MediaType.parse("image/jpeg"), file);
             MultipartBody.Part part = MultipartBody.Part.createFormData("file", file.getName(), reqBody);
 
             RetrofitClient.getClient().create(PostApiService.class)
@@ -113,50 +122,118 @@ public class OnboardingAvatarActivity extends AppCompatActivity {
                                 if (url.startsWith("/")) {
                                     url = RetrofitClient.getBaseUrl() + url.substring(1);
                                 }
-                                final String avatarUrl = url;
-                                RetrofitClient.saveAvatarUrl(OnboardingAvatarActivity.this, avatarUrl);
-                                // Save to backend profile
-                                Map<String, Object> body = new HashMap<>();
-                                body.put("avatarUrl", avatarUrl);
-                                RetrofitClient.getClient().create(UserApiService.class)
-                                        .updateProfile(body).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
-                                            @Override
-                                            public void onResponse(Call<ApiResponse<Map<String, Object>>> c,
-                                                                   Response<ApiResponse<Map<String, Object>>> r) {}
-                                            @Override
-                                            public void onFailure(Call<ApiResponse<Map<String, Object>>> c, Throwable t) {}
-                                        });
-                                // Clear Glide cache so all screens load the new avatar
-                                Glide.get(OnboardingAvatarActivity.this).clearMemory();
-                                new Thread(() -> Glide.get(OnboardingAvatarActivity.this).clearDiskCache()).start();
+                                saveAvatarToBackend(url, btn);
+                            } else {
+                                restoreConfirmButton(btn);
+                                Toast.makeText(OnboardingAvatarActivity.this,
+                                        "Không thể tải ảnh lên. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
                             }
-                            goToInterests();
                         }
+
                         @Override
                         public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
+                            restoreConfirmButton(btn);
                             Toast.makeText(OnboardingAvatarActivity.this,
-                                    "Không thể tải ảnh lên. Bỏ qua.", Toast.LENGTH_SHORT).show();
-                            goToInterests();
+                                    "Không thể tải ảnh lên. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
                         }
                     });
         } catch (Exception e) {
-            goToInterests();
+            restoreConfirmButton(btn);
+            Toast.makeText(this, "Không thể đọc ảnh đã chọn. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
         }
     }
 
-    private File uriToFile(Uri uri) {
+    private void saveAvatarToBackend(String avatarUrl, MaterialButton btn) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("avatarUrl", avatarUrl);
+
+        RetrofitClient.getClient().create(UserApiService.class)
+                .updateProfile(body).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
+                    @Override
+                    public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+                                           Response<ApiResponse<Map<String, Object>>> response) {
+                        if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
+                            String savedAvatarUrl = avatarUrl;
+                            Map<String, Object> profile = response.body().getResult();
+                            if (profile != null && profile.get("avatarUrl") != null
+                                    && !profile.get("avatarUrl").toString().isEmpty()) {
+                                savedAvatarUrl = profile.get("avatarUrl").toString();
+                            }
+
+                            RetrofitClient.saveAvatarUrl(OnboardingAvatarActivity.this, savedAvatarUrl);
+                            long myId = RetrofitClient.getUserId(OnboardingAvatarActivity.this);
+                            if (myId > 0) {
+                                RetrofitClient.cacheAvatarForUser(myId, savedAvatarUrl);
+                            }
+
+                            Glide.get(OnboardingAvatarActivity.this).clearMemory();
+                            new Thread(() -> Glide.get(OnboardingAvatarActivity.this).clearDiskCache()).start();
+                            goToInterests();
+                        } else {
+                            restoreConfirmButton(btn);
+                            Toast.makeText(OnboardingAvatarActivity.this,
+                                    "Không thể lưu ảnh đại diện. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
+                        restoreConfirmButton(btn);
+                        Toast.makeText(OnboardingAvatarActivity.this,
+                                "Không thể lưu ảnh đại diện. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void restoreConfirmButton(MaterialButton btn) {
+        btn.setEnabled(true);
+        btn.setText("Xác nhận");
+    }
+
+    private File compressAvatarToFile(Uri uri) {
         try {
-            InputStream is = getContentResolver().openInputStream(uri);
-            if (is == null) return null;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) return null;
+                BitmapFactory.decodeStream(input, null, bounds);
+            }
+
+            int sampleSize = 1;
+            int maxSide = 1080;
+            while ((bounds.outWidth / sampleSize) > maxSide
+                    || (bounds.outHeight / sampleSize) > maxSide) {
+                sampleSize *= 2;
+            }
+
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(1, sampleSize);
+
+            Bitmap bitmap;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) return null;
+                bitmap = BitmapFactory.decodeStream(input, null, options);
+            }
+            if (bitmap == null) return null;
+
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            int quality = 88;
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, buffer);
+            while (buffer.size() > 4 * 1024 * 1024 && quality > 55) {
+                buffer.reset();
+                quality -= 10;
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, buffer);
+            }
+            bitmap.recycle();
+
             File tmp = File.createTempFile("avatar_", ".jpg", getCacheDir());
-            FileOutputStream out = new FileOutputStream(tmp);
-            byte[] buf = new byte[4096];
-            int len;
-            while ((len = is.read(buf)) > 0) out.write(buf, 0, len);
-            out.close();
-            is.close();
+            try (FileOutputStream out = new FileOutputStream(tmp)) {
+                out.write(buffer.toByteArray());
+            }
             return tmp;
-        } catch (Exception e) { return null; }
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void goToInterests() {

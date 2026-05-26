@@ -30,6 +30,7 @@ public class Notification {
         REPORT_PENALTY,
         POST_EXPIRED,
         ACTIVITY_CANCELLED,
+        CHAT_SUMMARY,
         GENERAL
     }
 
@@ -41,7 +42,7 @@ public class Notification {
     private Long userId;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, length = 50, columnDefinition = "VARCHAR(50)")
     private NotificationType type;
 
     @Column(length = 500)
@@ -57,6 +58,9 @@ public class Notification {
 
     @Column(name = "related_report_id")
     private Long relatedReportId;
+
+    @Column(name = "related_room_id")
+    private Long relatedRoomId;
 
     @Column(name = "is_read", columnDefinition = "BOOLEAN DEFAULT false")
     private boolean isRead;

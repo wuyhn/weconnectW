@@ -2,6 +2,7 @@ package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.PostRequest;
 import com.weconnect.backend.dto.PostResponse;
+import com.weconnect.backend.dto.JoinGroupResponse;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.service.PostService;
@@ -108,9 +109,9 @@ public class PostController {
     public ResponseEntity<?> joinPost(@PathVariable Long id, Authentication authentication) {
         User user = (User) authentication.getPrincipal();
         try {
-            String result = postService.joinPost(id, user.getId());
+            JoinGroupResponse result = postService.joinPost(id, user.getId());
             return ResponseEntity.ok(ApiResponse.builder()
-                    .code(1000).message(result).build());
+                    .code(1000).message(result.getMessage()).result(result).build());
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(ApiResponse.builder()
                     .code(1006).message(e.getMessage()).build());

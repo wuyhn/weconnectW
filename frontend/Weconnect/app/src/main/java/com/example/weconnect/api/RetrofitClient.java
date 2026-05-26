@@ -23,6 +23,7 @@ public class RetrofitClient {
     private static Retrofit retrofit = null;
     private static String authToken = null;
     private static String currentAvatarUrl = null;
+    private static double currentReputationScore = 60.0;
     // Global cache: userId → avatarUrl cho tất cả user (nhận qua WebSocket realtime)
     private static final java.util.Map<Long, String> userAvatarCache = new java.util.HashMap<>();
 
@@ -65,11 +66,13 @@ public class RetrofitClient {
         prefs.edit().putString("jwt_token", token).apply();
     }
 
-    // Load token từ SharedPreferences
+    // Load token từ SharedPreferences.
+    // KHÔNG reset retrofit = null ở đây: interceptor đọc authToken dynamically nên
+    // OkHttp client được tái sử dụng, giữ connection pool, tránh tạo mới mỗi button click.
     public static void loadToken(Context context) {
         SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
         authToken = prefs.getString("jwt_token", null);
-        retrofit = null;
+        // retrofit = null  ← ĐÃ XÓA: gây rebuild OkHttp liên tục, chậm network
     }
 
     // Lưu user ID
@@ -92,6 +95,20 @@ public class RetrofitClient {
     public static String getUserName(Context context) {
         SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
         return prefs.getString("user_name", "");
+    }
+
+    // Luu diem uy tin hien tai de profile khong hien 0 truoc khi API tai xong.
+    public static void saveReputationScore(Context context, double score) {
+        currentReputationScore = score;
+        SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
+        prefs.edit().putFloat("reputation_score", (float) score).apply();
+    }
+
+    public static double getReputationScore(Context context) {
+        if (context == null) return currentReputationScore;
+        SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
+        currentReputationScore = prefs.getFloat("reputation_score", 60.0f);
+        return currentReputationScore;
     }
 
     // Lưu avatar URL của user hiện tại
@@ -124,6 +141,7 @@ public class RetrofitClient {
         authToken = null;
         retrofit = null;
         currentAvatarUrl = null;
+        currentReputationScore = 60.0;
         userAvatarCache.clear();
         SharedPreferences prefs = context.getSharedPreferences("weconnect_prefs", Context.MODE_PRIVATE);
         prefs.edit().clear().apply();

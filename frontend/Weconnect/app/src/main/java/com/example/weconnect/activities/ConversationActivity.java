@@ -59,6 +59,7 @@ public class ConversationActivity extends AppCompatActivity {
     private ImageView ivBackConversation;
     private ImageView ivConversationAvatar;
     private ImageView ivChatSettings;
+    private ImageView ivAiSummary;
     private TextView tvConversationTitle;
     private TextView tvConversationType;
     private TextView tvConversationStatus;
@@ -152,6 +153,7 @@ public class ConversationActivity extends AppCompatActivity {
         ivBackConversation = findViewById(R.id.ivBackConversation);
         ivConversationAvatar = findViewById(R.id.ivConversationAvatar);
         ivChatSettings = findViewById(R.id.ivChatSettings);
+        ivAiSummary = findViewById(R.id.ivAiSummary);
         tvConversationTitle = findViewById(R.id.tvConversationTitle);
         tvConversationType = findViewById(R.id.tvConversationType);
         tvConversationStatus = findViewById(R.id.tvConversationStatus);
@@ -189,6 +191,7 @@ public class ConversationActivity extends AppCompatActivity {
     private void setupClickListeners() {
         ivBackConversation.setOnClickListener(v -> finish());
         btnSendMessage.setOnClickListener(v -> sendMessage());
+        ivAiSummary.setOnClickListener(v -> requestAISummary());
         btnUnblockDirectUser.setOnClickListener(v -> unblockDirectChatUser());
         btnReportDirectUser.setOnClickListener(v ->
                 UserReportBottomSheet.show(this, otherUserId, otherUserName));
@@ -1445,6 +1448,7 @@ public class ConversationActivity extends AppCompatActivity {
             ivChatSettings.setVisibility(View.VISIBLE);
             ivChatSettings.setImageResource(R.drawable.ic_info_circle);
             ivChatSettings.setContentDescription("Thông tin");
+            ivAiSummary.setVisibility(View.GONE);
 
             ivConversationAvatar.setClickable(true);
             ivConversationAvatar.setFocusable(true);
@@ -1457,6 +1461,7 @@ public class ConversationActivity extends AppCompatActivity {
             ivChatSettings.setVisibility(View.VISIBLE);
             ivChatSettings.setImageResource(R.drawable.ic_info_circle);
             ivChatSettings.setContentDescription("Thông tin nhóm");
+            ivAiSummary.setVisibility(View.VISIBLE);
 
             ivConversationAvatar.setClickable(false);
             ivConversationAvatar.setFocusable(false);
@@ -1917,6 +1922,33 @@ public class ConversationActivity extends AppCompatActivity {
         return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
+    private void requestAISummary() {
+        if (backendRoomId <= 0) return;
+        ivAiSummary.setEnabled(false);
+        Toast.makeText(this, "AI đang tóm tắt...", Toast.LENGTH_SHORT).show();
+
+        RetrofitClient.loadToken(this);
+        chatApi.requestAISummary(backendRoomId).enqueue(new Callback<ApiResponse<ChatMessageApiResponse>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<ChatMessageApiResponse>> call,
+                                   Response<ApiResponse<ChatMessageApiResponse>> response) {
+                ivAiSummary.setEnabled(true);
+                if (!response.isSuccessful() || response.body() == null) {
+                    Toast.makeText(ConversationActivity.this,
+                            "Không thể tóm tắt lúc này.", Toast.LENGTH_SHORT).show();
+                }
+                // Tin nhắn summary sẽ tới qua WebSocket — không cần xử lý thêm
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<ChatMessageApiResponse>> call, Throwable t) {
+                ivAiSummary.setEnabled(true);
+                Toast.makeText(ConversationActivity.this,
+                        "Lỗi kết nối. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     private void sendMessage() {
         if (room == null || backendRoomId <= 0) return;
         if (isDirectRoom() && (currentUserBlockedOther || otherUserBlockedCurrent)) {
@@ -1935,9 +1967,10 @@ public class ConversationActivity extends AppCompatActivity {
     private void onNewMessage(ChatMessageApiResponse msg) {
         long currentUserId = RetrofitClient.getUserId(this);
         boolean isSystem = msg.isSystemMessage();
-        boolean sentByMe = !isSystem && msg.getSenderId() == currentUserId;
+        boolean isSummary = msg.isSummaryMessage();
+        boolean sentByMe = !isSystem && !isSummary && msg.getSenderId() == currentUserId;
         String time = "";
-        if (!isSystem && msg.getCreatedAt() != null) {
+        if (!isSystem && !isSummary && msg.getCreatedAt() != null) {
             String raw = msg.getCreatedAt();
             if (raw.contains("T") && raw.length() >= 16) time = raw.substring(11, 16);
             else time = raw;
@@ -1949,7 +1982,8 @@ public class ConversationActivity extends AppCompatActivity {
                 msg.getContent() != null ? msg.getContent() : "",
                 time,
                 sentByMe,
-                isSystem
+                isSystem,
+                msg.getType()
         );
 
         // Kiểm tra trùng lặp (tránh duplicate khi load history và WS cùng lúc)
@@ -1992,7 +2026,7 @@ public class ConversationActivity extends AppCompatActivity {
                         }
                         boolean sentByMe = msgData.isSentByCurrentUser();
                         boolean isSystem = msgData.isSystemMessage();
-                        messages.add(new ChatMessage(id, msgData.getSenderId(), sender, msgContent, time, sentByMe, isSystem));
+                        messages.add(new ChatMessage(id, msgData.getSenderId(), sender, msgContent, time, sentByMe, isSystem, msgData.getType()));
                     }
                     adapter.submitList(messages);
                     if (!messages.isEmpty()) {

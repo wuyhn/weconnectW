@@ -11,6 +11,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +61,7 @@ public class AdminDashboardController {
         stats.put("totalReviews", totalReviews);
         stats.put("blockedUsers", blockedUsers);
         stats.put("archivedPosts", archivedPosts);
+        stats.put("topInterestTags", getTopInterestTags(5));
 
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công")
@@ -65,6 +69,33 @@ public class AdminDashboardController {
     }
 
     // Thống kê hoạt động theo ngày (cho chart)
+    private List<Map<String, Object>> getTopInterestTags(int limit) {
+        Map<String, Long> tagCounts = new HashMap<>();
+
+        userRepository.findAll().stream()
+                .filter(user -> user.getRole() == 0)
+                .map(user -> user.getInterestTags())
+                .filter(tags -> tags != null && !tags.isBlank())
+                .flatMap(tags -> Arrays.stream(tags.split(",")))
+                .map(String::trim)
+                .filter(tag -> !tag.isBlank())
+                .forEach(tag -> tagCounts.merge(tag, 1L, Long::sum));
+
+        return tagCounts.entrySet().stream()
+                .sorted(Comparator
+                        .<Map.Entry<String, Long>>comparingLong(Map.Entry::getValue)
+                        .reversed()
+                        .thenComparing(Map.Entry::getKey, String.CASE_INSENSITIVE_ORDER))
+                .limit(limit)
+                .map(entry -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("tag", entry.getKey());
+                    item.put("count", entry.getValue());
+                    return item;
+                })
+                .toList();
+    }
+
     @GetMapping("/trends")
     public ResponseEntity<?> getTrends(@RequestParam(defaultValue = "7") int days) {
         LocalDateTime now = LocalDateTime.now();

@@ -4,6 +4,7 @@ import com.weconnect.backend.dto.AuthRequest;
 import com.weconnect.backend.dto.AuthResponse;
 import com.weconnect.backend.entity.PendingRegistration;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.exception.AccountSanctionException;
 import com.weconnect.backend.repository.PendingRegistrationRepository;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.security.JwtTokenProvider;
@@ -113,7 +114,12 @@ public class AuthService {
         newUser.setEmail(pending.getEmail());
         newUser.setPassword(pending.getPasswordEncoded());
         newUser.setBlocked(false);
-        newUser.setReputationScore(100);
+
+        // Tài khoản mới luôn bắt đầu ở trạng thái sạch: 60 điểm uy tín, chưa có phạt và đang ACTIVE.
+        newUser.setReputationScore(60);
+        newUser.setViolationPenaltySum(0);
+        newUser.setViolationCount(0);
+        newUser.setStatus(User.STATUS_ACTIVE);
 
         userRepository.save(newUser);
         pendingRepo.deleteByEmail(email);
@@ -126,6 +132,7 @@ public class AuthService {
                 .fullName(newUser.getFullName())
                 .token(token)
                 .role(newUser.getRole())
+                .reputationScore(newUser.getReputationScore())
                 .message("Đăng ký tài khoản thành công!")
                 .build();
     }
@@ -154,10 +161,37 @@ public class AuthService {
         return "Mã OTP mới đã được gửi đến email của bạn.";
     }
 
+    @Transactional
     public AuthResponse login(String email, String password) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException(
                         "Tài khoản không tồn tại. Vui lòng kiểm tra lại hoặc đăng ký tài khoản mới."));
+
+        if (User.STATUS_LOCKED_TEMP.equals(user.getStatus())) {
+            LocalDateTime lockUntil = user.getLockUntil();
+            if (lockUntil != null && LocalDateTime.now().isAfter(lockUntil)) {
+                // Khóa tạm đã hết hạn: mở lại tài khoản ngay trong transaction login.
+                // Không gọi recalculateReputation() ở đây vì penalty cũ có thể kéo điểm về 0 lại ngay.
+                user.setStatus(User.STATUS_ACTIVE);
+                user.setBlocked(false);
+                user.setLockUntil(null);
+
+                // Cấp lại mức sàn 30 điểm để user có cơ hội tích lũy uy tín sau thời gian phạt.
+                user.setReputationScore(30);
+
+                // Khấu trừ bớt penalty tích lũy để lần recalculate sau không lập tức kéo điểm về 0.
+                user.setViolationPenaltySum(Math.max(0, user.getViolationPenaltySum() - 30));
+                userRepository.save(user);
+            } else {
+                throw new AccountSanctionException(
+                        "Tài khoản đang bị khóa tạm thời do vi phạm chính sách uy tín. Vui lòng thử lại sau.");
+            }
+        }
+
+        if (User.STATUS_BANNED.equals(user.getStatus())) {
+            throw new AccountSanctionException(
+                    "Tài khoản của bạn đã bị khóa vĩnh viễn do vi phạm nghiêm trọng tiêu chuẩn cộng đồng.");
+        }
 
         if (user.isBlocked()) {
             throw new RuntimeException("Tài khoản của bạn hiện đang bị khóa.");
@@ -175,6 +209,7 @@ public class AuthService {
                 .fullName(user.getFullName())
                 .token(token)
                 .role(user.getRole())
+                .reputationScore(user.getReputationScore())
                 .message("Đăng nhập thành công!")
                 .build();
     }

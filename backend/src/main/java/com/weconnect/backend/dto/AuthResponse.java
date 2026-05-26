@@ -16,4 +16,5 @@ public class AuthResponse {
     private String token;
     private String message;
     private int role;
+    private double reputationScore;
 }

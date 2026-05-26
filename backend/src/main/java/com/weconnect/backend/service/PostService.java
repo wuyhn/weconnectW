@@ -1,5 +1,6 @@
 package com.weconnect.backend.service;
 
+import com.weconnect.backend.dto.JoinGroupResponse;
 import com.weconnect.backend.dto.PostRequest;
 import com.weconnect.backend.dto.PostResponse;
 import com.weconnect.backend.entity.ActivityTimeType;
@@ -18,6 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -46,11 +49,68 @@ public class PostService {
         this.blockedUserRepository = blockedUserRepository;
     }
 
-    // Lấy danh sách bài đăng active
+    // Lấy danh sách bài đăng active, sắp xếp theo 3 tầng ưu tiên sở thích:
+    //   Tầng 1: tag trùng sở thích cứng (interestTags — 5 tags user tự chọn)
+    //   Tầng 2: tag trùng sở thích ẩn học từ hành vi (behavioralTags — tối đa 5 tags)
+    //   Tầng 3: bài không liên quan
+    // Trong mỗi tầng, bài viết sắp theo createdAt DESC (query đã đảm bảo sẵn)
     public List<PostResponse> getActivePosts(Long currentUserId) {
-        List<Post> posts = postRepository.findByArchivedFalseAndEndTimeAfterOrderByCreatedAtDesc(LocalDateTime.now());
-        posts = filterBlockedPosts(posts, currentUserId);
-        return toResponseList(posts, currentUserId);
+        List<Post> allPosts = postRepository.findByArchivedFalseAndEndTimeAfterOrderByCreatedAtDesc(LocalDateTime.now());
+        allPosts = filterBlockedPosts(allPosts, currentUserId);
+
+        User user = currentUserId != null ? userRepository.findById(currentUserId).orElse(null) : null;
+        if (user == null) return toResponseList(allPosts, currentUserId);
+
+        Set<String> hardTags = parseTagSet(user.getInterestTags());       // sở thích cứng
+        Set<String> hiddenTags = parseTagSet(user.getBehavioralTags());   // sở thích ẩn
+
+        // Không có sở thích nào → trả về theo thứ tự thời gian như cũ
+        if (hardTags.isEmpty() && hiddenTags.isEmpty()) {
+            return toResponseList(allPosts, currentUserId);
+        }
+
+        // Tầng 1: trùng sở thích cứng
+        List<Post> tier1 = allPosts.stream()
+                .filter(p -> p.getInterestTag() != null && hardTags.contains(p.getInterestTag().trim()))
+                .collect(Collectors.toList());
+
+        // Tầng 2: trùng sở thích ẩn (loại trừ bài đã vào tầng 1)
+        List<Post> tier2 = allPosts.stream()
+                .filter(p -> p.getInterestTag() != null
+                        && !hardTags.contains(p.getInterestTag().trim())
+                        && hiddenTags.contains(p.getInterestTag().trim()))
+                .collect(Collectors.toList());
+
+        // Tầng 3: còn lại — không khớp bất kỳ sở thích nào
+        List<Post> tier3 = allPosts.stream()
+                .filter(p -> p.getInterestTag() == null
+                        || (!hardTags.contains(p.getInterestTag().trim())
+                            && !hiddenTags.contains(p.getInterestTag().trim())))
+                .collect(Collectors.toList());
+
+        List<Post> sorted = new ArrayList<>(tier1);
+        sorted.addAll(tier2);
+        sorted.addAll(tier3);
+
+        return toResponseList(sorted, currentUserId);
+    }
+
+    // Helper: parse chuỗi CSV tags thành Set<String> (case-sensitive, trimmed) để tra cứu O(1)
+    private Set<String> parseTagSet(String csv) {
+        if (csv == null || csv.isBlank()) return Collections.emptySet();
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(t -> !t.isBlank())
+                .collect(Collectors.toSet());
+    }
+
+    // Helper: parse chuỗi CSV tags thành List có thể chỉnh sửa (dùng khi cần thêm tag mới)
+    private List<String> parseTagList(String csv) {
+        if (csv == null || csv.isBlank()) return new ArrayList<>();
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(t -> !t.isBlank())
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     // Lấy chi tiết bài đăng
@@ -191,7 +251,8 @@ public class PostService {
     }
 
     // Xin tham gia hoạt động
-    public String joinPost(Long postId, Long userId) {
+    @Transactional
+    public JoinGroupResponse joinPost(Long postId, Long userId) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy bài đăng."));
 
@@ -239,8 +300,41 @@ public class PostService {
         postMemberRepository.save(member);
 
         // Tạo thông báo cho chủ bài đăng
-        User joiner = userRepository.findById(userId).orElse(null);
+        User joiner = joinerUser;
         String joinerName = joiner != null ? joiner.getFullName() : "Người dùng";
+
+        // ================================================================
+        // HỌC SỞ THÍCH ẨN TỪ HÀNH VI (behavioralTags)
+        // Khi user tham gia hoạt động, kiểm tra tag của bài:
+        //   - Nếu tag ĐÃ có trong interestTags (cứng) hoặc behavioralTags (ẩn) → bỏ qua
+        //   - Nếu tag CHƯA có ở cả 2 và behavioralTags < 5 → ghi nhận vào behavioralTags
+        //   - Nếu behavioralTags đã đủ 5 → lặng lẽ bỏ qua, không chặn tham gia
+        // interestTags KHÔNG BAO GIỜ bị chạm vào → Profile hiển thị đúng 5 tags cứng
+        // ================================================================
+        // Flag trả về cho app: true chỉ khi hệ thống vừa học ngầm một tag mới.
+        boolean newTagSuggested = false;
+        String activityTag = post.getInterestTag();
+        if (joiner != null && activityTag != null && !activityTag.isBlank()) {
+            String trimmedTag = activityTag.trim();
+
+            // Parse 2 danh sách riêng biệt
+            Set<String> hardTagSet = parseTagSet(joiner.getInterestTags());
+            List<String> behavioralList = parseTagList(joiner.getBehavioralTags());
+
+            // Tag đã biết nếu nằm trong sở thích cứng HOẶC sở thích ẩn (không phân biệt hoa/thường)
+            boolean alreadyKnown = hardTagSet.stream().anyMatch(t -> t.equalsIgnoreCase(trimmedTag))
+                    || behavioralList.stream().anyMatch(t -> t.equalsIgnoreCase(trimmedTag));
+
+            if (!alreadyKnown && behavioralList.size() < 5) {
+                behavioralList.add(trimmedTag);
+                joiner.setBehavioralTags(String.join(",", behavioralList));
+                userRepository.save(joiner);
+                newTagSuggested = true;
+            }
+            // Nếu đã biết tag hoặc đã đủ 5 tag ẩn: không làm gì, vẫn cho tham gia bình thường
+        }
+        // ================================================================
+
         String postTitle = post.getContent();
         if (postTitle != null && postTitle.length() > 50) {
             postTitle = postTitle.substring(0, 50) + "...";
@@ -255,7 +349,7 @@ public class PostService {
                 userId
         );
 
-        return "Đã gửi yêu cầu tham gia!";
+        return new JoinGroupResponse(true, "Đã gửi yêu cầu tham gia!", newTagSuggested);
     }
 
     // Duyệt thành viên

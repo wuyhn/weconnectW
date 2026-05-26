@@ -83,7 +83,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:text="Chọn thành phố → quận → phường"
+                android:text="Hà Nội: chọn phường/xã mới; quận/huyện cũ chỉ dùng để lọc"
                 android:textColor="#8E8E93"
                 android:textSize="13sp" />
 
@@ -133,7 +133,7 @@
                     android:id="@+id/actDistrict"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Chọn quận/huyện"
+                    android:hint="Khu vực/quận cũ (chỉ để lọc)"
                     android:inputType="none"
                     android:paddingVertical="14dp"
                     android:textColor="#1C1C1E"
@@ -189,12 +189,12 @@
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipHaDong"
                     style="@style/QuickParticipantChip"
-                    android:text="Hà Đông, Hà Nội" />
+                    android:text="Hà Đông" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipCauGiay"
                     style="@style/QuickParticipantChip"
-                    android:text="Cầu Giấy, Hà Nội" />
+                    android:text="Cầu Giấy" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipThuDuc"
@@ -225,7 +225,7 @@
                     android:textColor="#007AFF"
                     android:textSize="14sp"
                     android:textStyle="bold"
-                    tools:text="📍 Phường Phú Lương, Hà Đông, Hà Nội" />
+                    tools:text="📍 Phường Hà Đông, Hà Nội" />
             </androidx.cardview.widget.CardView>
 
         </LinearLayout>

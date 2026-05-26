@@ -24,4 +24,5 @@ public class ChatMessageApiResponse {
     public String getCreatedAt() { return createdAt; }
     public String getType() { return type; }
     public boolean isSystemMessage() { return "SYSTEM".equals(type); }
+    public boolean isSummaryMessage() { return "SUMMARY".equals(type); }
 }

@@ -17,4 +17,7 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 
     // Lấy id tin nhắn mới nhất trong phòng
     java.util.Optional<ChatMessage> findTopByRoomIdOrderByIdDesc(Long roomId);
+
+    // Lấy 50 tin nhắn gần nhất (cho AI tóm tắt)
+    List<ChatMessage> findTop50ByRoomIdOrderByCreatedAtDesc(Long roomId);
 }

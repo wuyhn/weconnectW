@@ -24,6 +24,12 @@ public class AdminAccountInitializer {
     @Order(0)
     public CommandLineRunner migrateReportStatuses(JdbcTemplate jdbcTemplate) {
         return args -> {
+            try {
+                jdbcTemplate.execute(
+                    "ALTER TABLE notifications MODIFY COLUMN type VARCHAR(50) NOT NULL");
+                System.out.println("Notification migration: notifications.type = VARCHAR(50)");
+            } catch (Exception ignored) {}
+
             // Đổi ENUM → VARCHAR để thoát khỏi ràng buộc enum cũ (PENDING/REVIEWED/RESOLVED)
             // Nếu column đã là VARCHAR thì lệnh này vẫn chạy được (idempotent)
             try {

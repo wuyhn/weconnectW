@@ -11,12 +11,17 @@ public class ChatMessage implements Serializable {
     private final String timeLabel;
     private final boolean sentByCurrentUser;
     private final boolean systemMessage;
+    private final String type;
 
     public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
-        this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, false);
+        this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, false, null);
     }
 
     public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser, boolean systemMessage) {
+        this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, systemMessage, null);
+    }
+
+    public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser, boolean systemMessage, String type) {
         this.id = id;
         this.senderId = senderId;
         this.senderName = senderName;
@@ -24,10 +29,11 @@ public class ChatMessage implements Serializable {
         this.timeLabel = timeLabel;
         this.sentByCurrentUser = sentByCurrentUser;
         this.systemMessage = systemMessage;
+        this.type = type;
     }
 
     public ChatMessage(String id, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
-        this(id, 0L, senderName, content, timeLabel, sentByCurrentUser, false);
+        this(id, 0L, senderName, content, timeLabel, sentByCurrentUser, false, null);
     }
 
     public String getId() {
@@ -54,7 +60,15 @@ public class ChatMessage implements Serializable {
         return sentByCurrentUser;
     }
 
+    public String getType() {
+        return type;
+    }
+
     public boolean isSystemMessage() {
-        return systemMessage;
+        return systemMessage || "SYSTEM".equals(type);
+    }
+
+    public boolean isSummaryMessage() {
+        return "SUMMARY".equals(type);
     }
 }

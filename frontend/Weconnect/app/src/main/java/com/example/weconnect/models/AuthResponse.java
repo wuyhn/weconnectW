@@ -10,6 +10,7 @@ public class AuthResponse {
     private String fullName;
     private String token;
     private String message;
+    private double reputationScore;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -25,4 +26,7 @@ public class AuthResponse {
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
+
+    public double getReputationScore() { return reputationScore; }
+    public void setReputationScore(double reputationScore) { this.reputationScore = reputationScore; }
 }

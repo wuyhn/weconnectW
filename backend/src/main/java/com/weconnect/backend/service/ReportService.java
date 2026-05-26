@@ -31,19 +31,25 @@ public class ReportService {
     private final PostMemberRepository postMemberRepository;
     private final NotificationService notificationService;
     private final ReviewService reviewService;
+    private final UserService userService;
+    private final FCMService fcmService;
 
     public ReportService(ReportRepository reportRepository,
                          UserRepository userRepository,
                          PostRepository postRepository,
                          PostMemberRepository postMemberRepository,
                          NotificationService notificationService,
-                         ReviewService reviewService) {
+                         ReviewService reviewService,
+                         UserService userService,
+                         FCMService fcmService) {
         this.reportRepository = reportRepository;
         this.userRepository = userRepository;
         this.postRepository = postRepository;
         this.postMemberRepository = postMemberRepository;
         this.notificationService = notificationService;
         this.reviewService = reviewService;
+        this.userService = userService;
+        this.fcmService = fcmService;
     }
 
     // User tạo report từ app
@@ -91,6 +97,7 @@ public class ReportService {
 
     @Transactional
     public Map<String, Object> approveReport(Long reportId, Long adminId, Integer penaltyPoint) {
+        log.info("[REPORT-APPROVE] START reportId={}, adminId={}, penaltyInput={}", reportId, adminId, penaltyPoint);
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
 
@@ -100,6 +107,18 @@ public class ReportService {
 
         int penalty = penaltyPoint != null ? penaltyPoint
                 : suggestPenaltyPoint(report.getReason(), report.getTargetType());
+        penalty = Math.max(0, penalty);
+
+        User reporter = userRepository.findById(report.getReporterId())
+                .orElseThrow(() -> new RuntimeException("Nguoi bao cao khong ton tai."));
+
+        Long targetUserId = resolveTargetUserId(report);
+        if (targetUserId == null) {
+            throw new RuntimeException("Khong xac dinh duoc nguoi bi bao cao.");
+        }
+
+        User reportedUser = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new RuntimeException("Nguoi bi bao cao khong ton tai."));
 
         report.setStatus(Report.Status.VALID);
         report.setPenaltyPoint(penalty);
@@ -107,9 +126,41 @@ public class ReportService {
         report.setReviewedAt(LocalDateTime.now());
         reportRepository.save(report);
 
-        Long targetUserId = resolveTargetUserId(report);
-        if (targetUserId != null) {
-            reviewService.recalculateReputation(targetUserId);
+        boolean sanctionApplied = false;
+        log.info("[REPORT-APPROVE] Report {} da set VALID, reporterId={}, targetUserId={}, penalty={}",
+                reportId, reporter.getId(), reportedUser.getId(), penalty);
+
+        // 1) Thong bao cho nguoi bao cao: bao cao da duoc Ban quan tri xac minh va xu ly.
+        String reporterTitle = "🎉 Kết quả xử lý báo cáo từ WeConnect";
+        String reporterBody = "Cảm ơn bạn đã gửi phản hồi. Báo cáo vi phạm của bạn đối với người dùng "
+                + displayName(reportedUser)
+                + " đã được Ban quản trị xác minh và xử lý vi phạm thành công. "
+                + "Cảm ơn bạn đã chung tay xây dựng cộng đồng văn minh!";
+        try {
+            notificationService.createNotificationForReportWithoutPush(
+                    reporter.getId(), Notification.NotificationType.REPORT_CONFIRMED, reporterBody, "Admin", reportId);
+            log.info("[REPORT-APPROVE] Da luu REPORT_CONFIRMED notification cho reporterId={}, reportId={}",
+                    reporter.getId(), reportId);
+        } catch (Exception e) {
+            // Notification chi la kenh thong bao phu. Khong de loi schema/FCM lam rollback approve report va tru diem.
+            log.error("[REPORT-APPROVE] Luu REPORT_CONFIRMED notification that bai, tiep tuc xu ly reportId={}, reporterId={}, error={}",
+                    reportId, reporter.getId(), e.getMessage(), e);
+        }
+        sendFcmToUserSafely(reporter, reporterTitle, reporterBody, "REPORTER_APPROVED", reportId);
+
+        if (penalty > 0) {
+            // 2) Thong bao va che tai nguoi bi bao cao qua UserService de dung mot luong tru diem/khoa tai khoan.
+            // penaltyPoint da duoc luu o report VALID, nen overload nay khong cong vao violationPenaltySum.
+            String reportedTitle = "🚫 Cảnh báo xác nhận vi phạm từ Admin";
+            String reportedBody = "Hành vi của bạn đã bị cộng đồng báo cáo vi phạm tiêu chuẩn cộng đồng "
+                    + "và đã được Admin xác nhận. Bạn vừa bị trừ " + penalty + " điểm uy tín.";
+            userService.handleApprovedReportViolation(
+                    reportedUser.getId(), penalty, reportedTitle, reportedBody, "REPORT_APPROVE:" + reportId);
+            sanctionApplied = true;
+            log.info("[REPORT-APPROVE] Da goi handleApprovedReportViolation targetUserId={}, penalty={}",
+                    reportedUser.getId(), penalty);
+        } else {
+            log.info("[REPORT-APPROVE] Report {} penalty=0, bo qua luong tru diem user.", reportId);
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -119,6 +170,9 @@ public class ReportService {
         result.put("targetType", report.getTargetType().name());
         result.put("targetUserId", targetUserId);
         result.put("reporterId", report.getReporterId());
+        result.put("sanctionApplied", sanctionApplied);
+        log.info("[REPORT-APPROVE] END reportId={}, reporterId={}, targetUserId={}, sanctionApplied={}",
+                reportId, reporter.getId(), targetUserId, sanctionApplied);
         return result;
     }
 
@@ -316,25 +370,40 @@ public class ReportService {
 
     public void sendApproveNotifications(Long reporterId, String targetType, Long targetUserId,
                                          int penaltyPoint, Long reportId) {
+        log.info("[NOTIFY] sendApproveNotifications START — reportId={}, targetType={}, targetUserId={}, reporterId={}, penalty={}",
+                reportId, targetType, targetUserId, reporterId, penaltyPoint);
+
+        // Notification cho User 2 (người bị báo cáo / chủ bài viết): REPORT_PENALTY
         if (targetUserId != null) {
             try {
                 String msg = "USER".equals(targetType)
                         ? "Báo cáo về bạn đã được xác nhận. Điểm uy tín của bạn bị trừ " + penaltyPoint + " điểm."
                         : "Bài viết của bạn đã bị xác nhận vi phạm. Điểm uy tín của bạn bị trừ " + penaltyPoint + " điểm.";
+                log.info("[NOTIFY] Tạo REPORT_PENALTY cho targetUserId={}, reportId={}, msg={}", targetUserId, reportId, msg);
                 notificationService.createNotificationForReport(targetUserId,
                         Notification.NotificationType.REPORT_PENALTY, msg, "Admin", reportId);
+                log.info("[NOTIFY] Tạo REPORT_PENALTY thành công cho targetUserId={}", targetUserId);
             } catch (Exception e) {
-                log.warn("Gửi REPORT_PENALTY notification cho user {} thất bại: {}", targetUserId, e.getMessage(), e);
+                log.error("[NOTIFY] Tạo REPORT_PENALTY THẤT BẠI cho user {}: {}", targetUserId, e.getMessage(), e);
             }
+        } else {
+            log.warn("[NOTIFY] targetUserId null — bỏ qua REPORT_PENALTY notification (reportId={})", reportId);
         }
+
+        // Notification cho User 1 (người gửi báo cáo): REPORT_CONFIRMED, phân biệt theo targetType
         try {
-            notificationService.createNotification(reporterId,
-                    Notification.NotificationType.ADMIN_ACTION,
-                    "Báo cáo của bạn đã được xác nhận là hợp lệ. Cảm ơn bạn đã đóng góp!",
-                    "Admin", null, null);
+            String reporterMsg = "USER".equals(targetType)
+                    ? "Báo cáo của bạn về người dùng đã được admin xử lý."
+                    : "Báo cáo của bạn về bài viết đã được admin xử lý.";
+            log.info("[NOTIFY] Tạo REPORT_CONFIRMED cho reporterId={}, reportId={}", reporterId, reportId);
+            notificationService.createNotificationForReport(reporterId,
+                    Notification.NotificationType.REPORT_CONFIRMED, reporterMsg, "Admin", reportId);
+            log.info("[NOTIFY] Tạo REPORT_CONFIRMED thành công cho reporterId={}", reporterId);
         } catch (Exception e) {
-            log.warn("Gửi ADMIN_ACTION notification cho reporter {} thất bại: {}", reporterId, e.getMessage());
+            log.error("[NOTIFY] Tạo REPORT_CONFIRMED THẤT BẠI cho reporter {}: {}", reporterId, e.getMessage(), e);
         }
+
+        log.info("[NOTIFY] sendApproveNotifications END — reportId={}", reportId);
     }
 
     public Map<String, Object> getMyReportDetail(Long reportId, Long userId) {
@@ -342,6 +411,10 @@ public class ReportService {
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy báo cáo."));
 
         Long targetUserId = resolveTargetUserId(report);
+        // targetUserId null chỉ xảy ra khi POST target mà bài viết đã bị xóa
+        if (targetUserId == null) {
+            throw new RuntimeException("Bài viết liên quan đến báo cáo này đã bị xóa.");
+        }
         if (!userId.equals(targetUserId)) {
             throw new RuntimeException("Bạn không có quyền xem báo cáo này.");
         }
@@ -366,16 +439,53 @@ public class ReportService {
         return map;
     }
 
-    public void sendRejectNotifications(Long reporterId) {
+    public void sendRejectNotifications(Long reporterId, Long reportId) {
         try {
-            notificationService.createNotification(reporterId,
+            notificationService.createNotificationForReport(reporterId,
                     Notification.NotificationType.ADMIN_ACTION,
                     "Báo cáo của bạn đã được xem xét nhưng không đủ cơ sở xác nhận vi phạm.",
-                    "Admin", null, null);
-        } catch (Exception ignored) {}
+                    "Admin", reportId);
+        } catch (Exception e) {
+            log.warn("Gửi ADMIN_ACTION notification cho reporter {} thất bại: {}", reporterId, e.getMessage());
+        }
     }
 
     // === Helpers ===
+
+    private void sendFcmToUserSafely(User user, String title, String body, String context, Long reportId) {
+        if (user == null) {
+            log.warn("[REPORT-FCM] Bo qua FCM vi user null, context={}, reportId={}", context, reportId);
+            return;
+        }
+
+        String token = user.getFcmToken();
+        if (token == null || token.isBlank()) {
+            log.warn("[REPORT-FCM] User {} khong co fcmToken, bo qua push. context={}, reportId={}",
+                    user.getId(), context, reportId);
+            return;
+        }
+
+        try {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", context);
+            data.put("reportId", String.valueOf(reportId));
+            log.info("[REPORT-FCM] Chuan bi gui FCM userId={}, context={}, reportId={}, title={}",
+                    user.getId(), context, reportId, title);
+            fcmService.sendNotification(token, title, body, data);
+            log.info("[REPORT-FCM] Da goi fcmService.sendNotification userId={}, context={}, reportId={}",
+                    user.getId(), context, reportId);
+        } catch (Exception e) {
+            log.error("[REPORT-FCM] Gui FCM that bai userId={}, context={}, reportId={}, error={}",
+                    user.getId(), context, reportId, e.getMessage(), e);
+        }
+    }
+
+    private String displayName(User user) {
+        if (user == null) return "Unknown";
+        if (user.getFullName() != null && !user.getFullName().isBlank()) return user.getFullName();
+        if (user.getEmail() != null && !user.getEmail().isBlank()) return user.getEmail();
+        return "ID " + user.getId();
+    }
 
     private Long resolveTargetUserId(Report report) {
         if (report.getTargetType() == Report.TargetType.USER) {
@@ -442,6 +552,10 @@ public class ReportService {
                 targetInfo.put("avatarUrl", targetUser.getAvatarUrl());
                 targetInfo.put("averageRating", targetUser.getAverageRating());
                 targetInfo.put("reputationScore", targetUser.getReputationScore());
+                targetInfo.put("violationPenaltySum", targetUser.getViolationPenaltySum());
+                targetInfo.put("violationCount", targetUser.getViolationCount());
+                targetInfo.put("status", targetUser.getStatus());
+                targetInfo.put("lockUntil", targetUser.getLockUntil());
                 targetInfo.put("isBlocked", targetUser.isBlocked());
                 targetInfo.put("gender", targetUser.getGender());
                 targetInfo.put("createdAt", targetUser.getCreatedAt());

@@ -154,6 +154,10 @@ public class AdminUserController {
 
         map.put("averageRating", user.getAverageRating());
         map.put("reputationScore", user.getReputationScore());
+        map.put("violationPenaltySum", user.getViolationPenaltySum());
+        map.put("violationCount", user.getViolationCount());
+        map.put("status", user.getStatus());
+        map.put("lockUntil", user.getLockUntil());
         map.put("isBlocked", user.isBlocked());
         map.put("role", user.getRole());
         map.put("createdAt", user.getCreatedAt());

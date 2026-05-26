@@ -104,6 +104,7 @@ public class LoginActivity extends AppCompatActivity {
                     RetrofitClient.saveToken(LoginActivity.this, authResult.getToken());
                     RetrofitClient.saveUserId(LoginActivity.this, authResult.getId());
                     RetrofitClient.saveUserName(LoginActivity.this, authResult.getFullName());
+                    RetrofitClient.saveReputationScore(LoginActivity.this, authResult.getReputationScore());
 
                     // Reset tất cả fake repos để tránh trộn dữ liệu giữa các tài khoản
                     com.example.weconnect.data.FakePostRepository.resetInstance();
@@ -127,6 +128,11 @@ public class LoginActivity extends AppCompatActivity {
                                 Object avatarObj = profile.get("avatarUrl");
                                 if (avatarObj != null && !avatarObj.toString().isEmpty()) {
                                     RetrofitClient.saveAvatarUrl(LoginActivity.this, avatarObj.toString());
+                                }
+                                Object repObj = profile.get("reputationScore");
+                                if (repObj instanceof Number) {
+                                    RetrofitClient.saveReputationScore(LoginActivity.this,
+                                            ((Number) repObj).doubleValue());
                                 }
                             }
                             navigateToMain();

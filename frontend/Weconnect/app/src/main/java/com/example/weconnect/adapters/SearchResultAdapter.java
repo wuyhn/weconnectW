@@ -20,6 +20,7 @@ import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.SearchResultItem;
 import com.example.weconnect.activities.PostDetailActivity;
@@ -169,14 +170,19 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                         try { postId = Long.parseLong(post.getId()); }
                         catch (Exception e) { return; }
                         RetrofitClient.getClient().create(PostApiService.class)
-                                .joinPost(postId).enqueue(new Callback<ApiResponse<Void>>() {
+                                .joinPost(postId).enqueue(new Callback<ApiResponse<JoinGroupResponse>>() {
                                     @Override
-                                    public void onResponse(Call<ApiResponse<Void>> call,
-                                                           Response<ApiResponse<Void>> response) {
+                                    public void onResponse(Call<ApiResponse<JoinGroupResponse>> call,
+                                                           Response<ApiResponse<JoinGroupResponse>> response) {
                                         if (response.isSuccessful()) {
                                             post.setPendingApproval(true);
                                             ph.btnJoin.setText("⏳ Đang chờ duyệt");
-                                            Toast.makeText(context, "Đã gửi yêu cầu tham gia", Toast.LENGTH_SHORT).show();
+                                            JoinGroupResponse result = response.body() != null ? response.body().getResult() : null;
+                                            boolean learnedNewTag = result != null && result.isNewTagSuggested();
+                                            String toastMessage = learnedNewTag
+                                                    ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
+                                                    : "Tham gia nhóm thành công!";
+                                            Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show();
                                         } else {
                                             ph.btnJoin.setEnabled(true);
                                             ph.btnJoin.setAlpha(1.0f);
@@ -185,7 +191,7 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                                         }
                                     }
                                     @Override
-                                    public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                    public void onFailure(Call<ApiResponse<JoinGroupResponse>> call, Throwable t) {
                                         ph.btnJoin.setEnabled(true);
                                         ph.btnJoin.setAlpha(1.0f);
                                         ph.btnJoin.setText("Tham gia");
