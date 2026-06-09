@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class User {
+    public static final String STATUS_PENDING = "PENDING";
     public static final String STATUS_ACTIVE = "ACTIVE";
     public static final String STATUS_LOCKED_TEMP = "LOCKED_TEMP";
     public static final String STATUS_BANNED = "BANNED";
@@ -32,6 +33,12 @@ public class User {
     private String fullName;
     private String birthday;
     private String gender;
+
+    @Column(length = 20)
+    private String provinceId;
+
+    @Column(length = 100)
+    private String provinceName;
 
     @Column(length = 500)
     private String avatarUrl;

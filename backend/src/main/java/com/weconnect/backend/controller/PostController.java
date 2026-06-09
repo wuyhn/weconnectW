@@ -6,16 +6,21 @@ import com.weconnect.backend.dto.JoinGroupResponse;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.service.PostService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/posts")
 public class PostController {
+
+    private static final Logger log = LoggerFactory.getLogger(PostController.class);
 
     private final PostService postService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -106,10 +111,21 @@ public class PostController {
 
     // Xin tham gia
     @PostMapping("/{id}/join")
-    public ResponseEntity<?> joinPost(@PathVariable Long id, Authentication authentication) {
+    public ResponseEntity<?> joinPost(@PathVariable Long id,
+                                      @RequestBody(required = false) Map<String, Object> body,
+                                      Authentication authentication) {
         User user = (User) authentication.getPrincipal();
         try {
-            JoinGroupResponse result = postService.joinPost(id, user.getId());
+            String joinReason = body != null && body.get("joinReason") != null
+                    ? body.get("joinReason").toString() : null;
+            String requesterProvince = body != null && body.get("requesterProvince") != null
+                    ? body.get("requesterProvince").toString() : null;
+            String activityProvince = body != null && body.get("activityProvince") != null
+                    ? body.get("activityProvince").toString() : null;
+            Boolean isFarLocation = body != null && body.get("isFarLocation") != null
+                    ? Boolean.parseBoolean(body.get("isFarLocation").toString()) : null;
+            JoinGroupResponse result = postService.joinPost(
+                    id, user.getId(), joinReason, requesterProvince, activityProvince, isFarLocation);
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000).message(result.getMessage()).result(result).build());
         } catch (RuntimeException e) {
@@ -185,11 +201,15 @@ public class PostController {
                 .code(1000).message("Thành công").result(posts).build());
     }
 
-    // Tìm kiếm bài đăng
+    // Tìm kiếm bài đăng hoạt động theo keyword.
+    // Hỗ trợ cả "keyword" mới và "q" cũ để không phá các client chưa cập nhật.
     @GetMapping("/search")
-    public ResponseEntity<?> searchPosts(@RequestParam String q, Authentication authentication) {
+    public ResponseEntity<?> searchPosts(@RequestParam(required = false) String keyword,
+                                         @RequestParam(required = false) String q,
+                                         Authentication authentication) {
         User user = (User) authentication.getPrincipal();
-        List<PostResponse> posts = postService.searchPosts(q, user.getId());
+        String searchKeyword = keyword != null ? keyword : q;
+        List<PostResponse> posts = postService.searchPosts(searchKeyword, user.getId());
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công").result(posts).build());
     }

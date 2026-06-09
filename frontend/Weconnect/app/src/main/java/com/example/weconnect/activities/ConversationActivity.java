@@ -72,6 +72,8 @@ public class ConversationActivity extends AppCompatActivity {
     private TextView tvBlockPanelTitle;
     private TextView tvBlockPanelDescription;
     private LinearLayout layoutBlockPanelActions;
+    private LinearLayout bannedNoticeBar;
+    private TextView tvBannedNotice;
     private MaterialButton btnUnblockDirectUser;
     private MaterialButton btnReportDirectUser;
     private MaterialCardView nonFriendInfoCard;
@@ -87,7 +89,19 @@ public class ConversationActivity extends AppCompatActivity {
     private long backendPostId = -1;
     private long backendOwnerId = -1;
 
-    // Member info maps populated from room API response
+    // Member info — dùng List có thứ tự để hỗ trợ 2 thành viên trùng tên
+    private static class MemberEntry {
+        final long id;
+        final String name;
+        final String avatarUrl;
+        MemberEntry(long id, String name, String avatarUrl) {
+            this.id = id;
+            this.name = name != null ? name : "";
+            this.avatarUrl = avatarUrl != null ? avatarUrl : "";
+        }
+    }
+    private final List<MemberEntry> memberEntries = new ArrayList<>();
+    // Maps giữ nguyên để các chỗ khác vẫn dùng được (avatar cache, block status)
     private final Map<String, Long> memberNameToId = new HashMap<>();
     private final Map<String, String> memberNameToAvatar = new HashMap<>();
     private long otherUserId = -1;
@@ -98,6 +112,11 @@ public class ConversationActivity extends AppCompatActivity {
     private boolean directIsFriend = true;
     private boolean directIsMessageRequest = false;
     private String directFriendStatus = "NONE"; // NONE, PENDING_SENT, PENDING_RECEIVED, FRIEND
+    private String strangerRequestStatus = null; // null | PENDING | ACCEPTED | REJECTED
+    private boolean isStrangerRequestReceiver = false; // true nếu tôi là người nhận (không phải người tạo room)
+    private boolean strangerSheetShown = false; // chỉ show 1 lần mỗi lần mở Activity
+    private boolean bannedPopupShown = false;    // chỉ show 1 lần mỗi lần mở Activity
+    private static final int STRANGER_MSG_LIMIT = 5;
 
     // Block status per group member (memberId → flag)
     private final Map<Long, Boolean> memberIdBlockedByMe = new HashMap<>();
@@ -166,6 +185,8 @@ public class ConversationActivity extends AppCompatActivity {
         tvBlockPanelTitle = findViewById(R.id.tvBlockPanelTitle);
         tvBlockPanelDescription = findViewById(R.id.tvBlockPanelDescription);
         layoutBlockPanelActions = findViewById(R.id.layoutBlockPanelActions);
+        bannedNoticeBar = findViewById(R.id.bannedNoticeBar);
+        tvBannedNotice = findViewById(R.id.tvBannedNotice);
         btnUnblockDirectUser = findViewById(R.id.btnUnblockDirectUser);
         btnReportDirectUser = findViewById(R.id.btnReportDirectUser);
         nonFriendInfoCard = findViewById(R.id.nonFriendInfoCard);
@@ -526,12 +547,15 @@ public class ConversationActivity extends AppCompatActivity {
         }
 
         boolean blocked = blockedByMe || blockedByOther;
-        composerCard.setVisibility(blocked ? View.GONE : View.VISIBLE);
+        // Composer cũng bị ẩn khi tài khoản người kia bị admin khóa/cấm
+        boolean otherRestricted = room != null && isDirectRoom()
+                && (room.isOtherUserBanned() || room.isOtherUserLockedTemp());
+        composerCard.setVisibility(blocked || otherRestricted ? View.GONE : View.VISIBLE);
         blockPanelCard.setVisibility(blocked ? View.VISIBLE : View.GONE);
-        etMessageInput.setEnabled(!blocked);
-        btnSendMessage.setEnabled(!blocked);
+        etMessageInput.setEnabled(!(blocked || otherRestricted));
+        btnSendMessage.setEnabled(!(blocked || otherRestricted));
 
-        if (blocked) {
+        if (blocked || otherRestricted) {
             etMessageInput.setText("");
             etMessageInput.clearFocus();
             android.view.inputmethod.InputMethodManager imm =
@@ -540,6 +564,18 @@ public class ConversationActivity extends AppCompatActivity {
             if (imm != null) {
                 imm.hideSoftInputFromWindow(etMessageInput.getWindowToken(), 0);
             }
+        }
+
+        if (blockedByMe || blockedByOther) {
+            // Reset stranger status panel colors về mặc định trước khi setup block panel
+            blockPanelCard.setCardBackgroundColor(
+                    getResources().getColor(R.color.card_surface, getTheme()));
+            tvBlockPanelTitle.setTextColor(
+                    getResources().getColor(R.color.text_primary, getTheme()));
+            tvBlockPanelTitle.setTextSize(15);
+            tvBlockPanelDescription.setTextColor(
+                    getResources().getColor(R.color.text_secondary, getTheme()));
+            tvBlockPanelDescription.setTextSize(13);
         }
 
         if (blockedByMe) {
@@ -604,6 +640,69 @@ public class ConversationActivity extends AppCompatActivity {
         }
 
         applyNonFriendInfoArea();
+        applyStrangerRequestStatus();
+    }
+
+    private void applyBannedUserNotice() {
+        if (bannedNoticeBar == null) return;
+        if (room == null || !isDirectRoom()) {
+            bannedNoticeBar.setVisibility(View.GONE);
+            return;
+        }
+        boolean isBanned = room.isOtherUserBanned();
+        boolean isLocked = room.isOtherUserLockedTemp();
+        if (!isBanned && !isLocked) {
+            bannedNoticeBar.setVisibility(View.GONE);
+            return;
+        }
+        String userName = (otherUserName != null && !otherUserName.isEmpty())
+                ? otherUserName : "Người dùng";
+        String text;
+        if (isBanned) {
+            text = "Tài khoản của " + userName
+                    + " đã bị khóa vĩnh viễn do vi phạm tiêu chuẩn cộng đồng.";
+        } else {
+            String lockUntil = room.getOtherUserLockUntil();
+            if (lockUntil != null && !lockUntil.isEmpty()) {
+                text = "Tài khoản của " + userName
+                        + " đã bị khóa tạm thời do vi phạm tiêu chuẩn cộng đồng."
+                        + " Tài khoản sẽ hoạt động trở lại vào ngày " + lockUntil + ".";
+            } else {
+                text = "Tài khoản của " + userName
+                        + " đã bị khóa tạm thời do vi phạm tiêu chuẩn cộng đồng.";
+            }
+        }
+        tvBannedNotice.setText(text);
+        bannedNoticeBar.setVisibility(View.VISIBLE);
+    }
+
+    private void showBannedUserPopupIfNeeded() {
+        if (bannedPopupShown || room == null || !isDirectRoom()) return;
+        String userName = (otherUserName != null && !otherUserName.isEmpty())
+                ? otherUserName : "Người dùng";
+        String message = null;
+        if (room.isOtherUserBanned()) {
+            message = "Tài khoản của " + userName
+                    + " đã bị khóa vĩnh viễn do vi phạm tiêu chuẩn cộng đồng.";
+        } else if (room.isOtherUserLockedTemp()) {
+            String lockUntil = room.getOtherUserLockUntil();
+            if (lockUntil != null && !lockUntil.isEmpty()) {
+                message = "Tài khoản của " + userName
+                        + " đã bị khóa tạm thời do vi phạm tiêu chuẩn cộng đồng."
+                        + "\n\nTài khoản sẽ hoạt động trở lại vào ngày " + lockUntil + ".";
+            } else {
+                message = "Tài khoản của " + userName
+                        + " đã bị khóa tạm thời do vi phạm tiêu chuẩn cộng đồng.";
+            }
+        }
+        if (message == null) return;
+        bannedPopupShown = true;
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Tài khoản bị hạn chế")
+                .setMessage(message)
+                .setPositiveButton("Đã hiểu", null)
+                .setCancelable(true)
+                .show();
     }
 
     private boolean amIOwner() {
@@ -975,6 +1074,21 @@ public class ConversationActivity extends AppCompatActivity {
                         .setCancelable(false)
                         .setPositiveButton("Đóng", (d, w) -> finish())
                         .show();
+            } else if ("STRANGER_ACCEPTED".equals(type) && eventRoomId == backendRoomId) {
+                strangerRequestStatus = "ACCEPTED";
+                if (room != null) room.setStrangerRequestStatus("ACCEPTED");
+                applyStrangerRequestStatus();
+                // Refresh để đồng bộ UI (chat input, friend card)
+                loadDirectFriendStatus();
+            } else if ("STRANGER_REJECTED".equals(type) && eventRoomId == backendRoomId) {
+                strangerRequestStatus = "REJECTED";
+                if (room != null) room.setStrangerRequestStatus("REJECTED");
+                if (isStrangerRequestReceiver) {
+                    // Receiver vừa từ chối → finish()
+                    finish();
+                } else {
+                    applyStrangerRequestStatus();
+                }
             } else if ("ACTIVITY_CANCELLED".equals(type) && eventRoomId == backendRoomId) {
                 // Chủ hoạt động đã hủy — disable input ngay lập tức
                 etMessageInput.setEnabled(false);
@@ -1272,6 +1386,8 @@ public class ConversationActivity extends AppCompatActivity {
                     com.example.weconnect.models.ChatRoomApiResponse data = response.body().getResult();
                     room = parseRoomFromApi(data);
                     displayRoom();
+                    applyBannedUserNotice();
+                    showBannedUserPopupIfNeeded();
                     applyDirectBlockStatus(currentUserBlockedOther, otherUserBlockedCurrent);
                     refreshDirectBlockStatus();
                     loadDirectFriendStatus();
@@ -1328,6 +1444,7 @@ public class ConversationActivity extends AppCompatActivity {
 
         List<String> memberNames = new ArrayList<>();
         long myId = RetrofitClient.getUserId(this);
+        memberEntries.clear();
         memberNameToId.clear();
         memberNameToAvatar.clear();
         memberIdBlockedByMe.clear();
@@ -1339,6 +1456,13 @@ public class ConversationActivity extends AppCompatActivity {
         otherUserBlockedCurrent = false;
         directIsFriend = !ChatRoom.TYPE_DIRECT.equals(type) || data.isFriend();
         directIsMessageRequest = ChatRoom.TYPE_DIRECT.equals(type) && data.isMessageRequest();
+        if (ChatRoom.TYPE_DIRECT.equals(type)) {
+            strangerRequestStatus = data.getStrangerRequestStatus();
+            isStrangerRequestReceiver = (backendOwnerId > 0 && myId != backendOwnerId);
+        } else {
+            strangerRequestStatus = null;
+            isStrangerRequestReceiver = false;
+        }
         if (ChatRoom.TYPE_DIRECT.equals(type)) {
             currentUserBlockedOther = data.isBlockedByMe();
             otherUserBlockedCurrent = data.hasBlockedMe();
@@ -1353,6 +1477,8 @@ public class ConversationActivity extends AppCompatActivity {
                 String name = m.getFullName() != null ? m.getFullName() : "";
                 if (!name.isEmpty()) memberNames.add(name);
                 if (m.getId() > 0) {
+                    // Thêm vào danh sách có thứ tự — hỗ trợ 2 thành viên trùng tên
+                    memberEntries.add(new MemberEntry(m.getId(), name, m.getAvatarUrl()));
                     memberNameToId.put(name, m.getId());
                     if (m.getAvatarUrl() != null && !m.getAvatarUrl().isEmpty()) {
                         RetrofitClient.cacheAvatarForUser(m.getId(), m.getAvatarUrl());
@@ -1375,6 +1501,7 @@ public class ConversationActivity extends AppCompatActivity {
                 active, inactiveLabel, new ArrayList<>(), ownerName, memberNames, new ArrayList<>());
         chatRoom.setFriend(directIsFriend);
         chatRoom.setMessageRequest(directIsMessageRequest);
+        chatRoom.setStrangerRequestStatus(strangerRequestStatus);
         chatRoom.setOtherUserId(otherUserId);
         chatRoom.setOtherUserName(otherUserName);
         chatRoom.setOtherUserAvatarUrl(otherUserAvatar);
@@ -1383,6 +1510,9 @@ public class ConversationActivity extends AppCompatActivity {
         chatRoom.setBlockedBetweenUsers(currentUserBlockedOther || otherUserBlockedCurrent);
         chatRoom.setOtherUserOnline(data.isOtherUserOnline());
         chatRoom.setOtherUserLastActiveMins(data.getOtherUserLastActiveMins());
+        chatRoom.setOtherUserBanned(data.isOtherUserBanned());
+        chatRoom.setOtherUserLockedTemp(data.isOtherUserLockedTemp());
+        chatRoom.setOtherUserLockUntil(data.getOtherUserLockUntil());
 
         // For DM: set the other participant's avatar so the header shows a real photo
         if (ChatRoom.TYPE_DIRECT.equals(type) && otherUserAvatar != null && !otherUserAvatar.isEmpty()) {
@@ -1473,6 +1603,7 @@ public class ConversationActivity extends AppCompatActivity {
         }
 
         applyNonFriendInfoArea();
+        applyStrangerRequestStatus();
     }
 
     private void applyNonFriendInfoArea() {
@@ -1487,6 +1618,415 @@ public class ConversationActivity extends AppCompatActivity {
                 ? otherUserAvatar : room.getAvatarUrl();
         adapter.setFriendCard(show, directFriendStatus, displayName, avatarUrl);
     }
+
+    // ─── Stranger Request Logic ────────────────────────────────────────────────
+
+    private void applyStrangerRequestStatus() {
+        if (!isDirectRoom() || strangerRequestStatus == null || strangerRequestStatus.isEmpty()) return;
+        if (directIsFriend) return; // đã kết bạn → không áp dụng hạn chế stranger
+        boolean blocked = currentUserBlockedOther || otherUserBlockedCurrent;
+        if (blocked) return; // block panel ưu tiên
+
+        if ("PENDING".equals(strangerRequestStatus)) {
+            if (isStrangerRequestReceiver) {
+                // Đổi icon close → back arrow để rõ ý nghĩa "quay lại danh sách"
+                ivBackConversation.setImageResource(R.drawable.ic_back);
+                // Receiver: dark 3-button dialog, hiện 1 lần duy nhất
+                if (!strangerSheetShown) {
+                    strangerSheetShown = true;
+                    showStrangerRequestSheet();
+                }
+            } else {
+                // Initiator: chỉ restore status panel khi đã hết hạn mức (sent >= LIMIT)
+                // Intro dialog và composer được quản lý từ loadMessagesFromApi callback
+                int sent = countMyMessages();
+                if (sent >= STRANGER_MSG_LIMIT) showSenderStatusPanel(sent);
+            }
+        } else if ("REJECTED".equals(strangerRequestStatus) && !isStrangerRequestReceiver) {
+            applyInitiatorRejectedUI();
+        }
+    }
+
+    // Gọi từ loadMessagesFromApi callback, sendMessage, onNewMessage (sau khi có messages)
+    private void applyInitiatorPendingUI() {
+        int sent = countMyMessages();
+        if (sent == 0) {
+            // Lần đầu mở chat: hiện intro dialog (1 lần)
+            if (!strangerSheetShown) {
+                strangerSheetShown = true;
+                showSenderIntroDialog();
+            }
+        }
+        if (sent >= STRANGER_MSG_LIMIT) {
+            // Đã dùng hết 5 tin → ẩn composer, hiện dark status panel
+            showSenderStatusPanel(sent);
+        } else if (!currentUserBlockedOther && !otherUserBlockedCurrent) {
+            // Còn lượt gửi (0-4 tin): giữ composer bình thường
+            composerCard.setVisibility(View.VISIBLE);
+            blockPanelCard.setVisibility(View.GONE);
+            etMessageInput.setEnabled(true);
+            btnSendMessage.setEnabled(true);
+            etMessageInput.setHint("Nhắn tin...");
+        }
+    }
+
+    // Dark status panel thay thế composer (sau khi gửi tin nhắn đầu tiên)
+    private void showSenderStatusPanel(int sentCount) {
+        composerCard.setVisibility(View.GONE);
+        blockPanelCard.setVisibility(View.VISIBLE);
+        blockPanelCard.setCardBackgroundColor(0xFF1C1C1E);
+        layoutBlockPanelActions.setVisibility(View.GONE);
+        tvBlockPanelDescription.setVisibility(View.VISIBLE);
+        tvBlockPanelTitle.setTextSize(14);
+        tvBlockPanelDescription.setTextSize(13);
+
+        if (sentCount >= STRANGER_MSG_LIMIT) {
+            tvBlockPanelTitle.setText("Bạn đã gửi tối đa " + STRANGER_MSG_LIMIT + " tin nhắn");
+            tvBlockPanelTitle.setTextColor(0xFFFFFFFF);
+            tvBlockPanelDescription.setText("Hãy chờ người này chấp nhận trò chuyện để tiếp tục.");
+            tvBlockPanelDescription.setTextColor(0xFF636366);
+        } else {
+            tvBlockPanelTitle.setText("✓  Đã gửi yêu cầu trò chuyện");
+            tvBlockPanelTitle.setTextColor(0xFFFFFFFF);
+            tvBlockPanelDescription.setText("Bạn có thể gửi thêm tin nhắn sau khi người dùng trả lời."
+                    + " (" + (STRANGER_MSG_LIMIT - sentCount) + "/" + STRANGER_MSG_LIMIT + " tin)");
+            tvBlockPanelDescription.setTextColor(0xFF636366);
+        }
+    }
+
+    // Dark status panel khi initiator bị từ chối
+    private void applyInitiatorRejectedUI() {
+        composerCard.setVisibility(View.GONE);
+        blockPanelCard.setVisibility(View.VISIBLE);
+        blockPanelCard.setCardBackgroundColor(0xFF1C1C1E);
+        tvBlockPanelTitle.setText("Yêu cầu trò chuyện của bạn đã bị từ chối.");
+        tvBlockPanelTitle.setTextColor(0xFF8E8E93);
+        tvBlockPanelTitle.setTextSize(14);
+        tvBlockPanelDescription.setVisibility(View.GONE);
+        layoutBlockPanelActions.setVisibility(View.GONE);
+    }
+
+    private int countMyMessages() {
+        long myId = RetrofitClient.getUserId(this);
+        if (myId <= 0 || adapter == null) return 0;
+        return adapter.countMessagesBySender(myId);
+    }
+
+    // Dark dialog thông báo giới hạn cho sender khi lần đầu mở chat (sent=0)
+    private void showSenderIntroDialog() {
+        if (isFinishing() || isDestroyed()) return;
+        String receiverName = otherUserName != null && !otherUserName.isEmpty()
+                ? otherUserName : "người dùng này";
+
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+        android.graphics.drawable.GradientDrawable bgShape =
+                new android.graphics.drawable.GradientDrawable();
+        bgShape.setColor(0xFF2C2C2E);
+        bgShape.setCornerRadius(dpPx(20));
+        root.setBackground(bgShape);
+        root.setPadding(dpPx(24), dpPx(28), dpPx(24), dpPx(24));
+
+        // Emoji icon
+        TextView tvIcon = new TextView(this);
+        tvIcon.setText("💬");
+        tvIcon.setTextSize(36);
+        tvIcon.setGravity(android.view.Gravity.CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        iconLp.bottomMargin = dpPx(16);
+        tvIcon.setLayoutParams(iconLp);
+        root.addView(tvIcon);
+
+        // Title
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("Gửi yêu cầu trò chuyện cho " + receiverName);
+        tvTitle.setTextSize(17);
+        tvTitle.setTextColor(0xFFFFFFFF);
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTitle.setGravity(android.view.Gravity.CENTER);
+        tvTitle.setLineSpacing(0, 1.2f);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        titleLp.bottomMargin = dpPx(12);
+        tvTitle.setLayoutParams(titleLp);
+        root.addView(tvTitle);
+
+        // Body
+        TextView tvBody = new TextView(this);
+        tvBody.setText("Bạn chỉ có thể gửi tối đa " + STRANGER_MSG_LIMIT
+                + " tin nhắn trực tiếp cho đến khi người dùng trả lời.");
+        tvBody.setTextSize(14);
+        tvBody.setTextColor(0xFF8E8E93);
+        tvBody.setGravity(android.view.Gravity.CENTER);
+        tvBody.setLineSpacing(0, 1.4f);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bodyLp.bottomMargin = dpPx(28);
+        tvBody.setLayoutParams(bodyLp);
+        root.addView(tvBody);
+
+        // OK button
+        com.google.android.material.button.MaterialButton btnOk =
+                new com.google.android.material.button.MaterialButton(this);
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(48));
+        btnOk.setLayoutParams(btnLp);
+        btnOk.setText("OK, đã hiểu");
+        btnOk.setTextColor(0xFFFFFFFF);
+        btnOk.setTextSize(15);
+        btnOk.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF0A84FF));
+        btnOk.setCornerRadius(dpPx(14));
+        btnOk.setOnClickListener(v -> dialog.dismiss());
+        root.addView(btnOk);
+
+        dialog.setContentView(root);
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            getWindowManager().getDefaultDisplay().getMetrics(dm);
+            int margin = dpPx(28);
+            dialog.getWindow().setLayout(dm.widthPixels - 2 * margin,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+            dialog.getWindow().setGravity(android.view.Gravity.CENTER);
+            android.view.WindowManager.LayoutParams lp = dialog.getWindow().getAttributes();
+            lp.dimAmount = 0.55f;
+            dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            dialog.getWindow().setAttributes(lp);
+        }
+        dialog.setCancelable(true);
+        dialog.show();
+    }
+
+    // Dark bottom sheet cho receiver: Báo cáo | Xóa | Chấp nhận
+    private void showStrangerRequestSheet() {
+        if (isFinishing() || isDestroyed()) return;
+        String senderName = otherUserName != null && !otherUserName.isEmpty()
+                ? otherUserName : "Người dùng";
+
+        BottomSheetDialog sheet = new BottomSheetDialog(this);
+        sheet.getBehavior().setSkipCollapsed(true);
+        // setCancelable(true) để back button hoạt động bình thường (finish activity)
+        // setCanceledOnTouchOutside(false) để touch ngoài không đóng sheet
+        sheet.setCancelable(true);
+        sheet.setCanceledOnTouchOutside(false);
+        // Khi user nhấn back → cancel sheet → finish activity (về màn danh sách)
+        sheet.setOnCancelListener(d -> finish());
+
+        // Root container tối màu
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0xFF1C1C1E);
+        root.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(36));
+
+        // Handle bar
+        View handle = new View(this);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(dpPx(36), dpPx(4));
+        hlp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+        hlp.bottomMargin = dpPx(24);
+        handle.setLayoutParams(hlp);
+        handle.setBackgroundColor(0xFF3A3A3C);
+        root.addView(handle);
+
+        // Header row: avatar + tên + subtitle
+        LinearLayout headerRow = new LinearLayout(this);
+        headerRow.setOrientation(LinearLayout.HORIZONTAL);
+        headerRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        headerLp.bottomMargin = dpPx(20);
+        headerRow.setLayoutParams(headerLp);
+
+        ImageView ivAvatar = new ImageView(this);
+        int sz = dpPx(52);
+        LinearLayout.LayoutParams avatarLp = new LinearLayout.LayoutParams(sz, sz);
+        avatarLp.rightMargin = dpPx(14);
+        ivAvatar.setLayoutParams(avatarLp);
+        ivAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ivAvatar.setClipToOutline(true);
+        android.graphics.drawable.GradientDrawable circleBg =
+                new android.graphics.drawable.GradientDrawable();
+        circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        circleBg.setColor(0xFF3A3A3C);
+        ivAvatar.setBackground(circleBg);
+        ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        if (room != null && room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
+            com.bumptech.glide.Glide.with(this)
+                    .load(room.getAvatarUrl()).circleCrop()
+                    .placeholder(R.drawable.ic_user_placeholder)
+                    .error(R.drawable.ic_user_placeholder).into(ivAvatar);
+        }
+        headerRow.addView(ivAvatar);
+
+        LinearLayout nameCol = new LinearLayout(this);
+        nameCol.setOrientation(LinearLayout.VERTICAL);
+        nameCol.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView tvName = new TextView(this);
+        tvName.setText(senderName);
+        tvName.setTextSize(16);
+        tvName.setTextColor(0xFFFFFFFF);
+        tvName.setTypeface(null, android.graphics.Typeface.BOLD);
+        nameCol.addView(tvName);
+        TextView tvSub = new TextView(this);
+        tvSub.setText("đã gửi cho bạn một tin nhắn đang chờ.");
+        tvSub.setTextSize(13);
+        tvSub.setTextColor(0xFF8E8E93);
+        nameCol.addView(tvSub);
+        headerRow.addView(nameCol);
+        root.addView(headerRow);
+
+        // Divider
+        View div = new View(this);
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(1));
+        divLp.bottomMargin = dpPx(20);
+        div.setLayoutParams(divLp);
+        div.setBackgroundColor(0xFF2C2C2E);
+        root.addView(div);
+
+        // Mô tả
+        TextView tvDesc = new TextView(this);
+        tvDesc.setText("Mọi người có thể gửi cho bạn tối đa " + STRANGER_MSG_LIMIT
+                + " tin nhắn cho đến khi bạn chấp nhận. Hãy xóa để xóa cuộc trò chuyện này. "
+                + "Bạn có thể báo cáo tài khoản này nếu bạn nhận được tin nhắn không phù hợp.");
+        tvDesc.setTextSize(13);
+        tvDesc.setTextColor(0xFF8E8E93);
+        tvDesc.setLineSpacing(0, 1.5f);
+        LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        descLp.bottomMargin = dpPx(24);
+        tvDesc.setLayoutParams(descLp);
+        root.addView(tvDesc);
+
+        // Primary button: Chấp nhận (full-width, xanh dương)
+        com.google.android.material.button.MaterialButton btnAccept =
+                new com.google.android.material.button.MaterialButton(this);
+        LinearLayout.LayoutParams acceptLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpPx(52));
+        acceptLp.bottomMargin = dpPx(12);
+        btnAccept.setLayoutParams(acceptLp);
+        btnAccept.setText("Chấp nhận");
+        btnAccept.setTextSize(16);
+        btnAccept.setTextColor(0xFFFFFFFF);
+        btnAccept.setTypeface(null, android.graphics.Typeface.BOLD);
+        btnAccept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF0A84FF));
+        btnAccept.setCornerRadius(dpPx(14));
+        btnAccept.setOnClickListener(v -> {
+            btnAccept.setEnabled(false);
+            doAcceptRequest(sheet);
+        });
+        root.addView(btnAccept);
+
+        // Secondary row: Báo cáo + Xóa
+        LinearLayout secondRow = new LinearLayout(this);
+        secondRow.setOrientation(LinearLayout.HORIZONTAL);
+        secondRow.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        // Báo cáo (cam cảnh báo)
+        com.google.android.material.button.MaterialButton btnReport =
+                new com.google.android.material.button.MaterialButton(this,
+                        null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        LinearLayout.LayoutParams reportLp = new LinearLayout.LayoutParams(0, dpPx(48), 1);
+        reportLp.rightMargin = dpPx(8);
+        btnReport.setLayoutParams(reportLp);
+        btnReport.setText("Báo cáo");
+        btnReport.setTextSize(14);
+        btnReport.setTextColor(0xFFFF9F0A);
+        btnReport.setStrokeColor(android.content.res.ColorStateList.valueOf(0xFF3A3A3C));
+        btnReport.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF2C2C2E));
+        btnReport.setCornerRadius(dpPx(14));
+        btnReport.setOnClickListener(v -> {
+            sheet.dismiss();
+            UserReportBottomSheet.show(ConversationActivity.this, otherUserId, senderName);
+        });
+        secondRow.addView(btnReport);
+
+        // Xóa (đỏ)
+        com.google.android.material.button.MaterialButton btnDelete =
+                new com.google.android.material.button.MaterialButton(this,
+                        null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(0, dpPx(48), 1);
+        btnDelete.setLayoutParams(deleteLp);
+        btnDelete.setText("Xóa");
+        btnDelete.setTextSize(14);
+        btnDelete.setTextColor(0xFFFF453A);
+        btnDelete.setStrokeColor(android.content.res.ColorStateList.valueOf(0xFF3A3A3C));
+        btnDelete.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF2C2C2E));
+        btnDelete.setCornerRadius(dpPx(14));
+        btnDelete.setOnClickListener(v -> {
+            btnDelete.setEnabled(false);
+            doRejectRequest(sheet);
+        });
+        secondRow.addView(btnDelete);
+
+        root.addView(secondRow);
+        sheet.setContentView(root);
+        if (sheet.getWindow() != null) sheet.getWindow().setDimAmount(0.6f);
+        sheet.show();
+    }
+
+    private void doAcceptRequest(BottomSheetDialog sheet) {
+        if (backendRoomId <= 0) return;
+        RetrofitClient.loadToken(this);
+        chatApi.acceptMessageRequest(backendRoomId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                sheet.dismiss();
+                if (response.isSuccessful()) {
+                    strangerRequestStatus = "ACCEPTED";
+                    if (room != null) room.setStrangerRequestStatus("ACCEPTED");
+                    composerCard.setVisibility(View.VISIBLE);
+                    blockPanelCard.setVisibility(View.GONE);
+                    etMessageInput.setEnabled(true);
+                    btnSendMessage.setEnabled(true);
+                    etMessageInput.setHint("Nhắn tin...");
+                    loadDirectFriendStatus();
+                    Toast.makeText(ConversationActivity.this,
+                            "Đã chấp nhận trò chuyện", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(ConversationActivity.this,
+                            "Không thể xử lý yêu cầu", Toast.LENGTH_SHORT).show();
+                }
+            }
+            @Override
+            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                sheet.dismiss();
+                Toast.makeText(ConversationActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void doRejectRequest(BottomSheetDialog sheet) {
+        if (backendRoomId <= 0) return;
+        RetrofitClient.loadToken(this);
+        chatApi.rejectMessageRequest(backendRoomId).enqueue(new Callback<ApiResponse<Void>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
+                sheet.dismiss();
+                if (response.isSuccessful()) {
+                    Toast.makeText(ConversationActivity.this,
+                            "Đã xóa cuộc trò chuyện", Toast.LENGTH_SHORT).show();
+                    finish();
+                } else {
+                    Toast.makeText(ConversationActivity.this,
+                            "Không thể xử lý yêu cầu", Toast.LENGTH_SHORT).show();
+                }
+            }
+            @Override
+            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                sheet.dismiss();
+                Toast.makeText(ConversationActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    // ─── End Stranger Request Logic ────────────────────────────────────────────
 
     private void showMemberManagementDialog() {
         if (room == null) return;
@@ -1517,14 +2057,26 @@ public class ConversationActivity extends AppCompatActivity {
         tvMembersHeader.setGravity(Gravity.CENTER);
         tvMembersHeader.setPadding(dpPx(16), dpPx(13), dpPx(16), dpPx(4));
         group1.addView(tvMembersHeader, matchW());
-        for (String memberName : members) {
+        // Dùng memberEntries (theo thứ tự, phân biệt bằng id) để không bị trùng khi 2 người cùng tên
+        List<MemberEntry> entriesToShow;
+        if (!memberEntries.isEmpty()) {
+            entriesToShow = new ArrayList<>(memberEntries);
+        } else {
+            // Fallback cho các phòng chat cũ chưa có memberEntries
+            entriesToShow = new ArrayList<>();
+            for (String n : members) {
+                Long idVal = memberNameToId.get(n);
+                String av = memberNameToAvatar.get(n);
+                entriesToShow.add(new MemberEntry(idVal != null ? idVal : -1L, n, av));
+            }
+        }
+        for (MemberEntry entry : entriesToShow) {
             addIosSep(group1);
-            Long memberId = memberNameToId.get(memberName);
-            long mId = memberId != null ? memberId : -1L;
+            long mId = entry.id;
             boolean memberIsOwner = mId > 0 && mId == backendOwnerId;
             boolean iBlockedMember = mId > 0 && Boolean.TRUE.equals(memberIdBlockedByMe.get(mId));
             boolean memberBlockedMe = mId > 0 && Boolean.TRUE.equals(memberIdHasBlockedMe.get(mId));
-            group1.addView(buildMemberRow(memberName, mId,
+            group1.addView(buildMemberRow(entry.name, mId,
                     memberIsOwner, isOwner, myId, iBlockedMember, memberBlockedMe, sheet));
         }
         content.addView(group1, matchW());
@@ -1933,9 +2485,30 @@ public class ConversationActivity extends AppCompatActivity {
             public void onResponse(Call<ApiResponse<ChatMessageApiResponse>> call,
                                    Response<ApiResponse<ChatMessageApiResponse>> response) {
                 ivAiSummary.setEnabled(true);
-                if (!response.isSuccessful() || response.body() == null) {
+                if (!response.isSuccessful()) {
+                    String errorMsg = "Không thể tóm tắt lúc này.";
+                    try {
+                        if (response.errorBody() != null) {
+                            String errorJson = response.errorBody().string();
+                            org.json.JSONObject json = new org.json.JSONObject(errorJson);
+                            if (json.has("message") && !json.isNull("message")) {
+                                errorMsg = json.getString("message");
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                    Toast.makeText(ConversationActivity.this, errorMsg, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (response.body() == null) {
                     Toast.makeText(ConversationActivity.this,
-                            "Không thể tóm tắt lúc này.", Toast.LENGTH_SHORT).show();
+                            "Không có phản hồi từ máy chủ.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (!response.body().isSuccess()) {
+                    String msg = response.body().getMessage();
+                    if (msg == null || msg.isBlank()) msg = "Không thể tóm tắt lúc này.";
+                    Toast.makeText(ConversationActivity.this, msg, Toast.LENGTH_LONG).show();
+                    return;
                 }
                 // Tin nhắn summary sẽ tới qua WebSocket — không cần xử lý thêm
             }
@@ -1956,12 +2529,32 @@ public class ConversationActivity extends AppCompatActivity {
             return;
         }
 
+        // Kiểm tra client-side trước khi gửi (stranger request)
+        if ("REJECTED".equals(strangerRequestStatus) && !isStrangerRequestReceiver && !directIsFriend) {
+            Toast.makeText(this, "Người này chưa chấp nhận trò chuyện với bạn.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if ("PENDING".equals(strangerRequestStatus) && !isStrangerRequestReceiver && !directIsFriend) {
+            int sent = countMyMessages();
+            if (sent >= STRANGER_MSG_LIMIT) {
+                Toast.makeText(this, "Bạn đã gửi tối đa " + STRANGER_MSG_LIMIT
+                        + " tin nhắn. Hãy chờ người này chấp nhận trò chuyện.", Toast.LENGTH_SHORT).show();
+                applyInitiatorPendingUI();
+                return;
+            }
+        }
+
         String content = etMessageInput.getText() != null
                 ? etMessageInput.getText().toString().trim() : "";
         if (TextUtils.isEmpty(content)) return;
 
         etMessageInput.setText("");
         WebSocketManager.getInstance().sendMessage(backendRoomId, content);
+
+        // Sau khi gửi, cập nhật lại UI giới hạn nếu đang PENDING
+        if ("PENDING".equals(strangerRequestStatus) && !isStrangerRequestReceiver && !directIsFriend) {
+            applyInitiatorPendingUI();
+        }
     }
 
     private void onNewMessage(ChatMessageApiResponse msg) {
@@ -1997,6 +2590,10 @@ public class ConversationActivity extends AppCompatActivity {
         adapter.submitList(updated);
         rvMessages.scrollToPosition(adapter.getItemCount() - 1);
         markCurrentRoomAsRead();
+        // Cập nhật UI giới hạn tin nhắn khi nhận tin mới (PENDING room, tôi là initiator)
+        if ("PENDING".equals(strangerRequestStatus) && !isStrangerRequestReceiver && !directIsFriend) {
+            applyInitiatorPendingUI();
+        }
     }
 
     private void loadMessagesFromApi() {
@@ -2033,6 +2630,10 @@ public class ConversationActivity extends AppCompatActivity {
                         rvMessages.scrollToPosition(adapter.getItemCount() - 1);
                     }
                     markCurrentRoomAsRead();
+                    // Cập nhật lại UI giới hạn tin nhắn sau khi biết đúng số lượng
+                    if ("PENDING".equals(strangerRequestStatus) && !isStrangerRequestReceiver && !directIsFriend) {
+                        applyInitiatorPendingUI();
+                    }
                 }
             }
 

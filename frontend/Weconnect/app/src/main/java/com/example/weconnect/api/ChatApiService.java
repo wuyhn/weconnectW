@@ -73,4 +73,12 @@ public interface ChatApiService {
     // Yêu cầu AI tóm tắt cuộc trò chuyện
     @POST("api/chat/rooms/{roomId}/summary")
     Call<ApiResponse<ChatMessageApiResponse>> requestAISummary(@Path("roomId") long roomId);
+
+    // Chấp nhận tin nhắn từ người lạ (receiver gọi)
+    @POST("api/chat/message-requests/{id}/accept")
+    Call<ApiResponse<Void>> acceptMessageRequest(@Path("id") long roomId);
+
+    // Từ chối tin nhắn từ người lạ (receiver gọi)
+    @POST("api/chat/message-requests/{id}/reject")
+    Call<ApiResponse<Void>> rejectMessageRequest(@Path("id") long roomId);
 }

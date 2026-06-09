@@ -63,7 +63,61 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
             </LinearLayout>
+
+            <!-- Chi tiết button (top-right) -->
+            <TextView
+                android:id="@+id/tvPendingDetail"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="Chi tiết"
+                android:textColor="#FF4B73"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
+
+        <!-- Far location warning badge -->
+        <LinearLayout
+            android:id="@+id/layoutFarLocationBadge"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_warning_badge"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚠️  Ở xa địa điểm tổ chức"
+                android:textColor="#F57C00"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvPendingLocationInfo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textColor="#555555"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Join reason preview -->
+        <TextView
+            android:id="@+id/tvPendingJoinReason"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="#555555"
+            android:textSize="13sp"
+            android:visibility="gone" />
 
         <!-- Action buttons -->
         <LinearLayout

@@ -8,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Toast;
 
@@ -16,12 +15,20 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentTransaction;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.activities.ForceLogoutActivity;
+import com.example.weconnect.fragments.MessagesFragment;
+import com.example.weconnect.fragments.NotificationsFragment;
+import com.example.weconnect.fragments.ProfileFragment;
 import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.adapters.PostAdapter;
+import com.google.android.material.badge.BadgeDrawable;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.gson.Gson;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
@@ -49,8 +56,21 @@ import retrofit2.Response;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TAB_HOME = "TAB_HOME";
+    private static final String TAB_MESSAGES = "TAB_MESSAGES";
+    private static final String TAB_NOTIFICATIONS = "TAB_NOTIFICATIONS";
+    private static final String TAB_PROFILE = "TAB_PROFILE";
+    private static final String KEY_ACTIVE_TAB = "KEY_ACTIVE_TAB";
+
     private ImageView ivAdd, ivSearch;
-    private FrameLayout btnHome, btnMessages, btnNotifications, btnProfile;
+    private View homeContent;
+    private android.widget.FrameLayout fragmentContainer;
+    private BottomNavigationView bottomNavigationView;
+    private Fragment messagesFragment;
+    private Fragment notificationsFragment;
+    private Fragment profileFragment;
+    private Fragment activeTabFragment;
+    private String activeTab = TAB_HOME;
     private RecyclerView rvPosts;
     private PostAdapter postAdapter;
     private List<Post> postList;
@@ -58,11 +78,25 @@ public class MainActivity extends AppCompatActivity {
     private FakePostRepository postRepository;
     private PostApiService postApiService;
     private ActivityResultLauncher<Intent> createPostLauncher;
-    private android.widget.TextView tvNotifBadge;
+
+    private void redirectToLogin(String message) {
+        WebSocketManager.getInstance().disconnect();
+        RetrofitClient.clearSession(this);
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        Intent intent = new Intent(this, LoginActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!RetrofitClient.hasValidToken(this)) {
+            redirectToLogin("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+            return;
+        }
+
         setContentView(R.layout.activity_main);
 
         postRepository = FakePostRepository.getInstance();
@@ -71,8 +105,14 @@ public class MainActivity extends AppCompatActivity {
         RetrofitClient.loadToken(this);
         postApiService = RetrofitClient.getClient().create(PostApiService.class);
 
-        // Khởi tạo WebSocket connection
+        // Đăng ký global handler: 401 ACCOUNT_LOCKED từ bất kỳ API nào → force logout
+        RetrofitClient.setAccountLockedListener(() ->
+                runOnUiThread(() -> redirectToLogin("Tài khoản của bạn đã bị khóa. Vui lòng đăng nhập lại.")));
+
+        // Khởi tạo WebSocket connection.
+        // Đặt callback TRƯỚC connect() để subscribeToRealtimeEvents() được gọi ngay khi OPENED.
         String token = RetrofitClient.getAuthToken();
+        WebSocketManager.getInstance().setOnConnectedCallback(this::subscribeToRealtimeEvents);
         if (token != null && !WebSocketManager.getInstance().isConnected()) {
             WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
         }
@@ -87,11 +127,62 @@ public class MainActivity extends AppCompatActivity {
         setupActivityResultLauncher();
         initViews();
         setupClickListeners();
+        restoreTabFragments(savedInstanceState);
+        setupBottomNavigation();
         setupRecyclerView();
         loadUnreadNotificationCount();
         createNotificationChannel();
         requestNotificationPermission();
         fetchAndRegisterFcmToken();
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+
+        String openTab = intent.getStringExtra("open_tab");
+        if ("notifications".equals(openTab)) {
+            intent.removeExtra("open_tab");
+            if (bottomNavigationView != null) {
+                bottomNavigationView.setSelectedItemId(R.id.nav_notifications);
+            }
+            return;
+        }
+
+        long navigatePostId = intent.getLongExtra("navigate_post_id", -1);
+        if (navigatePostId > 0) {
+            boolean isJoined = intent.getBooleanExtra("navigate_is_joined", false);
+            intent.removeExtra("navigate_post_id");
+            loadPostAndNavigate(navigatePostId, isJoined);
+        }
+    }
+
+    private void loadPostAndNavigate(long postId, boolean isJoined) {
+        postApiService.getPost(postId).enqueue(new Callback<ApiResponse<PostResponse>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<PostResponse>> call,
+                                   Response<ApiResponse<PostResponse>> response) {
+                if (response.isSuccessful() && response.body() != null
+                        && response.body().getResult() != null) {
+                    Post post = response.body().getResult().toPost();
+                    if (isJoined) post.setJoined(true);
+                    Intent intent = new Intent(MainActivity.this,
+                            com.example.weconnect.activities.PostDetailActivity.class);
+                    intent.putExtra("post", post);
+                    startActivity(intent);
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<PostResponse>> call, Throwable t) {}
+        });
     }
 
     // Cờ kiểm soát: true = lần đầu vào màn hình, false = quay lại từ màn hình khác
@@ -102,8 +193,17 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
 
         // Chỉ load token 1 lần (không reset retrofit)
-        RetrofitClient.loadToken(this);
+        if (!RetrofitClient.hasValidToken(this)) {
+            redirectToLogin("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+            return;
+        }
         String token = RetrofitClient.getAuthToken();
+
+        // Đặt callback TRƯỚC khi connect() để tránh race condition:
+        // connect() là async — nếu gọi subscribeToRealtimeEvents() ngay sau connect()
+        // thì WebSocket chưa OPENED nên isConnected()=false → return sớm → không có subscription.
+        // Callback này đảm bảo subscribeToRealtimeEvents() được gọi ngay khi OPENED fire.
+        WebSocketManager.getInstance().setOnConnectedCallback(this::subscribeToRealtimeEvents);
 
         // Reconnect WebSocket nếu mất kết nối
         if (token != null && !WebSocketManager.getInstance().isConnected()) {
@@ -125,7 +225,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Resubscribe WebSocket (chỉ khi connected)
         subscribeToRealtimeEvents();
-        highlightTab(btnHome);
     }
 
     /**
@@ -162,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
     private void loadUnreadNotificationCount() {
         RetrofitClient.loadToken(this);
         String token = RetrofitClient.getAuthToken();
-        if (token == null || tvNotifBadge == null) return;
+        if (token == null || bottomNavigationView == null) return;
 
         com.example.weconnect.api.NotificationApiService notifApi =
                 RetrofitClient.getClient().create(com.example.weconnect.api.NotificationApiService.class);
@@ -214,7 +313,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateBadge(int count) {
         BadgeManager.setCount(count);
-        BadgeManager.applyBadge(tvNotifBadge);
+        applyBottomNavigationBadge(count);
     }
 
     private void setupActivityResultLauncher() {
@@ -317,7 +416,11 @@ public class MainActivity extends AppCompatActivity {
 
         SimpleDateFormat isoFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault());
         body.put("startTime", activityStartIso != null ? activityStartIso : isoFormat.format(new Date()));
-        body.put("endTime", isoFormat.format(new Date(endTimeMillis)));
+
+        // Đồng bộ endTime = activityEndTime: dùng trực tiếp chuỗi ISO từ picker
+        // để tránh lỗi chuyển đổi millis→Date→format, đảm bảo hai trường luôn bằng nhau
+        String endIso = activityEndIso != null ? activityEndIso : isoFormat.format(new Date(endTimeMillis));
+        body.put("endTime", endIso);
         if (activityEndIso != null) {
             body.put("activityEndTime", activityEndIso);
         }
@@ -335,11 +438,20 @@ public class MainActivity extends AppCompatActivity {
                 if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     Toast.makeText(MainActivity.this, "Đã tạo bài đăng!", Toast.LENGTH_SHORT).show();
                     loadPostsFromApi();
+                    if (profileFragment instanceof ProfileFragment) {
+                        ((ProfileFragment) profileFragment).onPostCreated();
+                    }
                 } else {
                     String errorMsg = "Không thể tạo bài đăng";
-                    if (response.body() != null && response.body().getMessage() != null) {
-                        errorMsg = response.body().getMessage();
-                    }
+                    try {
+                        if (response.errorBody() != null) {
+                            ApiResponse<?> errBody = new Gson().fromJson(
+                                    response.errorBody().string(), ApiResponse.class);
+                            if (errBody != null && errBody.getMessage() != null) {
+                                errorMsg = errBody.getMessage();
+                            }
+                        }
+                    } catch (Exception ignored) {}
                     android.util.Log.e("CREATE_POST", "Error: " + response.code() + " - " + errorMsg);
                     Toast.makeText(MainActivity.this, errorMsg, Toast.LENGTH_SHORT).show();
                 }
@@ -354,15 +466,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initViews() {
+        homeContent = findViewById(R.id.homeContent);
+        fragmentContainer = findViewById(R.id.fragmentContainer);
+        bottomNavigationView = findViewById(R.id.bottomNavigationView);
         ivAdd = findViewById(R.id.ivAdd);
         ivSearch = findViewById(R.id.ivSearch);
-        btnHome = findViewById(R.id.btnHome);
-        btnMessages = findViewById(R.id.btnMessages);
-        btnNotifications = findViewById(R.id.btnNotifications);
-        btnProfile = findViewById(R.id.btnProfile);
         rvPosts = findViewById(R.id.rvPosts);
         statusHeader = findViewById(R.id.statusHeader);
-        tvNotifBadge = findViewById(R.id.tvNotifBadge);
         loadStatusHeaderAvatar();
 
         androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout =
@@ -375,47 +485,138 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupClickListeners() {
-        ivAdd.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, CreatePostActivity.class);
-            createPostLauncher.launch(intent);
-        });
+        ivAdd.setOnClickListener(v -> openCreatePostComposer());
 
         ivSearch.setOnClickListener(v -> {
             Intent intent = new Intent(MainActivity.this, SearchActivity.class);
             startActivity(intent);
         });
 
-        statusHeader.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, CreatePostActivity.class);
-            createPostLauncher.launch(intent);
+        statusHeader.setOnClickListener(v -> openCreatePostComposer());
+    }
+
+    public void openCreatePostComposer() {
+        Intent intent = new Intent(MainActivity.this, CreatePostActivity.class);
+        createPostLauncher.launch(intent);
+    }
+
+    private void restoreTabFragments(Bundle savedInstanceState) {
+        messagesFragment = getSupportFragmentManager().findFragmentByTag(TAB_MESSAGES);
+        notificationsFragment = getSupportFragmentManager().findFragmentByTag(TAB_NOTIFICATIONS);
+        profileFragment = getSupportFragmentManager().findFragmentByTag(TAB_PROFILE);
+
+        if (savedInstanceState != null) {
+            activeTab = savedInstanceState.getString(KEY_ACTIVE_TAB, TAB_HOME);
+            if (!TAB_HOME.equals(activeTab)) {
+                activeTabFragment = getSupportFragmentManager().findFragmentByTag(activeTab);
+            }
+        }
+    }
+
+    private void setupBottomNavigation() {
+        bottomNavigationView.setOnItemSelectedListener(item -> {
+            int itemId = item.getItemId();
+            if (itemId == R.id.nav_home) {
+                showHomeTab();
+                return true;
+            } else if (itemId == R.id.nav_messages) {
+                showFragmentTab(TAB_MESSAGES);
+                return true;
+            } else if (itemId == R.id.nav_notifications) {
+                showFragmentTab(TAB_NOTIFICATIONS);
+                return true;
+            } else if (itemId == R.id.nav_profile) {
+                showFragmentTab(TAB_PROFILE);
+                return true;
+            }
+            return false;
         });
 
-        btnHome.setOnClickListener(v -> {
-            highlightTab(btnHome);
-            showToast("Trang ch\u1ee7");
-        });
+        // Khôi phục tab đang mở sau xoay màn hình hoặc process recreation.
+        bottomNavigationView.setSelectedItemId(getBottomMenuId(activeTab));
+        if (TAB_HOME.equals(activeTab)) {
+            showHomeTab();
+        } else {
+            showFragmentTab(activeTab);
+        }
+    }
 
-        btnMessages.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, ChatListActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
+    private void showHomeTab() {
+        activeTab = TAB_HOME;
+        homeContent.setVisibility(View.VISIBLE);
+        fragmentContainer.setVisibility(View.GONE);
 
-        btnNotifications.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, NotificationsActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
+        if (activeTabFragment != null && activeTabFragment.isAdded()) {
+            getSupportFragmentManager()
+                    .beginTransaction()
+                    .hide(activeTabFragment)
+                    .commit();
+        }
+        activeTabFragment = null;
+    }
 
-        btnProfile.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, UserProfileActivity.class);
-            intent.putExtra("username", RetrofitClient.getUserName(this));
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
+    private void showFragmentTab(String tab) {
+        Fragment target = getOrCreateTabFragment(tab);
+        if (target == null) return;
+
+        homeContent.setVisibility(View.GONE);
+        fragmentContainer.setVisibility(View.VISIBLE);
+
+        FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
+
+        // Ẩn Fragment hiện tại thay vì remove để giữ RecyclerView, scroll, form input và cache API.
+        if (activeTabFragment != null && activeTabFragment != target && activeTabFragment.isAdded()) {
+            transaction.hide(activeTabFragment);
+        }
+
+        // add() chỉ chạy một lần cho mỗi tab. Những lần sau chỉ show() lại Fragment cũ.
+        if (!target.isAdded()) {
+            transaction.add(R.id.fragmentContainer, target, tab);
+        } else {
+            transaction.show(target);
+        }
+
+        transaction.commit();
+        activeTabFragment = target;
+        activeTab = tab;
+    }
+
+    private Fragment getOrCreateTabFragment(String tab) {
+        if (TAB_MESSAGES.equals(tab)) {
+            if (messagesFragment == null) messagesFragment = new MessagesFragment();
+            return messagesFragment;
+        } else if (TAB_NOTIFICATIONS.equals(tab)) {
+            if (notificationsFragment == null) notificationsFragment = new NotificationsFragment();
+            return notificationsFragment;
+        } else if (TAB_PROFILE.equals(tab)) {
+            if (profileFragment == null) profileFragment = new ProfileFragment();
+            return profileFragment;
+        }
+        return null;
+    }
+
+    private int getBottomMenuId(String tab) {
+        if (TAB_MESSAGES.equals(tab)) return R.id.nav_messages;
+        if (TAB_NOTIFICATIONS.equals(tab)) return R.id.nav_notifications;
+        if (TAB_PROFILE.equals(tab)) return R.id.nav_profile;
+        return R.id.nav_home;
+    }
+
+    public void setNotificationBadgeCount(int count) {
+        updateBadge(count);
+    }
+
+    private void applyBottomNavigationBadge(int count) {
+        if (bottomNavigationView == null) return;
+        if (count <= 0) {
+            bottomNavigationView.removeBadge(R.id.nav_notifications);
+            return;
+        }
+
+        BadgeDrawable badge = bottomNavigationView.getOrCreateBadge(R.id.nav_notifications);
+        badge.setVisible(true);
+        badge.setMaxCharacterCount(3);
+        badge.setNumber(count);
     }
 
     private void setupRecyclerView() {
@@ -442,8 +643,12 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                     postList.clear();
-                    postList.addAll(filterAndSortPosts(allPosts));
+                    // Backend đã sort 3 tầng: interestTags → behavioralTags → còn lại
+                    // Giữ nguyên thứ tự từ server, không sort lại để behavioralTags có hiệu lực
+                    postList.addAll(allPosts);
                     postAdapter.notifyDataSetChanged();
+                } else if (response.code() == 401 || response.code() == 403) {
+                    redirectToLogin("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
                 } else {
                     loadPostsFallback();
                 }
@@ -460,73 +665,6 @@ public class MainActivity extends AppCompatActivity {
         postList.clear();
         postAdapter.notifyDataSetChanged();
         Toast.makeText(this, "Không thể tải bài đăng. Hãy kiểm tra kết nối server!", Toast.LENGTH_SHORT).show();
-    }
-
-    /**
-     * Lọc và sắp xếp bài đăng theo Priority Feed Sorting:
-     * 1. Hiển thị TẤT CẢ bài còn hạn (không bị lọc theo tag)
-     * 2. Nhóm 1: bài có tag trùng sở thích của user → đẩy lên đầu
-     * 3. Nhóm 2: bài không trùng tag → hiển thị phía sau
-     * 4. Trong mỗi nhóm: giữ nguyên thứ tự createdAt DESC từ backend
-     */
-    private List<Post> filterAndSortPosts(List<Post> allPosts) {
-        // Lấy danh sách sở thích của user từ SharedPreferences
-        Set<String> userInterests = getUserInterestTags();
-
-        // Nhóm 1: bài trùng tag sở thích — hiển thị đầu tiên
-        List<Post> matchedPosts = new ArrayList<>();
-        // Nhóm 2: bài không trùng tag (hoặc không có tag) — hiển thị phía sau
-        List<Post> otherPosts = new ArrayList<>();
-
-        for (Post post : allPosts) {
-            // Bỏ qua bài hết hạn hoặc đã đóng
-            if (post.isExpired() || post.isArchived()) continue;
-
-            // Kiểm tra bài có tag trùng sở thích của user không
-            boolean matchTag = false;
-            if (!userInterests.isEmpty()
-                    && post.getInterestTag() != null
-                    && !post.getInterestTag().trim().isEmpty()) {
-                for (String interest : userInterests) {
-                    if (interest.equalsIgnoreCase(post.getInterestTag().trim())) {
-                        matchTag = true;
-                        break;
-                    }
-                }
-            }
-
-            if (matchTag) {
-                matchedPosts.add(post);
-            } else {
-                otherPosts.add(post);
-            }
-        }
-
-        // Gộp: nhóm trùng sở thích lên trước, nhóm còn lại theo sau
-        // Thứ tự trong mỗi nhóm đã đúng do backend sắp sẵn theo createdAt DESC
-        List<Post> result = new ArrayList<>(matchedPosts);
-        result.addAll(otherPosts);
-        return result;
-    }
-
-    private Set<String> getUserInterestTags() {
-        android.content.SharedPreferences prefs =
-                getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
-        String saved = prefs.getString("user_interests", "");
-        
-        // Nếu trống, thử load từ API (giả định có endpoint lấy profile)
-        if (saved.isEmpty()) {
-            // Logic load từ API có thể thêm ở đây nếu cần đồng bộ
-        }
-
-        Set<String> tags = new HashSet<>();
-        if (!saved.isEmpty()) {
-            for (String s : saved.split(",")) {
-                String trimmed = s.trim();
-                if (!trimmed.isEmpty()) tags.add(trimmed);
-            }
-        }
-        return tags;
     }
 
     private Set<String> cachedFriendNames = new java.util.HashSet<>();
@@ -558,26 +696,6 @@ public class MainActivity extends AppCompatActivity {
                 // Bỏ qua lỗi
             }
         });
-    }
-
-    private void highlightTab(FrameLayout selectedTab) {
-        // Reset all tabs: full opacity + secondary tint
-        setTabTint(btnHome, R.color.text_secondary);
-        setTabTint(btnMessages, R.color.text_secondary);
-        setTabTint(btnNotifications, R.color.text_secondary);
-        setTabTint(btnProfile, R.color.text_secondary);
-        // Highlight selected tab with red tint
-        setTabTint(selectedTab, R.color.primary_pink);
-    }
-
-    private void setTabTint(FrameLayout tab, int colorResId) {
-        tab.setAlpha(1.0f);
-        // Find the ImageView inside the FrameLayout (first child)
-        if (tab.getChildAt(0) instanceof ImageView) {
-            ImageView icon = (ImageView) tab.getChildAt(0);
-            icon.setImageTintList(android.content.res.ColorStateList.valueOf(
-                    getResources().getColor(colorResId, getTheme())));
-        }
     }
 
     private void createNotificationChannel() {
@@ -623,8 +741,19 @@ public class MainActivity extends AppCompatActivity {
                 });
     }
 
-    private void showToast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(KEY_ACTIVE_TAB, activeTab);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (!TAB_HOME.equals(activeTab)) {
+            bottomNavigationView.setSelectedItemId(R.id.nav_home);
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -740,6 +869,13 @@ public class MainActivity extends AppCompatActivity {
                     if (nameObj != null && !nameObj.toString().isEmpty()) {
                         RetrofitClient.saveUserName(MainActivity.this, nameObj.toString());
                     }
+                    Object provinceIdObj = profile.get("provinceId");
+                    Object provinceNameObj = profile.get("provinceName");
+                    RetrofitClient.saveUserProvince(
+                            MainActivity.this,
+                            provinceIdObj != null ? provinceIdObj.toString() : "",
+                            provinceNameObj != null ? provinceNameObj.toString() : ""
+                    );
                     loadStatusHeaderAvatar();
                 }
             }
@@ -805,10 +941,52 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignored) {}
         });
 
-        // Nhận notification mới → cập nhật badge
+        // Nhận notification mới → cập nhật badge và reload fragment nếu đang xem tab thông báo
         ws.subscribeToNotifications(json -> {
             BadgeManager.increment();
-            runOnUiThread(() -> updateBadge(BadgeManager.getCount()));
+            runOnUiThread(() -> {
+                updateBadge(BadgeManager.getCount());
+                if (TAB_NOTIFICATIONS.equals(activeTab) && notificationsFragment instanceof NotificationsFragment) {
+                    ((NotificationsFragment) notificationsFragment).reloadNotifications();
+                }
+                // Nếu là thông báo trừ điểm uy tín → refresh profile ngay,
+                // kể cả khi user đang ở tab Profile (onHiddenChanged không đủ cho trường hợp này).
+                try {
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, Object> payload = new Gson().fromJson(json, java.util.Map.class);
+                    if (payload != null && "ADMIN_WARNING".equals(payload.get("type"))
+                            && profileFragment instanceof ProfileFragment) {
+                        ((ProfileFragment) profileFragment).refreshReputation();
+                    }
+                } catch (Exception ignored) {}
+            });
+        });
+
+        // Kịch bản 1 (Real-time Kick-out): nhận sự kiện ACCOUNT_LOCKED từ backend qua WebSocket.
+        // Callback chạy trên main thread (AndroidSchedulers.mainThread() trong WebSocketManager).
+        ws.subscribeToAccountStatus(json -> {
+            try {
+                Gson gson = new Gson();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> payload = gson.fromJson(json, Map.class);
+                if (payload == null) return;
+
+                String action = (String) payload.get("action");
+                if (!"ACCOUNT_LOCKED".equals(action)) return;
+
+                String message   = (String) payload.get("message");
+                String lockUntil = (String) payload.get("lockUntil");
+
+                // FLAG_ACTIVITY_NEW_TASK: đảm bảo ForceLogoutActivity hiện lên trên cùng
+                // kể cả khi MainActivity đang ở background (user đang ở màn hình khác).
+                // Không dùng CLEAR_TASK ở đây — ForceLogoutActivity tự clear sau khi user xác nhận.
+                Intent lockIntent = new Intent(MainActivity.this, ForceLogoutActivity.class);
+                lockIntent.putExtra("lock_message", message);
+                lockIntent.putExtra("lock_until", lockUntil);
+                lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(lockIntent);
+
+            } catch (Exception ignored) {}
         });
 
         // Nhận cập nhật avatar user bất kỳ
@@ -835,6 +1013,20 @@ public class MainActivity extends AppCompatActivity {
 
                 // Refresh tất cả post hiển thị
                 if (postAdapter != null) postAdapter.notifyDataSetChanged();
+            } catch (Exception ignored) {}
+        });
+
+        // Nhận sự kiện ACTIVITY_CANCELLED → reload home feed để ẩn nút chat trên postcard
+        ws.subscribeToRoomEvents(json -> {
+            try {
+                Gson gson = new Gson();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> payload = gson.fromJson(json, Map.class);
+                if (payload == null) return;
+                String type = (String) payload.get("type");
+                if ("ACTIVITY_CANCELLED".equals(type)) {
+                    runOnUiThread(this::loadPostsFromApi);
+                }
             } catch (Exception ignored) {}
         });
     }

@@ -108,15 +108,15 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView style="@style/TagCategoryHeader" android:text="🏃 Vận động &amp; Thể thao" />
+                    <TextView style="@style/TagCategoryHeader" android:text="Vận động &amp; Thể thao" />
                     <com.google.android.material.chip.ChipGroup
                         android:id="@+id/groupSport"
                         style="@style/CustomChipGroupStyle"
                         android:layout_marginTop="8dp"
                         android:clipToPadding="false">
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="⚽ Đá bóng" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="🏸 Cầu lông" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="🏃 Chạy bộ" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Đá bóng" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Cầu lông" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Chạy bộ" />
                     </com.google.android.material.chip.ChipGroup>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -137,14 +137,14 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView style="@style/TagCategoryHeader" android:text="📖 Học tập &amp; Công việc" />
+                    <TextView style="@style/TagCategoryHeader" android:text="Học tập &amp; Công việc" />
                     <com.google.android.material.chip.ChipGroup
                         android:id="@+id/groupStudy"
                         style="@style/CustomChipGroupStyle"
                         android:layout_marginTop="8dp">
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="📖 Học bài" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="🇬🇧 Học Tiếng Anh" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="💻 Đồ họa / Code" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Học bài" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Học Tiếng Anh" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Đồ họa / Code" />
                     </com.google.android.material.chip.ChipGroup>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -165,14 +165,14 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView style="@style/TagCategoryHeader" android:text="☕ Thư giãn &amp; Giải trí" />
+                    <TextView style="@style/TagCategoryHeader" android:text="Thư giãn &amp; Giải trí" />
                     <com.google.android.material.chip.ChipGroup
                         android:id="@+id/groupChill"
                         style="@style/CustomChipGroupStyle"
                         android:layout_marginTop="8dp">
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="☕ Đi Cafe" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="🍿 Xem phim" />
-                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="🎮 Chơi Game" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Đi Cafe" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Xem phim" />
+                        <com.google.android.material.chip.Chip style="@style/CustomChipChoice" android:text="Chơi Game" />
                     </com.google.android.material.chip.ChipGroup>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>

@@ -1,10 +1,12 @@
 package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.ChangePasswordRequest;
+import com.weconnect.backend.dto.LockedAccountResponse;
 import com.weconnect.backend.dto.UpdateProfileRequest;
 import com.weconnect.backend.dto.UserProfileResponse;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.exception.LockedAccountException;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.service.UserService;
 import org.springframework.http.ResponseEntity;
@@ -48,11 +50,30 @@ public class UserController {
     public ResponseEntity<?> getProfile(@PathVariable Long id, Authentication authentication) {
         try {
             User currentUser = (User) authentication.getPrincipal();
+
+            // Kịch bản 2: Kiểm tra tài khoản mục tiêu có đang bị khóa tạm thời không.
+            // Nếu có, ném LockedAccountException để trả về HTTP 423 kèm lockUntil.
+            // Viewer sẽ thấy dialog thông báo thay vì vào được trang cá nhân.
+            User targetUser = userRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng"));
+            if (User.STATUS_LOCKED_TEMP.equals(targetUser.getStatus())) {
+                throw new LockedAccountException(
+                        "Tài khoản này đang bị khóa tạm thời do vi phạm tiêu chuẩn cộng đồng.",
+                        targetUser.getLockUntil());
+            }
+
             UserProfileResponse profile = userService.getProfile(id, currentUser.getId());
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000)
                     .message("Thành công")
                     .result(profile)
+                    .build());
+        } catch (LockedAccountException e) {
+            // HTTP 423 Locked: viewer nhận được ngày mở khóa để hiển thị trong dialog
+            return ResponseEntity.status(423).body(ApiResponse.builder()
+                    .code(1007)
+                    .message(e.getMessage())
+                    .result(LockedAccountResponse.builder().lockUntil(e.getLockUntil()).build())
                     .build());
         } catch (RuntimeException e) {
             return ResponseEntity.status(404).body(ApiResponse.builder()

@@ -7,6 +7,8 @@ public class UpdateProfileRequest {
     private String fullName;
     private String birthday;
     private String gender;
+    private String provinceId;
+    private String provinceName;
     private String bio;
     private String interestTags;
     private String avatarUrl;

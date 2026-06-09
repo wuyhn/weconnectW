@@ -56,11 +56,33 @@
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".activities.OnboardingAvatarActivity" />
         <activity android:name=".activities.ForgotPasswordActivity" />
+        <activity android:name=".activities.ForgotOtpActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".activities.ResetPasswordActivity"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".activities.BlockedUsersActivity" />
         <activity android:name=".activities.LegalActivity" />
         <activity android:name=".activities.PendingListActivity" />
         <activity android:name=".activities.FriendsListActivity" />
         <activity android:name=".activities.ReportPenaltyDetailActivity" android:exported="false" />
+
+        <!--
+            ForceLogoutActivity: Activity trong suốt, hiển thị AlertDialog ép user đăng xuất
+            khi nhận FCM với action=FORCE_LOGOUT (tài khoản vừa bị khóa tạm thời real-time).
+            excludeFromRecents=true: không xuất hiện trong danh sách app đang chạy.
+            Theme.Translucent.NoTitleBar: nền trong suốt, chỉ thấy Dialog ở trên cùng.
+        -->
+        <!--
+            ForceLogoutActivity: Activity nền trong suốt, chỉ hiển thị AlertDialog ép đăng xuất.
+            Theme.Weconnect (Material3) đảm bảo AlertDialog render đúng style.
+            Nền trong suốt được set programmatically trong onCreate() bằng ColorDrawable.TRANSPARENT.
+            excludeFromRecents=true: không xuất hiện trong danh sách app đang chạy.
+        -->
+        <activity
+            android:name=".activities.ForceLogoutActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Weconnect"
+            android:excludeFromRecents="true" />
 
         <service
             android:name=".fcm.WeConnectMessagingService"

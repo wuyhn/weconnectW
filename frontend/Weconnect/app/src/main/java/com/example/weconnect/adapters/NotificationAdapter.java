@@ -19,22 +19,16 @@ import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.api.NotificationApiService;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.data.FakeNotificationRepository;
-import com.example.weconnect.data.FakeNotificationRepository.NotificationType;
 import com.example.weconnect.data.FakeSocialRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.NotificationItem;
 import com.example.weconnect.util.BadgeManager;
 import com.google.android.material.button.MaterialButton;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import retrofit2.Call;
@@ -45,11 +39,10 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
     private static final int TYPE_HEADER = 0;
     private static final int TYPE_ITEM_REAL = 1;
-    private static final int TYPE_ITEM_FAKE = 2;
     private static final int TYPE_JOIN_REQUEST_GROUP = 3;
 
     private final Context context;
-    private final List<Object> items; // String (date header), NotificationItem, JoinRequestGroup, or FakeNotificationRepository.NotificationItem
+    private final List<Object> items; // String (date header), NotificationItem, or JoinRequestGroup
     private final Runnable onBadgeChanged;
 
     /** Đại diện cho tất cả JOIN_REQUEST notifications của một bài post. */
@@ -88,7 +81,7 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         if (item instanceof String) return TYPE_HEADER;
         if (item instanceof NotificationItem) return TYPE_ITEM_REAL;
         if (item instanceof JoinRequestGroup) return TYPE_JOIN_REQUEST_GROUP;
-        return TYPE_ITEM_FAKE;
+        return TYPE_ITEM_REAL;
     }
 
     @NonNull
@@ -116,9 +109,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 bindRealNotification((NotifViewHolder) holder, (NotificationItem) item);
             } else if (item instanceof JoinRequestGroup) {
                 bindJoinRequestGroup((NotifViewHolder) holder, (JoinRequestGroup) item);
-            } else if (item instanceof FakeNotificationRepository.NotificationItem) {
-                bindFakeNotification((NotifViewHolder) holder,
-                        (FakeNotificationRepository.NotificationItem) item);
             }
         }
     }
@@ -291,11 +281,18 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 });
             }
 
-            if ((item.getType() == NotificationItem.NotificationType.REPORT_CONFIRMED
-                    || item.getType() == NotificationItem.NotificationType.REPORT_PENALTY)
+            if (item.getType() == NotificationItem.NotificationType.REPORT_CONFIRMED
                     && item.getRelatedReportId() != null) {
                 com.example.weconnect.utils.ReportPenaltyDetailBottomSheet.show(
-                        context, item.getRelatedReportId());
+                        context, item.getRelatedReportId(), true);
+            } else if (item.getType() == NotificationItem.NotificationType.ADMIN_ACTION
+                    && item.getRelatedReportId() != null) {
+                com.example.weconnect.utils.ReportPenaltyDetailBottomSheet.show(
+                        context, item.getRelatedReportId(), true);
+            } else if (item.getType() == NotificationItem.NotificationType.REPORT_PENALTY
+                    && item.getRelatedReportId() != null) {
+                com.example.weconnect.utils.ReportPenaltyDetailBottomSheet.show(
+                        context, item.getRelatedReportId(), false);
             } else if (item.getType() == NotificationItem.NotificationType.ADMIN_WARNING
                     && item.getRelatedReportId() != null) {
                 android.content.Intent intent = new android.content.Intent(context,
@@ -434,76 +431,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         });
     }
 
-    private void bindFakeNotification(NotifViewHolder holder, FakeNotificationRepository.NotificationItem item) {
-        holder.tvMessage.setText(item.getMessage());
-        holder.tvSubtitle.setVisibility(View.GONE);
-        holder.tvTime.setText(formatTime(item.getTimestamp()));
-
-        boolean isActionable = (item.getType() == NotificationType.FRIEND_REQUEST_RECEIVED
-                || item.getType() == NotificationType.JOIN_REQUEST);
-
-        if (isActionable && !item.isActioned()) {
-            holder.layoutActions.setVisibility(View.VISIBLE);
-            holder.tvActioned.setVisibility(View.GONE);
-
-            holder.btnAccept.setText("Chấp nhận");
-            holder.btnDecline.setText("Từ chối");
-
-            holder.btnAccept.setOnClickListener(v -> {
-                if (item.getType() == NotificationType.FRIEND_REQUEST_RECEIVED) {
-                    FakeSocialRepository.getInstance().acceptFriendRequest(item.getRelatedUsername());
-                    Toast.makeText(context, "Đã chấp nhận lời mời kết bạn", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(context, "Đã duyệt yêu cầu tham gia", Toast.LENGTH_SHORT).show();
-                }
-                item.setActioned(true);
-                notifyItemChanged(holder.getAdapterPosition());
-            });
-
-            holder.btnDecline.setOnClickListener(v -> {
-                if (item.getType() == NotificationType.FRIEND_REQUEST_RECEIVED) {
-                    FakeSocialRepository.getInstance().declineFriendRequest(item.getRelatedUsername());
-                    Toast.makeText(context, "Đã từ chối lời mời kết bạn", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(context, "Đã từ chối yêu cầu tham gia", Toast.LENGTH_SHORT).show();
-                }
-                item.setActioned(true);
-                notifyItemChanged(holder.getAdapterPosition());
-            });
-        } else if (isActionable && item.isActioned()) {
-            holder.layoutActions.setVisibility(View.GONE);
-            holder.tvActioned.setVisibility(View.VISIBLE);
-            holder.tvActioned.setText("Đã xử lý");
-        } else {
-            holder.layoutActions.setVisibility(View.GONE);
-            holder.tvActioned.setVisibility(View.GONE);
-        }
-
-        holder.itemView.setOnClickListener(v -> {
-            if (!item.isRead()) {
-                item.setRead(true);
-                holder.viewUnreadDot.setVisibility(View.GONE);
-                holder.tvMessage.setTypeface(null, android.graphics.Typeface.NORMAL);
-                BadgeManager.decrement();
-                if (onBadgeChanged != null) onBadgeChanged.run();
-            }
-            if (item.getRelatedUsername() != null && !item.getRelatedUsername().isEmpty()) {
-                Intent intent = new Intent(context, UserProfileActivity.class);
-                intent.putExtra("username", item.getRelatedUsername());
-                intent.putExtra("view_other", true);
-                context.startActivity(intent);
-            }
-        });
-
-        if (!item.isRead()) {
-            holder.viewUnreadDot.setVisibility(View.VISIBLE);
-            holder.tvMessage.setTypeface(null, android.graphics.Typeface.BOLD);
-        } else {
-            holder.viewUnreadDot.setVisibility(View.GONE);
-            holder.tvMessage.setTypeface(null, android.graphics.Typeface.NORMAL);
-        }
-    }
-
     private String formatCreatedAt(String createdAt) {
         if (createdAt == null) return "";
         try {
@@ -526,19 +453,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         }
     }
 
-    private String formatTime(long timestamp) {
-        long diff = System.currentTimeMillis() - timestamp;
-        long minutes = diff / (60 * 1000);
-        long hours = diff / (60 * 60 * 1000);
-
-        if (minutes < 1) return "Vừa xong";
-        if (minutes < 60) return minutes + " phút trước";
-        if (hours < 24) return hours + " giờ trước";
-
-        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm", Locale.getDefault());
-        return sdf.format(new Date(timestamp));
-    }
-
     @Override
     public int getItemCount() {
         return items.size();
@@ -550,8 +464,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 ((NotificationItem) item).setRead(true);
             } else if (item instanceof JoinRequestGroup) {
                 ((JoinRequestGroup) item).hasUnread = false;
-            } else if (item instanceof FakeNotificationRepository.NotificationItem) {
-                ((FakeNotificationRepository.NotificationItem) item).setRead(true);
             }
         }
         notifyDataSetChanged();
@@ -573,10 +485,10 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                     && item.getRelatedPostId() != null) {
                 joinReqByPost.computeIfAbsent(item.getRelatedPostId(), k -> new ArrayList<>())
                         .add(item);
-            } else if (item.getType() != NotificationItem.NotificationType.JOIN_REQUEST) {
+            } else {
+                // Actioned JOIN_REQUEST hoặc không có relatedPostId → giữ lại trong lịch sử
                 others.add(item);
             }
-            // Actioned JOIN_REQUEST: skip entirely (no longer relevant)
         }
 
         // 2. Build JoinRequestGroup for each post
@@ -644,22 +556,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         return grouped;
     }
 
-    // Group fake notifications by date
-    public static List<Object> groupByDateFake(List<FakeNotificationRepository.NotificationItem> notifications) {
-        List<Object> grouped = new ArrayList<>();
-        String lastDateLabel = "";
-
-        for (FakeNotificationRepository.NotificationItem item : notifications) {
-            String dateLabel = getDateLabel(item.getTimestamp());
-            if (!dateLabel.equals(lastDateLabel)) {
-                grouped.add(dateLabel);
-                lastDateLabel = dateLabel;
-            }
-            grouped.add(item);
-        }
-        return grouped;
-    }
-
     /** Extract post title from message: '... kèo "{title}" ...' */
     private static String extractPostTitle(String message) {
         if (message == null) return null;
@@ -686,26 +582,6 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         } catch (Exception e) {
             return "Khác";
         }
-    }
-
-    private static String getDateLabel(long timestamp) {
-        Calendar notifCal = Calendar.getInstance();
-        notifCal.setTimeInMillis(timestamp);
-
-        Calendar today = Calendar.getInstance();
-        Calendar yesterday = Calendar.getInstance();
-        yesterday.add(Calendar.DAY_OF_YEAR, -1);
-
-        if (sameDay(notifCal, today)) return "Hôm nay";
-        if (sameDay(notifCal, yesterday)) return "Hôm qua";
-
-        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
-        return sdf.format(new Date(timestamp));
-    }
-
-    private static boolean sameDay(Calendar a, Calendar b) {
-        return a.get(Calendar.YEAR) == b.get(Calendar.YEAR)
-                && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR);
     }
 
     static class HeaderViewHolder extends RecyclerView.ViewHolder {

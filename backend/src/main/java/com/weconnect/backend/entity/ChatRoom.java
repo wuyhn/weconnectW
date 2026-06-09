@@ -43,6 +43,13 @@ public class ChatRoom {
     @Column(length = 200)
     private String inactiveStatusLabel;
 
+    // null = không áp dụng (phòng nhóm, hoặc DM giữa bạn bè)
+    // PENDING  = người lạ nhắn trước, đang chờ receiver xác nhận
+    // ACCEPTED = receiver đã chấp nhận → chat bình thường
+    // REJECTED = receiver đã từ chối → initiator không gửi thêm được
+    @Column(name = "stranger_request_status", length = 20)
+    private String strangerRequestStatus;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

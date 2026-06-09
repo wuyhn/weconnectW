@@ -46,6 +46,10 @@ public interface PostApiService {
     @POST("api/posts/{id}/join")
     Call<ApiResponse<JoinGroupResponse>> joinPost(@Path("id") long id);
 
+    // Xin tham gia kèm lý do + province info
+    @POST("api/posts/{id}/join")
+    Call<ApiResponse<JoinGroupResponse>> joinPost(@Path("id") long id, @Body Map<String, Object> body);
+
     // Duyệt thành viên
     @POST("api/posts/{id}/approve/{userId}")
     Call<ApiResponse<Void>> approveMember(@Path("id") long id, @Path("userId") long userId);
@@ -62,9 +66,13 @@ public interface PostApiService {
     @GET("api/posts/{id}/members")
     Call<ApiResponse<List<Map<String, Object>>>> getMembers(@Path("id") long id);
 
+    // Gợi ý tag từ nội dung bài viết bằng AI
+    @POST("api/posts/suggest-tag")
+    Call<ApiResponse<String>> suggestTag(@Body Map<String, String> body);
+
     // Tìm kiếm
     @GET("api/posts/search")
-    Call<ApiResponse<List<PostResponse>>> searchPosts(@Query("q") String query);
+    Call<ApiResponse<List<PostResponse>>> searchPosts(@Query("keyword") String keyword);
 
     // Hoạt động của tôi
     @GET("api/posts/my-activities")

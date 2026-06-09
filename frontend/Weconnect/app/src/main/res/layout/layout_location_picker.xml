@@ -38,7 +38,7 @@
             android:textSize="17sp"
             android:textStyle="bold" />
 
-        <!-- Keep ID for Java compatibility, but hidden -->
+        <!-- Giữ lại ID để tránh lỗi biên dịch nếu code cũ còn tham chiếu -->
         <ImageView
             android:id="@+id/ivCloseLocation"
             android:layout_width="0dp"
@@ -83,11 +83,11 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:text="Hà Nội: chọn phường/xã mới; quận/huyện cũ chỉ dùng để lọc"
+                android:text="Chọn tỉnh/thành phố, sau đó chọn phường/xã"
                 android:textColor="#8E8E93"
                 android:textSize="13sp" />
 
-            <!-- 1. Thành phố -->
+            <!-- 1. Tỉnh/Thành phố -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilCity"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
@@ -114,34 +114,7 @@
                     android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <!-- 2. Quận/Huyện -->
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/tilDistrict"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                app:boxBackgroundColor="#FFFFFF"
-                app:boxCornerRadiusTopStart="14dp"
-                app:boxCornerRadiusTopEnd="14dp"
-                app:boxCornerRadiusBottomStart="14dp"
-                app:boxCornerRadiusBottomEnd="14dp"
-                app:boxStrokeColor="#007AFF"
-                app:hintEnabled="true">
-
-                <AutoCompleteTextView
-                    android:id="@+id/actDistrict"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="Khu vực/quận cũ (chỉ để lọc)"
-                    android:inputType="none"
-                    android:paddingVertical="14dp"
-                    android:textColor="#1C1C1E"
-                    android:textColorHint="#8E8E93"
-                    android:textSize="16sp" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <!-- 3. Phường/Xã -->
+            <!-- 2. Phường/Xã — dropdown scroll giống tỉnh/thành phố -->
             <com.google.android.material.textfield.TextInputLayout
                 android:id="@+id/tilWard"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
@@ -168,6 +141,13 @@
                     android:textSize="16sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <!-- Giữ lại ID actDistrict ẩn để tránh lỗi nếu code ngoài còn tham chiếu -->
+            <AutoCompleteTextView
+                android:id="@+id/actDistrict"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -189,22 +169,22 @@
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipHaDong"
                     style="@style/QuickParticipantChip"
-                    android:text="Hà Đông" />
+                    android:text="Hà Đông · HN" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipCauGiay"
                     style="@style/QuickParticipantChip"
-                    android:text="Cầu Giấy" />
+                    android:text="Cầu Giấy · HN" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipThuDuc"
                     style="@style/QuickParticipantChip"
-                    android:text="Thủ Đức, TP.HCM" />
+                    android:text="Thủ Đức · HCM" />
 
                 <com.google.android.material.chip.Chip
                     android:id="@+id/chipHaiChau"
                     style="@style/QuickParticipantChip"
-                    android:text="Hải Châu, Đà Nẵng" />
+                    android:text="Hải Châu · ĐN" />
             </com.google.android.material.chip.ChipGroup>
 
             <androidx.cardview.widget.CardView
@@ -225,7 +205,7 @@
                     android:textColor="#007AFF"
                     android:textSize="14sp"
                     android:textStyle="bold"
-                    tools:text="📍 Phường Hà Đông, Hà Nội" />
+                    tools:text="📍 Phường Hà Đông, Thành phố Hà Nội" />
             </androidx.cardview.widget.CardView>
 
         </LinearLayout>

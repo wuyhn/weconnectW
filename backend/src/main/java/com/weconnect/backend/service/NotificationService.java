@@ -11,6 +11,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -114,6 +116,7 @@ public class NotificationService {
         log.info("[NOTIFY-INTERNAL] Đã lưu notification id={} cho userId={}, type={}", saved.getId(), userId, type);
 
         // Real-time delivery via STOMP (khi app đang online)
+        // Gửi SAU KHI transaction commit để client không thấy điểm uy tín cũ khi mở profile ngay.
         if (messagingTemplate != null) {
             try {
                 Map<String, Object> payload = new LinkedHashMap<>();
@@ -123,8 +126,21 @@ public class NotificationService {
                 if (relatedReportId != null) payload.put("relatedReportId", relatedReportId);
                 if (relatedPostId != null) payload.put("relatedPostId", relatedPostId);
                 if (relatedUserId != null) payload.put("relatedUserId", relatedUserId);
-                messagingTemplate.convertAndSendToUser(
-                        userId.toString(), "/queue/notifications", payload);
+                if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                    final Map<String, Object> payloadCopy = new LinkedHashMap<>(payload);
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                messagingTemplate.convertAndSendToUser(
+                                        userId.toString(), "/queue/notifications", payloadCopy);
+                            } catch (Exception ignored) {}
+                        }
+                    });
+                } else {
+                    messagingTemplate.convertAndSendToUser(
+                            userId.toString(), "/queue/notifications", payload);
+                }
             } catch (Exception ignored) {}
         }
 
@@ -139,6 +155,8 @@ public class NotificationService {
                         data.put("notificationId", String.valueOf(saved.getId()));
                         if (relatedReportId != null) data.put("relatedReportId", String.valueOf(relatedReportId));
                         if (relatedPostId != null) data.put("relatedPostId", String.valueOf(relatedPostId));
+                        if (relatedUserId != null) data.put("relatedUserId", String.valueOf(relatedUserId));
+                        if (relatedUsername != null && !relatedUsername.isBlank()) data.put("relatedUsername", relatedUsername);
                         fcmService.sendNotification(user.getFcmToken(), "WeConnect", message, data);
                     }
                 });

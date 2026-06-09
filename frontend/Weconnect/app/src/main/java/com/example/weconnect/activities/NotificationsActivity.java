@@ -3,7 +3,6 @@ package com.example.weconnect.activities;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -16,13 +15,11 @@ import com.example.weconnect.R;
 import com.example.weconnect.adapters.NotificationAdapter;
 import com.example.weconnect.api.NotificationApiService;
 import com.example.weconnect.api.RetrofitClient;
-import com.example.weconnect.data.FakeNotificationRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.NotificationItem;
 import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.websocket.WebSocketManager;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import retrofit2.Call;
@@ -34,7 +31,7 @@ public class NotificationsActivity extends AppCompatActivity {
     private RecyclerView rvNotifications;
     private NotificationAdapter adapter;
     private TextView tvEmpty;
-    private TextView tvNotifBadge;
+    private com.google.android.material.bottomnavigation.BottomNavigationView bottomNav;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,11 +40,8 @@ public class NotificationsActivity extends AppCompatActivity {
 
         rvNotifications = findViewById(R.id.rvNotifications);
         tvEmpty = findViewById(R.id.tvNoNotifications);
-        tvNotifBadge = findViewById(R.id.tvNotifBadge);
+        bottomNav = findViewById(R.id.footerNavNotif);
         ImageView ivMarkAllRead = findViewById(R.id.ivMarkAllRead);
-
-        // Hiển thị badge theo count hiện tại (không reset ở đây)
-        BadgeManager.applyBadge(tvNotifBadge);
 
         loadNotifications();
 
@@ -59,7 +53,7 @@ public class NotificationsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        BadgeManager.applyBadge(tvNotifBadge);
+        applyNavBadge();
         loadNotifications();
         // Lắng nghe notification mới qua STOMP để auto-refresh
         if (WebSocketManager.getInstance().isConnected()) {
@@ -80,7 +74,7 @@ public class NotificationsActivity extends AppCompatActivity {
         String token = RetrofitClient.getAuthToken();
 
         if (token == null) {
-            loadFakeNotifications();
+            showEmptyNotifications();
             return;
         }
 
@@ -95,13 +89,15 @@ public class NotificationsActivity extends AppCompatActivity {
                         && response.body().getResult() != null) {
                     displayNotifications(response.body().getResult());
                 } else {
-                    loadFakeNotifications();
+                    showEmptyNotifications();
                 }
             }
 
             @Override
             public void onFailure(Call<ApiResponse<List<NotificationItem>>> call, Throwable t) {
-                loadFakeNotifications();
+                showEmptyNotifications();
+                Toast.makeText(NotificationsActivity.this,
+                        "Lỗi kết nối", Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -113,7 +109,7 @@ public class NotificationsActivity extends AppCompatActivity {
             if (!n.isRead()) unreadCount++;
         }
         BadgeManager.setCount(unreadCount);
-        BadgeManager.applyBadge(tvNotifBadge);
+        applyNavBadge();
 
         if (notifications.isEmpty()) {
             tvEmpty.setVisibility(View.VISIBLE);
@@ -124,30 +120,17 @@ public class NotificationsActivity extends AppCompatActivity {
 
             List<Object> groupedItems = NotificationAdapter.groupByDate(notifications);
             adapter = new NotificationAdapter(this, groupedItems,
-                    () -> BadgeManager.applyBadge(tvNotifBadge));
+                    () -> applyNavBadge());
             rvNotifications.setLayoutManager(new LinearLayoutManager(this));
             rvNotifications.setAdapter(adapter);
         }
     }
 
-    private void loadFakeNotifications() {
-        List<FakeNotificationRepository.NotificationItem> fakeNotifs =
-                FakeNotificationRepository.getInstance().getNotifications();
-
-        if (fakeNotifs.isEmpty()) {
-            tvEmpty.setVisibility(View.VISIBLE);
-            rvNotifications.setVisibility(View.GONE);
-        } else {
-            tvEmpty.setVisibility(View.GONE);
-            rvNotifications.setVisibility(View.VISIBLE);
-
-            List<Object> groupedItems = com.example.weconnect.adapters.NotificationAdapter
-                    .groupByDateFake(fakeNotifs);
-            adapter = new NotificationAdapter(this, groupedItems,
-                    () -> BadgeManager.applyBadge(tvNotifBadge));
-            rvNotifications.setLayoutManager(new LinearLayoutManager(this));
-            rvNotifications.setAdapter(adapter);
-        }
+    private void showEmptyNotifications() {
+        tvEmpty.setVisibility(View.VISIBLE);
+        rvNotifications.setVisibility(View.GONE);
+        BadgeManager.reset();
+        applyNavBadge();
     }
 
     private void markAllAsRead() {
@@ -164,7 +147,7 @@ public class NotificationsActivity extends AppCompatActivity {
                                        Response<ApiResponse<Void>> response) {
                     // Reset badge chỉ khi markAllAsRead thành công
                     BadgeManager.reset();
-                    BadgeManager.applyBadge(tvNotifBadge);
+                    applyNavBadge();
                     if (adapter != null) {
                         adapter.markAllRead();
                     }
@@ -178,50 +161,59 @@ public class NotificationsActivity extends AppCompatActivity {
                             "Lỗi kết nối", Toast.LENGTH_SHORT).show();
                 }
             });
+            return;
+        }
+
+        BadgeManager.reset();
+        applyNavBadge();
+        if (adapter != null) {
+            adapter.markAllRead();
+        }
+        Toast.makeText(this, "Đã đánh dấu tất cả là đã đọc", Toast.LENGTH_SHORT).show();
+    }
+
+    private void applyNavBadge() {
+        if (bottomNav == null) return;
+        int count = BadgeManager.getCount();
+        if (count > 0) {
+            com.google.android.material.badge.BadgeDrawable badge =
+                    bottomNav.getOrCreateBadge(R.id.nav_notifications);
+            badge.setVisible(true);
+            badge.setMaxCharacterCount(3);
+            badge.setNumber(count);
         } else {
-            // Fake mark all read
-            for (FakeNotificationRepository.NotificationItem item :
-                    FakeNotificationRepository.getInstance().getNotifications()) {
-                item.setRead(true);
-            }
-            BadgeManager.reset();
-            BadgeManager.applyBadge(tvNotifBadge);
-            if (adapter != null) {
-                adapter.markAllRead();
-            }
-            Toast.makeText(this, "Đã đánh dấu tất cả là đã đọc", Toast.LENGTH_SHORT).show();
+            bottomNav.removeBadge(R.id.nav_notifications);
         }
     }
 
     private void setupBottomNavigation() {
-        FrameLayout btnHome = findViewById(R.id.btnHomeNotif);
-        FrameLayout btnMessages = findViewById(R.id.btnMessagesNotif);
-        FrameLayout btnProfile = findViewById(R.id.btnProfileNotif);
-
-        if (btnHome != null) {
-            btnHome.setOnClickListener(v -> {
+        if (bottomNav == null) return;
+        bottomNav.setSelectedItemId(R.id.nav_notifications);
+        bottomNav.setOnItemSelectedListener(item -> {
+            int id = item.getItemId();
+            if (id == R.id.nav_home) {
                 Intent intent = new Intent(this, MainActivity.class);
                 intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
                 overridePendingTransition(0, 0);
-            });
-        }
-        if (btnMessages != null) {
-            btnMessages.setOnClickListener(v -> {
+                return true;
+            } else if (id == R.id.nav_messages) {
                 Intent intent = new Intent(this, ChatListActivity.class);
                 intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
                 overridePendingTransition(0, 0);
-            });
-        }
-        if (btnProfile != null) {
-            btnProfile.setOnClickListener(v -> {
+                return true;
+            } else if (id == R.id.nav_notifications) {
+                return true;
+            } else if (id == R.id.nav_profile) {
                 Intent intent = new Intent(this, UserProfileActivity.class);
                 intent.putExtra("username", RetrofitClient.getUserName(this));
                 intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 startActivity(intent);
                 overridePendingTransition(0, 0);
-            });
-        }
+                return true;
+            }
+            return false;
+        });
     }
 }

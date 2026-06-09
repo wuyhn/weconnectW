@@ -31,6 +31,7 @@ public class Notification {
         POST_EXPIRED,
         ACTIVITY_CANCELLED,
         CHAT_SUMMARY,
+        STRANGER_REQUEST_ACCEPTED,
         GENERAL
     }
 

@@ -39,10 +39,12 @@ import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
 import com.example.weconnect.models.UserReview;
 import com.example.weconnect.utils.DirectMessageHelper;
+import com.example.weconnect.utils.InterestTextUtils;
 import com.example.weconnect.utils.UserReportBottomSheet;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -67,6 +69,7 @@ public class UserProfileActivity extends AppCompatActivity {
     private TextView tvUserBio;
     private TextView tvUserBirthday;
     private TextView tvUserGender;
+    private TextView tvUserProvince;
     private MaterialButton btnAddFriend;
     private MaterialButton btnMessage;
     private MaterialButton btnViewArchive;
@@ -77,7 +80,7 @@ public class UserProfileActivity extends AppCompatActivity {
     private TextView tvFriendCount;
     private RecyclerView rvUserReviews;
     private ChipGroup chipGroupUserInterests;
-    private View footerNavigationProfile;
+    private com.google.android.material.bottomnavigation.BottomNavigationView footerNavigationProfile;
 
     private DrawerLayout drawerLayoutProfile;
     private LinearLayout menuEditProfile;
@@ -94,7 +97,6 @@ public class UserProfileActivity extends AppCompatActivity {
     private View cardCreatePostProfile;
     private TextView tvCreatePostHint;
     private TextView tvReviewsTitle;
-    private android.widget.TextView tvNotifBadge;
 
     // Cache: tab data + other-user avatar (preserved across onResume without extra API calls)
     private List<Post> cachedMyPosts = null;
@@ -278,7 +280,7 @@ public class UserProfileActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        BadgeManager.applyBadge(tvNotifBadge);
+        applyNavBadge();
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
         if (blockProfileMode) {
             showBlockedProfileState();
@@ -314,6 +316,7 @@ public class UserProfileActivity extends AppCompatActivity {
         tvUserBio = findViewById(R.id.tvUserBio);
         tvUserBirthday = findViewById(R.id.tvUserBirthday);
         tvUserGender = findViewById(R.id.tvUserGender);
+        tvUserProvince = findViewById(R.id.tvUserProvince);
         btnAddFriend = findViewById(R.id.btnAddFriend);
         btnMessage = findViewById(R.id.btnMessage);
         btnViewArchive = findViewById(R.id.btnViewArchive);
@@ -325,7 +328,6 @@ public class UserProfileActivity extends AppCompatActivity {
         rvUserReviews = findViewById(R.id.rvUserReviews);
         chipGroupUserInterests = findViewById(R.id.chipGroupUserInterests);
         footerNavigationProfile = findViewById(R.id.footerNavigationProfile);
-        tvNotifBadge = findViewById(R.id.tvNotifBadge);
 
         drawerLayoutProfile = findViewById(R.id.drawerLayoutProfile);
         menuEditProfile = findViewById(R.id.menuEditProfile);
@@ -412,32 +414,31 @@ public class UserProfileActivity extends AppCompatActivity {
         });
 
         // Bottom navigation click listeners
-        View btnHome = findViewById(R.id.btnHomeProfile);
-        View btnMessages = findViewById(R.id.btnMessagesProfile);
-        View btnNotifications = findViewById(R.id.btnNotificationsProfile);
-
-        if (btnHome != null) {
-            btnHome.setOnClickListener(v -> {
-                Intent intent = new Intent(this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(intent);
-                overridePendingTransition(0, 0);
-            });
-        }
-        if (btnMessages != null) {
-            btnMessages.setOnClickListener(v -> {
-                Intent intent = new Intent(this, ChatListActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(intent);
-                overridePendingTransition(0, 0);
-            });
-        }
-        if (btnNotifications != null) {
-            btnNotifications.setOnClickListener(v -> {
-                Intent intent = new Intent(this, NotificationsActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(intent);
-                overridePendingTransition(0, 0);
+        if (footerNavigationProfile != null) {
+            footerNavigationProfile.setOnItemSelectedListener(item -> {
+                int id = item.getItemId();
+                if (id == R.id.nav_home) {
+                    Intent intent = new Intent(this, MainActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                } else if (id == R.id.nav_messages) {
+                    Intent intent = new Intent(this, ChatListActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                } else if (id == R.id.nav_notifications) {
+                    Intent intent = new Intent(this, NotificationsActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                } else if (id == R.id.nav_profile) {
+                    return true;
+                }
+                return false;
             });
         }
     }
@@ -467,16 +468,14 @@ public class UserProfileActivity extends AppCompatActivity {
         LinearLayout menuLogout = findViewById(R.id.menuLogout);
         menuLogout.setOnClickListener(v -> {
             drawerLayoutProfile.closeDrawer(Gravity.END);
-            new AlertDialog.Builder(this)
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                     .setTitle("Đăng xuất")
                     .setMessage("Bạn có chắc muốn đăng xuất?")
                     .setPositiveButton("Đăng xuất", (d, w) -> {
-                        // Clear session & reset all fake repos
                         WebSocketManager.getInstance().disconnect();
                         RetrofitClient.clearSession(this);
                         FakeSocialRepository.resetInstance();
                         com.example.weconnect.data.FakePostRepository.resetInstance();
-                        com.example.weconnect.data.FakeNotificationRepository.resetInstance();
                         Intent intent = new Intent(this, LoginActivity.class);
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                         startActivity(intent);
@@ -519,7 +518,6 @@ public class UserProfileActivity extends AppCompatActivity {
                                 RetrofitClient.clearSession(UserProfileActivity.this);
                                 FakeSocialRepository.resetInstance();
                                 com.example.weconnect.data.FakePostRepository.resetInstance();
-                                com.example.weconnect.data.FakeNotificationRepository.resetInstance();
                                 // Navigate to login
                                 Intent intent = new Intent(UserProfileActivity.this, LoginActivity.class);
                                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -561,7 +559,7 @@ public class UserProfileActivity extends AppCompatActivity {
 
         ivUserProfileAvatar.setImageResource(R.drawable.ic_user_placeholder);
         tvUserProfileName.setText(username);
-        if (!viewOther && targetUserId <= 0) {
+        if (!viewOther) {
             tvUserReputation.setText(String.valueOf(Math.round(RetrofitClient.getReputationScore(this))));
         } else {
             tvUserReputation.setText("—");
@@ -581,11 +579,13 @@ public class UserProfileActivity extends AppCompatActivity {
 
         // Load tên thật từ backend
         if (viewOther && viewedUserId > 0) {
-            // Xem profile người khác: load tên thật từ API
+            // Xem profile người khác: load đúng người theo userId
             loadOtherUserProfile(viewedUserId);
-        } else {
+        } else if (!viewOther) {
+            // Xem profile của chính mình
             loadOwnProfileName();
         }
+        // else: view_other=true nhưng không có userId hợp lệ — giữ nguyên placeholder, không load sai profile
     }
 
     private void loadOtherUserProfile(long userId) {
@@ -596,6 +596,13 @@ public class UserProfileActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<ApiResponse<java.util.Map<String, Object>>> call,
                                    Response<ApiResponse<java.util.Map<String, Object>>> response) {
+                // Kịch bản 2: Tài khoản được xem đang bị khóa tạm thời.
+                // Backend trả về HTTP 423 kèm lockUntil — hiển thị dialog và ngắt luồng điều hướng.
+                if (response.code() == 423) {
+                    showLockedAccountDialog(response.errorBody());
+                    return;
+                }
+
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     java.util.Map<String, Object> profile = response.body().getResult();
@@ -638,6 +645,15 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
+                    String provinceId = profile.get("provinceId") != null
+                            ? profile.get("provinceId").toString() : "";
+                    String provinceName = profile.get("provinceName") != null
+                            ? profile.get("provinceName").toString() : "";
+                    if (tvUserProvince != null) {
+                        tvUserProvince.setText(provinceName.isEmpty() ? "" : "📍 " + provinceName);
+                        tvUserProvince.setVisibility(provinceName.isEmpty() ? View.GONE : View.VISIBLE);
+                    }
+
                     // Điểm uy tín luôn hiển thị theo reputationScore hiện tại, kể cả khi user chưa có review.
                     if (tvUserReputation != null) {
                         Object repObj = profile.get("reputationScore");
@@ -673,12 +689,50 @@ public class UserProfileActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * Kịch bản 2: Hiển thị dialog thông báo khi user bị khóa tạm thời (HTTP 423).
+     * Parse lockUntil từ error body và hiển thị ngày mở khóa dưới dạng dd/MM/yyyy.
+     * Sau khi user bấm "Đã hiểu", đóng Activity — luồng điều hướng vào profile bị ngắt.
+     */
+    private void showLockedAccountDialog(okhttp3.ResponseBody errorBody) {
+        String lockDateStr = "không xác định";
+        try {
+            if (errorBody != null) {
+                String bodyStr = errorBody.string();
+                org.json.JSONObject json = new org.json.JSONObject(bodyStr);
+                org.json.JSONObject result = json.optJSONObject("result");
+                if (result != null) {
+                    String lockUntil = result.optString("lockUntil", "");
+                    if (!lockUntil.isEmpty()) {
+                        // Parse ISO-8601: "2026-06-06T10:30:00" → format dd/MM/yyyy
+                        java.text.SimpleDateFormat inputFmt = new java.text.SimpleDateFormat(
+                                "yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+                        java.text.SimpleDateFormat outputFmt = new java.text.SimpleDateFormat(
+                                "dd/MM/yyyy", java.util.Locale.getDefault());
+                        java.util.Date date = inputFmt.parse(lockUntil);
+                        if (date != null) {
+                            lockDateStr = outputFmt.format(date);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Giữ nguyên "không xác định" nếu parse thất bại
+        }
+
+        final String finalDate = lockDateStr;
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Tài khoản bị khóa")
+                .setMessage("User này đã bị khóa tài khoản do vi phạm tiêu chuẩn cộng đồng.\n"
+                        + "Tài khoản sẽ hoạt động trở lại vào ngày " + finalDate + ".")
+                .setPositiveButton("Đã hiểu", (dialog, which) -> finish())
+                .setCancelable(false)
+                .show();
+    }
+
     private void loadOwnProfileName() {
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
         if (viewOther) return;
-
-        long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId > 0) return; // Đang xem profile người khác
 
         RetrofitClient.loadToken(this);
         long myId = RetrofitClient.getUserId(this);
@@ -729,7 +783,18 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserBirthday.setVisibility(birthday.isEmpty() ? View.GONE : View.VISIBLE);
                     }
 
+                    String provinceId = profile.get("provinceId") != null
+                            ? profile.get("provinceId").toString() : "";
+                    String provinceName = profile.get("provinceName") != null
+                            ? profile.get("provinceName").toString() : "";
+                    if (tvUserProvince != null) {
+                        tvUserProvince.setText(provinceName.isEmpty() ? "" : "📍 " + provinceName);
+                        tvUserProvince.setVisibility(provinceName.isEmpty() ? View.GONE : View.VISIBLE);
+                    }
+
                     // Điểm uy tín luôn hiển thị theo reputationScore hiện tại, kể cả khi user chưa có review.
+                    RetrofitClient.saveUserProvince(UserProfileActivity.this, provinceId, provinceName);
+
                     if (tvUserReputation != null) {
                         Object repObj = profile.get("reputationScore");
                         int rep = repObj != null
@@ -763,7 +828,7 @@ public class UserProfileActivity extends AppCompatActivity {
                         chipGroupUserInterests.removeAllViews();
                         String[] tags = interestTags.split(",");
                         for (String tag : tags) {
-                            String trimmed = tag.trim();
+                            String trimmed = InterestTextUtils.stripLeadingIcon(tag);
                             if (!trimmed.isEmpty()) {
                                 com.google.android.material.chip.Chip chip =
                                         new com.google.android.material.chip.Chip(UserProfileActivity.this);
@@ -802,8 +867,8 @@ public class UserProfileActivity extends AppCompatActivity {
                 com.example.weconnect.api.RetrofitClient.getClient()
                         .create(com.example.weconnect.api.UserApiService.class);
 
-        // Determine if viewing own profile or someone else's
-        boolean isOwnProfile = socialRepository.getCurrentUsername().equalsIgnoreCase(username);
+        // Determine if viewing own profile or someone else's — compare by ID, not by name
+        boolean isOwnProfile = !getIntent().getBooleanExtra("view_other", false);
 
         if (isOwnProfile) {
             apiService.getInterests().enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<java.util.List<String>>>() {
@@ -870,8 +935,8 @@ public class UserProfileActivity extends AppCompatActivity {
         } else {
             // Final fallback
             List<String> defaultTags = new ArrayList<>();
-            defaultTags.add("☕ Cà phê");
-            defaultTags.add("💬 Giao lưu");
+            defaultTags.add("Cà phê");
+            defaultTags.add("Giao lưu");
             displayInterests(defaultTags);
         }
     }
@@ -879,7 +944,7 @@ public class UserProfileActivity extends AppCompatActivity {
     private void displayInterests(List<String> interestTags) {
         chipGroupUserInterests.removeAllViews();
         for (String tag : interestTags) {
-            String trimmed = tag.trim();
+            String trimmed = InterestTextUtils.stripLeadingIcon(tag);
             if (trimmed.isEmpty()) continue;
             Chip chip = new Chip(this);
             chip.setText(trimmed);
@@ -1065,7 +1130,7 @@ public class UserProfileActivity extends AppCompatActivity {
         java.util.Set<String> set = new java.util.HashSet<>();
         if (!saved.isEmpty()) {
             for (String tag : saved.split(",")) {
-                String trimmed = tag.trim().toLowerCase();
+                String trimmed = InterestTextUtils.stripLeadingIcon(tag).toLowerCase();
                 if (!trimmed.isEmpty()) set.add(trimmed);
             }
         }
@@ -1117,7 +1182,7 @@ public class UserProfileActivity extends AppCompatActivity {
         // Tạo set sở thích để so sánh nhanh
         java.util.Set<String> interestSet = new java.util.HashSet<>();
         for (String tag : userInterests) {
-            String trimmed = tag.trim();
+            String trimmed = InterestTextUtils.stripLeadingIcon(tag);
             if (!trimmed.isEmpty()) interestSet.add(trimmed.toLowerCase());
         }
 
@@ -1151,7 +1216,7 @@ public class UserProfileActivity extends AppCompatActivity {
                             }
                             // Lọc bài có tag trùng sở thích
                             if (pr.getInterestTag() != null
-                                    && interestSet.contains(pr.getInterestTag().trim().toLowerCase())) {
+                                    && interestSet.contains(InterestTextUtils.stripLeadingIcon(pr.getInterestTag()).toLowerCase())) {
                                 related.add(pr.toPost());
                             }
                         }
@@ -1347,6 +1412,20 @@ public class UserProfileActivity extends AppCompatActivity {
         }
     }
 
+    private void applyNavBadge() {
+        if (footerNavigationProfile == null) return;
+        int count = BadgeManager.getCount();
+        if (count > 0) {
+            com.google.android.material.badge.BadgeDrawable badge =
+                    footerNavigationProfile.getOrCreateBadge(R.id.nav_notifications);
+            badge.setVisible(true);
+            badge.setMaxCharacterCount(3);
+            badge.setNumber(count);
+        } else {
+            footerNavigationProfile.removeBadge(R.id.nav_notifications);
+        }
+    }
+
     private void bindSocialState() {
         boolean viewOther = getIntent().getBooleanExtra("view_other", false);
         long myUserId = RetrofitClient.getUserId(this);
@@ -1366,6 +1445,8 @@ public class UserProfileActivity extends AppCompatActivity {
             layoutRateReport.setVisibility(View.GONE);
             btnViewArchive.setVisibility(View.VISIBLE);
             footerNavigationProfile.setVisibility(View.VISIBLE);
+            footerNavigationProfile.setSelectedItemId(R.id.nav_profile);
+            applyNavBadge();
 
             ivUserProfileAvatar.setOnClickListener(v -> showAvatarOptionsSheet());
 
@@ -1469,6 +1550,7 @@ public class UserProfileActivity extends AppCompatActivity {
         tvUserBio.setVisibility(View.VISIBLE);
         tvUserBirthday.setVisibility(View.GONE);
         tvUserGender.setVisibility(View.GONE);
+        if (tvUserProvince != null) tvUserProvince.setVisibility(View.GONE);
         tvUserReputation.setText("0");
 
         tvInterestsTitle.setVisibility(View.GONE);
@@ -2714,7 +2796,9 @@ public class UserProfileActivity extends AppCompatActivity {
 
     private void loadReviewsFromBackend() {
         long targetUserId = getIntent().getLongExtra("user_id", -1);
-        if (targetUserId <= 0) {
+        boolean isViewOther = getIntent().getBooleanExtra("view_other", false);
+        if (targetUserId <= 0 && !isViewOther) {
+            // Chỉ fallback sang userId của bản thân khi đang xem profile của chính mình
             android.content.SharedPreferences prefs = getSharedPreferences("weconnect_prefs", MODE_PRIVATE);
             targetUserId = prefs.getLong("user_id", -1);
         }
@@ -2864,6 +2948,10 @@ public class UserProfileActivity extends AppCompatActivity {
                 .show();
     }
 
+    private boolean isOtherReportReason(String reason) {
+        return "Khác".equalsIgnoreCase(reason) || "Lý do khác".equalsIgnoreCase(reason);
+    }
+
     private void showReportUserDialog() {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(this);
@@ -2883,6 +2971,8 @@ public class UserProfileActivity extends AppCompatActivity {
 
         final int[] selectedIndex = {-1};
         final TextView[] reasonViews = new TextView[reasons.length];
+        final LinearLayout[] otherReasonGroupRef = new LinearLayout[1];
+        final EditText[] otherReasonInputRef = new EditText[1];
 
         // Group 1: header + reason rows
         LinearLayout group1 = buildIosGroup();
@@ -2915,6 +3005,14 @@ public class UserProfileActivity extends AppCompatActivity {
                 }
                 selectedIndex[0] = index;
                 tvReason.setTextColor(0xFF007AFF);
+                boolean isOther = isOtherReportReason(reasons[index]);
+                if (otherReasonGroupRef[0] != null) {
+                    otherReasonGroupRef[0].setVisibility(isOther ? View.VISIBLE : View.GONE);
+                }
+                if (!isOther && otherReasonInputRef[0] != null) {
+                    otherReasonInputRef[0].setText("");
+                    otherReasonInputRef[0].setError(null);
+                }
             });
             reasonViews[i] = tvReason;
             group1.addView(tvReason, matchW());
@@ -2923,10 +3021,21 @@ public class UserProfileActivity extends AppCompatActivity {
         root.addView(group1, matchW());
         addGroupGap(root);
 
-        // Group 2: description EditText
+        // Group 2: field nhập lý do khác, chỉ hiện khi chọn "Lý do khác"
         LinearLayout group2 = buildIosGroup();
+        group2.setVisibility(View.GONE);
+        otherReasonGroupRef[0] = group2;
+        TextView otherReasonHeader = new TextView(this);
+        otherReasonHeader.setText("Nhập lý do khác");
+        otherReasonHeader.setTextSize(13);
+        otherReasonHeader.setTextColor(0xFF8E8E93);
+        otherReasonHeader.setGravity(Gravity.CENTER);
+        otherReasonHeader.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(12));
+        group2.addView(otherReasonHeader, matchW());
+        addIosSep(group2);
         EditText etDescription = new EditText(this);
-        etDescription.setHint("Nhập mô tả chi tiết...");
+        otherReasonInputRef[0] = etDescription;
+        etDescription.setHint("Nhập lý do khác...");
         etDescription.setTextSize(14);
         etDescription.setMinLines(2);
         etDescription.setMaxLines(4);
@@ -2943,9 +3052,15 @@ public class UserProfileActivity extends AppCompatActivity {
                 Toast.makeText(this, "Vui lòng chọn lý do báo cáo", Toast.LENGTH_SHORT).show();
                 return;
             }
+            String selectedReason = reasons[selectedIndex[0]];
+            String otherReason = etDescription.getText().toString().trim();
+            if (isOtherReportReason(selectedReason) && otherReason.isEmpty()) {
+                Toast.makeText(this, "Vui lòng nhập lý do khác", Toast.LENGTH_SHORT).show();
+                etDescription.setError("Vui lòng nhập lý do khác");
+                return;
+            }
             sheet.dismiss();
-            submitReportToBackend("USER", viewedUserId, reasons[selectedIndex[0]],
-                    etDescription.getText().toString().trim());
+            submitReportToBackend("USER", viewedUserId, selectedReason, otherReason);
         });
         root.addView(group3, matchW());
         addGroupGap(root);
@@ -2975,8 +3090,12 @@ public class UserProfileActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
                 if (response.isSuccessful()) {
-                    Toast.makeText(UserProfileActivity.this,
-                            "Đã gửi báo cáo. Cảm ơn bạn!", Toast.LENGTH_SHORT).show();
+                    if ("USER".equalsIgnoreCase(targetType)) {
+                        showBlockSuggestionAfterReport(targetId);
+                    } else {
+                        Toast.makeText(UserProfileActivity.this,
+                                "Đã gửi báo cáo. Cảm ơn bạn!", Toast.LENGTH_SHORT).show();
+                    }
                 } else {
                     Toast.makeText(UserProfileActivity.this,
                             "Không thể gửi báo cáo. Thử lại sau.", Toast.LENGTH_SHORT).show();
@@ -2989,6 +3108,46 @@ public class UserProfileActivity extends AppCompatActivity {
                         "Lỗi kết nối server", Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    private void showBlockSuggestionAfterReport(long targetUserId) {
+        if (targetUserId <= 0) {
+            Toast.makeText(this, "Đã gửi báo cáo. Cảm ơn bạn!", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String safeName = username != null && !username.trim().isEmpty()
+                ? username.trim()
+                : "người dùng này";
+
+        new AlertDialog.Builder(this)
+                .setTitle("Đã gửi báo cáo")
+                .setMessage("Cảm ơn bạn đã phản hồi. Bạn có muốn chặn " + safeName
+                        + " để hạn chế tương tác và tin nhắn từ người này không?")
+                .setNegativeButton("Để sau", null)
+                .setPositiveButton("Chặn", (dialog, which) ->
+                        friendApiService.blockUser(targetUserId).enqueue(new Callback<ApiResponse<Void>>() {
+                            @Override
+                            public void onResponse(Call<ApiResponse<Void>> call,
+                                                   Response<ApiResponse<Void>> response) {
+                                if (response.isSuccessful()) {
+                                    Toast.makeText(UserProfileActivity.this,
+                                            "Đã chặn " + safeName, Toast.LENGTH_SHORT).show();
+                                    if (targetUserId == viewedUserId) {
+                                        setupFriendButton("BLOCKED");
+                                    }
+                                } else {
+                                    Toast.makeText(UserProfileActivity.this,
+                                            "Không thể chặn người dùng", Toast.LENGTH_SHORT).show();
+                                }
+                            }
+
+                            @Override
+                            public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                Toast.makeText(UserProfileActivity.this,
+                                        "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                            }
+                        }))
+                .show();
     }
 
     private void loadSavedAvatar() {
@@ -3083,6 +3242,13 @@ public class UserProfileActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == 3001 && resultCode == RESULT_OK) {
+            if (data != null) {
+                RetrofitClient.saveUserProvince(
+                        this,
+                        data.getStringExtra("provinceId"),
+                        data.getStringExtra("provinceName")
+                );
+            }
             // Sau khi EditProfile lưu thành công → reload lại profile để UI cập nhật
             loadOwnProfileName();
             return;

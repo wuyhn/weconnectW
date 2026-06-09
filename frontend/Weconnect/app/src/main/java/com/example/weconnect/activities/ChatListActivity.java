@@ -45,14 +45,10 @@ public class ChatListActivity extends AppCompatActivity {
     private ImageView ivNewChat;
     private EditText etChatSearch;
     private RecyclerView rvChats;
-    private FrameLayout btnHome;
-    private FrameLayout btnMessages;
-    private FrameLayout btnNotifications;
-    private FrameLayout btnProfile;
+    private com.google.android.material.bottomnavigation.BottomNavigationView bottomNav;
     private TabLayout tabChatType;
     private ChatRoomAdapter adapter;
     private String currentTab = TAB_ACTIVITY;
-    private TextView tvNotifBadge;
 
     // Cached rooms from API
     private List<ChatRoom> allRooms = new ArrayList<>();
@@ -75,7 +71,7 @@ public class ChatListActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        BadgeManager.applyBadge(tvNotifBadge);
+        applyNavBadge();
         loadChatsFromApi();
         WebSocketManager.getInstance().subscribeToChatList(payload -> loadChatsFromApi());
     }
@@ -90,19 +86,14 @@ public class ChatListActivity extends AppCompatActivity {
         ivNewChat = findViewById(R.id.ivNewChat);
         etChatSearch = findViewById(R.id.etChatSearch);
         rvChats = findViewById(R.id.rvChats);
-        btnHome = findViewById(R.id.btnHome);
-        btnMessages = findViewById(R.id.btnMessages);
-        btnNotifications = findViewById(R.id.btnNotifications);
-        btnProfile = findViewById(R.id.btnProfile);
+        bottomNav = findViewById(R.id.footerNavigation);
         tabChatType = findViewById(R.id.tabChatType);
-        tvNotifBadge = findViewById(R.id.tvNotifBadge);
     }
 
     private void setupRecyclerView() {
         adapter = new ChatRoomAdapter(this::openRoom);
         rvChats.setLayoutManager(new LinearLayoutManager(this));
         rvChats.setAdapter(adapter);
-        btnMessages.setAlpha(1.0f);
     }
 
     private void setupTabs() {
@@ -125,30 +116,52 @@ public class ChatListActivity extends AppCompatActivity {
         });
     }
 
+    private void applyNavBadge() {
+        if (bottomNav == null) return;
+        int count = BadgeManager.getCount();
+        if (count > 0) {
+            com.google.android.material.badge.BadgeDrawable badge =
+                    bottomNav.getOrCreateBadge(R.id.nav_notifications);
+            badge.setVisible(true);
+            badge.setMaxCharacterCount(3);
+            badge.setNumber(count);
+        } else {
+            bottomNav.removeBadge(R.id.nav_notifications);
+        }
+    }
+
     private void setupClickListeners() {
         ivNewChat.setOnClickListener(v -> showNewChatDialog());
 
-        btnHome.setOnClickListener(v -> {
-            Intent intent = new Intent(this, MainActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
-
-        btnNotifications.setOnClickListener(v -> {
-            Intent intent = new Intent(this, NotificationsActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
-
-        btnProfile.setOnClickListener(v -> {
-            Intent intent = new Intent(this, UserProfileActivity.class);
-            intent.putExtra("username", RetrofitClient.getUserName(this));
-            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            startActivity(intent);
-            overridePendingTransition(0, 0);
-        });
+        if (bottomNav != null) {
+            bottomNav.setSelectedItemId(R.id.nav_messages);
+            bottomNav.setOnItemSelectedListener(item -> {
+                int id = item.getItemId();
+                if (id == R.id.nav_home) {
+                    Intent intent = new Intent(this, MainActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                } else if (id == R.id.nav_messages) {
+                    return true;
+                } else if (id == R.id.nav_notifications) {
+                    Intent intent = new Intent(this, NotificationsActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                } else if (id == R.id.nav_profile) {
+                    Intent intent = new Intent(this, UserProfileActivity.class);
+                    intent.putExtra("username", RetrofitClient.getUserName(this));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                    overridePendingTransition(0, 0);
+                    return true;
+                }
+                return false;
+            });
+        }
     }
 
     private void setupSearch() {

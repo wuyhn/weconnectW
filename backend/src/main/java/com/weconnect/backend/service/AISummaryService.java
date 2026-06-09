@@ -88,7 +88,17 @@ public class AISummaryService {
                     .body(Map.class);
 
             return extractText(response);
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            log.error("Gemini API HTTP error: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            if (e.getStatusCode().value() == 429) {
+                throw new RuntimeException("Gemini API đã đạt giới hạn request. Vui lòng thử lại sau.");
+            }
+            if (e.getStatusCode().value() == 400) {
+                throw new RuntimeException("Gemini API từ chối yêu cầu (có thể API key không hợp lệ).");
+            }
+            throw new RuntimeException("Gemini API lỗi " + e.getStatusCode().value() + ". Vui lòng thử lại sau.");
         } catch (RuntimeException e) {
+            log.error("Gemini summarize failed: {}", e.getMessage());
             throw e;
         } catch (Exception e) {
             log.error("Gemini API call failed: {}", e.getMessage());
@@ -99,11 +109,56 @@ public class AISummaryService {
     @SuppressWarnings("unchecked")
     private String extractText(Map<String, Object> response) {
         try {
+            if (response == null) {
+                throw new RuntimeException("Gemini API không trả về phản hồi.");
+            }
+
+            // Kiểm tra lỗi trả về trong body (một số trường hợp Gemini trả HTTP 200 nhưng có "error")
+            if (response.containsKey("error")) {
+                Map<String, Object> error = (Map<String, Object>) response.get("error");
+                String errorMsg = error != null ? String.valueOf(error.get("message")) : "Lỗi không xác định";
+                log.error("Gemini API returned error in body: {}", errorMsg);
+                throw new RuntimeException("Gemini API lỗi: " + errorMsg);
+            }
+
             List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.get("candidates");
+            if (candidates == null || candidates.isEmpty()) {
+                // Kiểm tra promptFeedback xem có bị chặn không
+                Map<String, Object> feedback = (Map<String, Object>) response.get("promptFeedback");
+                if (feedback != null && feedback.get("blockReason") != null) {
+                    log.error("Gemini blocked prompt, reason: {}", feedback.get("blockReason"));
+                    throw new RuntimeException("Nội dung bị từ chối bởi AI (blockReason: " + feedback.get("blockReason") + ").");
+                }
+                log.error("Gemini response has no candidates. Full response keys: {}", response.keySet());
+                throw new RuntimeException("Gemini AI không trả về kết quả. Vui lòng thử lại sau.");
+            }
+
             Map<String, Object> candidate = candidates.get(0);
+            String finishReason = (String) candidate.get("finishReason");
+
             Map<String, Object> contentObj = (Map<String, Object>) candidate.get("content");
+            if (contentObj == null) {
+                if ("SAFETY".equals(finishReason)) {
+                    throw new RuntimeException("Nội dung bị chặn bởi bộ lọc an toàn của AI.");
+                }
+                log.error("Gemini candidate content is null, finishReason={}", finishReason);
+                throw new RuntimeException("Gemini AI không trả về nội dung (finishReason: " + finishReason + ").");
+            }
+
             List<Map<String, Object>> parts = (List<Map<String, Object>>) contentObj.get("parts");
-            return (String) parts.get(0).get("text");
+            if (parts == null || parts.isEmpty()) {
+                throw new RuntimeException("Gemini AI trả về nội dung rỗng.");
+            }
+
+            for (Map<String, Object> part : parts) {
+                Boolean isThought = (Boolean) part.get("thought");
+                if (isThought != null && isThought) continue; // bỏ qua thinking text
+                String text = (String) part.get("text");
+                if (text != null && !text.isBlank()) return text;
+            }
+            throw new RuntimeException("Lỗi phân tích phản hồi từ Gemini AI.");
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Failed to extract Gemini response: {}", e.getMessage());
             throw new RuntimeException("Lỗi phân tích phản hồi từ Gemini AI.");

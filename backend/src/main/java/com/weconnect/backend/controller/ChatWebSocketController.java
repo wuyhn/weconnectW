@@ -39,8 +39,25 @@ public class ChatWebSocketController {
         String content = payload.get("content");
         if (content == null || content.trim().isEmpty()) return;
 
-        // Lưu vào DB thông qua ChatService đã có
-        ChatMessageResponse saved = chatService.sendMessage(roomId, senderId, content);
+        // Lưu vào DB thông qua ChatService đã có.
+        // ChatService.sendMessage() sẽ ném RuntimeException nếu Host bị khóa,
+        // phòng bị đóng, hoặc bất kỳ điều kiện vi phạm nào khác.
+        ChatMessageResponse saved;
+        try {
+            saved = chatService.sendMessage(roomId, senderId, content);
+        } catch (RuntimeException e) {
+            // Gửi lỗi 403 ngược về đúng sender (không broadcast cho cả phòng)
+            messagingTemplate.convertAndSendToUser(
+                    senderId.toString(),
+                    "/queue/errors",
+                    Map.of(
+                            "code", 403,
+                            "message", e.getMessage(),
+                            "roomId", roomId
+                    )
+            );
+            return;
+        }
 
         // Broadcast tới tất cả subscriber của phòng
         messagingTemplate.convertAndSend("/topic/chat/" + roomId, saved);

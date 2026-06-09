@@ -13,6 +13,7 @@ import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.models.ApiResponse;
+import com.example.weconnect.utils.InterestTextUtils;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -35,28 +36,50 @@ public class OnboardingActivity extends AppCompatActivity {
     private TextView tvSelectedCount;
     private FloatingActionButton fabNext;
 
-    // Categories with emoji + label
+    // 60 tag chính thức WeConnect — BẮT BUỘC đồng bộ với GeminiService.SYSTEM_TAGS ở Backend
     private final Map<String, String[]> categories = new LinkedHashMap<String, String[]>() {{
-        put("chipGroupSport", new String[]{
-                "⚽ Bóng đá", "🏀 Bóng rổ", "🏸 Cầu lông", "🏐 Bóng chuyền",
-                "🎾 Tennis", "🏊 Bơi lội", "🚴 Đạp xe", "🏃 Chạy bộ",
-                "🧘 Yoga", "🏋️ Gym"
+        // Nhóm 1: Thể thao (12 tags)
+        put("sport", new String[]{
+                "⚽ Đá bóng sân cỏ", "🏸 Đánh cầu lông", "🏀 Đánh bóng rổ", "🏐 Đánh bóng chuyền",
+                "🏃 Chạy bộ công viên", "🚴 Đạp xe đường phố", "🏊 Đi bơi hồ", "🎾 Đánh Pickleball",
+                "🛹 Trượt ván / Patin", "🧗 Leo núi nhân tạo", "🧘 Tập Yoga / Pilates", "🏋️ Tập Gym / Calisthenics"
         });
-        put("chipGroupEntertainment", new String[]{
-                "🎬 Phim ảnh", "🎵 Âm nhạc", "🎮 Game", "📚 Đọc sách",
-                "🎭 Kịch nghệ", "🎤 Karaoke", "🎲 Board game", "📸 Chụp ảnh"
+        // Nhóm 2: Giải trí (10 tags)
+        put("entertainment", new String[]{
+                "🎬 Xem phim rạp", "🎵 Đi nghe nhạc / Concert", "🎤 Đi hát Karaoke",
+                "🎮 Chơi Game (PC/Console)", "📱 Chơi Mobile Game / Liên Quân", "🎲 Chơi Board game / Ma soi",
+                "📸 Đi chụp ảnh / Check-in", "🎨 Vẽ tranh thư giãn", "💃 Học nhảy / Vũ đạo",
+                "🎭 Xem kịch / Xem Stand-up Comedy"
         });
-        put("chipGroupCreative", new String[]{
-                "🎨 Vẽ tranh", "✍️ Viết lách", "🧶 Thủ công", "🎸 Chơi nhạc cụ",
-                "💃 Nhảy múa", "🎥 Làm phim", "🖥️ Lập trình", "📐 Thiết kế"
+        // Nhóm 3: Học tập / Công nghệ (10 tags)
+        put("tech", new String[]{
+                "☕ Học nhóm / Chạy deadline", "📖 Đọc sách tại thư viện", "🌍 Luyện nói tiếng Anh",
+                "🎌 Học tiếng Nhật / Trung / Hàn", "💻 Lập trình dự án / Hackathon",
+                "📐 Thiết kế đồ họa / UI-UX", "📝 Ôn thi / Giải đề",
+                "💼 Thảo luận ý tưởng khởi nghiệp", "🔬 Làm thí nghiệm / Nghiên cứu",
+                "🤖 Lập trình AI / Học Data Science"
         });
-        put("chipGroupStudy", new String[]{
-                "🎓 Đại học", "📖 Tự học", "🌍 Ngoại ngữ", "💼 Kinh doanh",
-                "🔬 Khoa học", "📊 Data Science", "🤖 AI/ML", "📝 Ôn thi"
+        // Nhóm 4: Đời sống / Du lịch (10 tags)
+        put("lifestyle", new String[]{
+                "☕ Đi Cafe cà pháo", "🍜 Đi Foodtour / Ăn sập phố cổ", "🍽️ Food Tour",
+                "✈️ Đi du lịch xa / Phượt", "🏕️ Đi cắm trại / Camping", "🌿 Đi dạo công viên / Picnic",
+                "🧗 Leo núi tự nhiên / Trekking", "🐕 Đi offline giao lưu thú cưng",
+                "🎪 Làm tình nguyện / Từ thiện", "🛍️ Đi mua sắm / Shopping", "🎣 Đi câu cá thư giãn"
         });
-        put("chipGroupSocial", new String[]{
-                "☕ Cà phê", "🍜 Ẩm thực", "✈️ Du lịch", "🌿 Thiên nhiên",
-                "🐕 Thú cưng", "🎪 Tình nguyện", "💬 Giao lưu", "🏕️ Camping"
+        // Nhóm 5: Giao lưu / Hobby (10 tags)
+        put("social", new String[]{
+                "💬 Trò chuyện tâm sự / Hướng nội", "🍻 Nhậu nhẹt / Chill cuối tuần",
+                "🎸 Tập chơi nhạc cụ (Guitar/Piano)", "🧩 Xếp hình Lego / Giải Rubik",
+                "✍️ Viết lách / Viết Blog", "🎬 Quay Video / Làm Tiktok",
+                "🔮 Xem bài Tarot / Chiêm tinh", "🍳 Tụ tập nấu ăn / Làm bánh",
+                "🪴 Trồng cây / Làm vườn", "🪡 Thêu thùa / Làm đồ thủ công"
+        });
+        // Nhóm 6: Xu hướng & Kỹ năng (8 tags)
+        put("trend", new String[]{
+                "♟️ Đánh cờ vua / Cờ tướng", "🎤 Tập nói trước đám đông / Debate",
+                "💸 Học quản lý tài chính cá nhân", "🚗 Tập lái xe / Trải nghiệm xe",
+                "🎯 Chơi bắn cung / Phi tiêu", "🎳 Chơi Bowling",
+                "🎈 Tham gia lễ hội / Fandom", "🧩 Đi giải mật phòng (Escape Room)"
         });
     }};
 
@@ -91,7 +114,8 @@ public class OnboardingActivity extends AppCompatActivity {
                 R.id.chipGroupEntertainment,
                 R.id.chipGroupCreative,
                 R.id.chipGroupStudy,
-                R.id.chipGroupSocial
+                R.id.chipGroupSocial,
+                R.id.chipGroupTrend
         };
         String[] keys = categories.keySet().toArray(new String[0]);
 
@@ -101,8 +125,10 @@ public class OnboardingActivity extends AppCompatActivity {
             if (items == null) continue;
 
             for (String item : items) {
+                String label = InterestTextUtils.stripLeadingIcon(item);
                 Chip chip = new Chip(this);
-                chip.setText(item);
+                chip.setText(label);
+                chip.setTag(item);
                 chip.setCheckable(true);
                 chip.setClickable(true);
                 chip.setTextSize(14);
@@ -117,7 +143,8 @@ public class OnboardingActivity extends AppCompatActivity {
                 chip.setPadding(16, 8, 16, 8);
 
                 chip.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                    String tag = chip.getText().toString();
+                    Object rawTag = chip.getTag();
+                    String tag = rawTag != null ? rawTag.toString() : chip.getText().toString();
                     if (isChecked) {
                         if (selectedInterests.size() >= MAX_SELECTIONS) {
                             chip.setChecked(false);

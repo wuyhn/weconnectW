@@ -78,15 +78,6 @@ public class FakeSocialRepository {
         if (state.isSelfProfile() || state.isBlocked()) return;
         if (state.getFriendStatus() == FriendStatus.NONE) {
             state.setFriendStatus(FriendStatus.PENDING_SENT);
-            // Add notification
-            FakeNotificationRepository.getInstance().addNotification(
-                    new FakeNotificationRepository.NotificationItem(
-                            FakeNotificationRepository.NotificationType.FRIEND_REQUEST_SENT,
-                            "Bạn đã gửi lời mời kết bạn đến " + username,
-                            username,
-                            System.currentTimeMillis()
-                    )
-            );
         }
     }
 
@@ -94,14 +85,6 @@ public class FakeSocialRepository {
         SocialState state = getState(username);
         if (state.getFriendStatus() == FriendStatus.PENDING_RECEIVED) {
             state.setFriendStatus(FriendStatus.FRIEND);
-            FakeNotificationRepository.getInstance().addNotification(
-                    new FakeNotificationRepository.NotificationItem(
-                            FakeNotificationRepository.NotificationType.FRIEND_ACCEPTED,
-                            "Bạn và " + username + " đã trở thành bạn bè",
-                            username,
-                            System.currentTimeMillis()
-                    )
-            );
         }
     }
 

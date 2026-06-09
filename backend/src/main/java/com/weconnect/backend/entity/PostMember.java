@@ -17,7 +17,9 @@ public class PostMember {
     public enum Status {
         PENDING,
         APPROVED,
-        REJECTED
+        REJECTED,
+        // Tự động từ chối khi Host bị khóa trong lúc hoạt động đang diễn ra
+        REJECTED_BY_SYSTEM
     }
 
     @Id
@@ -29,6 +31,18 @@ public class PostMember {
 
     @Column(name = "user_id", nullable = false)
     private Long userId;
+
+    @Column(name = "join_reason", length = 500)
+    private String joinReason;
+
+    @Column(name = "requester_province", length = 100)
+    private String requesterProvince;
+
+    @Column(name = "activity_province", length = 100)
+    private String activityProvince;
+
+    @Column(name = "is_far_location")
+    private Boolean isFarLocation;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

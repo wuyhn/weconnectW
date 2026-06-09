@@ -12,8 +12,11 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.example.weconnect.R;
 import com.example.weconnect.activities.ConversationActivity;
-import com.example.weconnect.activities.NotificationsActivity;
+import com.example.weconnect.activities.ForceLogoutActivity;
+import com.example.weconnect.activities.MainActivity;
+import com.example.weconnect.activities.PendingListActivity;
 import com.example.weconnect.activities.ReportPenaltyDetailActivity;
+import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.models.ApiResponse;
@@ -52,18 +55,55 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
         }
 
         Map<String, String> data = remoteMessage.getData();
+
+        // Kịch bản 1 (Real-time Kick-out): kiểm tra action=FORCE_LOGOUT trước tiên.
+        // Backend gửi data-only FCM (không notification block) khi khóa tài khoản real-time.
+        // onMessageReceived() luôn được gọi cho data-only message kể cả khi app background.
+        String action = data.get("action");
+        if ("FORCE_LOGOUT".equals(action)) {
+            // Truyền cả lockUntil để ForceLogoutActivity hiển thị đúng ngày mở khóa
+            handleForceLogout(data.get("message"), data.get("lockUntil"));
+            return;
+        }
+
         String type = data.get("type");
         String relatedReportId = data.get("relatedReportId");
         String relatedRoomId = data.get("relatedRoomId");
+        String relatedPostId = data.get("relatedPostId");
+        String relatedUserId = data.get("relatedUserId");
+        String relatedUsername = data.get("relatedUsername");
 
-        if (("REPORT_PENALTY".equals(type) || "REPORT_CONFIRMED".equals(type))
+        if (("REPORT_PENALTY".equals(type) || "REPORT_CONFIRMED".equals(type) || "ADMIN_WARNING".equals(type))
                 && relatedReportId != null) {
             showNotificationWithReportDeeplink(title, body, relatedReportId);
         } else if ("CHAT_SUMMARY".equals(type) && relatedRoomId != null) {
             showNotificationWithChatDeeplink(title, body, relatedRoomId);
+        } else if ("JOIN_REQUEST".equals(type) && relatedPostId != null) {
+            showNotificationWithPendingListDeeplink(title, body, relatedPostId);
+        } else if (("FRIEND_ACCEPTED".equals(type) || "FRIEND_REQUEST_RECEIVED".equals(type)
+                || "STRANGER_REQUEST_ACCEPTED".equals(type))
+                && relatedUserId != null && relatedUsername != null) {
+            showNotificationWithUserDeeplink(title, body, relatedUserId, relatedUsername);
+        } else if (relatedPostId != null) {
+            // JOIN_APPROVED, ACTIVITY_CANCELLED, POST_EXPIRED, v.v.
+            boolean isJoined = "JOIN_APPROVED".equals(type);
+            showNotificationWithPostDeeplink(title, body, relatedPostId, isJoined);
         } else {
             showNotification(title, body);
         }
+    }
+
+    /**
+     * Kịch bản 1 (FCM fallback): Xử lý action=FORCE_LOGOUT khi app ở background.
+     * Start ForceLogoutActivity với message và lockUntil để hiển thị ngày mở khóa.
+     * FLAG_ACTIVITY_NEW_TASK bắt buộc vì gọi từ Service context.
+     */
+    private void handleForceLogout(String message, String lockUntil) {
+        Intent intent = new Intent(this, ForceLogoutActivity.class);
+        intent.putExtra("lock_message", message);
+        intent.putExtra("lock_until", lockUntil);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivity(intent);
     }
 
     private void showNotificationWithReportDeeplink(String title, String body, String reportIdStr) {
@@ -80,16 +120,7 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
                 this, requestCode, intent,
                 PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(pendingIntent);
-
-        NotificationManagerCompat manager = NotificationManagerCompat.from(this);
-        manager.notify(requestCode, builder.build());
+        buildAndShow(title, body, requestCode, pendingIntent);
     }
 
     private void showNotificationWithChatDeeplink(String title, String body, String roomIdStr) {
@@ -106,6 +137,82 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
                 this, requestCode, intent,
                 PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
 
+        buildAndShow(title, body, requestCode, pendingIntent);
+    }
+
+    private void showNotificationWithPendingListDeeplink(String title, String body, String postIdStr) {
+        createNotificationChannel();
+        long postId = -1;
+        try { postId = Long.parseLong(postIdStr); } catch (Exception ignored) {}
+
+        Intent intent = new Intent(this, PendingListActivity.class);
+        intent.putExtra("post_id", postId);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+
+        buildAndShow(title, body, requestCode, pendingIntent);
+    }
+
+    private void showNotificationWithUserDeeplink(String title, String body,
+            String userIdStr, String username) {
+        createNotificationChannel();
+        long userId = -1;
+        try { userId = Long.parseLong(userIdStr); } catch (Exception ignored) {}
+
+        Intent intent = new Intent(this, UserProfileActivity.class);
+        intent.putExtra("username", username);
+        intent.putExtra("view_other", true);
+        intent.putExtra("user_id", userId);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+
+        buildAndShow(title, body, requestCode, pendingIntent);
+    }
+
+    private void showNotificationWithPostDeeplink(String title, String body,
+            String postIdStr, boolean isJoined) {
+        createNotificationChannel();
+        long postId = -1;
+        try { postId = Long.parseLong(postIdStr); } catch (Exception ignored) {}
+
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.putExtra("navigate_post_id", postId);
+        intent.putExtra("navigate_is_joined", isJoined);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        buildAndShow(title, body, requestCode, pendingIntent);
+    }
+
+    private void showNotification(String title, String body) {
+        createNotificationChannel();
+
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.putExtra("open_tab", "notifications");
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+        int requestCode = (int) (System.currentTimeMillis() & 0xffff);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, requestCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        buildAndShow(title, body, requestCode, pendingIntent);
+    }
+
+    private void buildAndShow(String title, String body, int notificationId,
+            PendingIntent pendingIntent) {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(title)
@@ -115,7 +222,7 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
                 .setContentIntent(pendingIntent);
 
         NotificationManagerCompat manager = NotificationManagerCompat.from(this);
-        manager.notify(requestCode, builder.build());
+        manager.notify(notificationId, builder.build());
     }
 
     private void sendTokenToBackend(String fcmToken) {
@@ -137,27 +244,6 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
                     public void onFailure(@NonNull Call<ApiResponse<Void>> call,
                                           @NonNull Throwable t) {}
                 });
-    }
-
-    private void showNotification(String title, String body) {
-        createNotificationChannel();
-
-        Intent intent = new Intent(this, NotificationsActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, intent,
-                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setAutoCancel(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(pendingIntent);
-
-        NotificationManagerCompat manager = NotificationManagerCompat.from(this);
-        manager.notify((int) System.currentTimeMillis(), builder.build());
     }
 
     private void createNotificationChannel() {

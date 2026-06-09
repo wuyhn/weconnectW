@@ -24,6 +24,7 @@ import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.SearchResultItem;
 import com.example.weconnect.activities.PostDetailActivity;
+import com.example.weconnect.utils.JoinRequestHelper;
 import java.util.ArrayList;
 import java.util.List;
 import retrofit2.Call;
@@ -44,6 +45,11 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         public void submitList(List<SearchResultItem> newItems) {
             items.clear();
             items.addAll(newItems);
+            notifyDataSetChanged();
+        }
+
+        public void clearData() {
+            items.clear();
             notifyDataSetChanged();
         }
 
@@ -162,43 +168,41 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                     ph.btnJoin.setText("Tham gia");
                     ph.btnJoin.setEnabled(true);
                     ph.btnJoin.setAlpha(1.0f);
-                    ph.btnJoin.setOnClickListener(v -> {
-                        ph.btnJoin.setEnabled(false);
-                        ph.btnJoin.setAlpha(0.6f);
-                        ph.btnJoin.setText("⏳ Đang gửi...");
-                        long postId;
-                        try { postId = Long.parseLong(post.getId()); }
-                        catch (Exception e) { return; }
-                        RetrofitClient.getClient().create(PostApiService.class)
-                                .joinPost(postId).enqueue(new Callback<ApiResponse<JoinGroupResponse>>() {
-                                    @Override
-                                    public void onResponse(Call<ApiResponse<JoinGroupResponse>> call,
-                                                           Response<ApiResponse<JoinGroupResponse>> response) {
-                                        if (response.isSuccessful()) {
-                                            post.setPendingApproval(true);
-                                            ph.btnJoin.setText("⏳ Đang chờ duyệt");
-                                            JoinGroupResponse result = response.body() != null ? response.body().getResult() : null;
-                                            boolean learnedNewTag = result != null && result.isNewTagSuggested();
-                                            String toastMessage = learnedNewTag
-                                                    ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
-                                                    : "Tham gia nhóm thành công!";
-                                            Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show();
-                                        } else {
-                                            ph.btnJoin.setEnabled(true);
-                                            ph.btnJoin.setAlpha(1.0f);
-                                            ph.btnJoin.setText("Tham gia");
-                                            Toast.makeText(context, "Không thể tham gia. Thử lại sau.", Toast.LENGTH_SHORT).show();
-                                        }
-                                    }
-                                    @Override
-                                    public void onFailure(Call<ApiResponse<JoinGroupResponse>> call, Throwable t) {
+                    ph.btnJoin.setOnClickListener(v ->
+                            JoinRequestHelper.startJoinFlow(context, post, new JoinRequestHelper.JoinCallback() {
+                                @Override
+                                public void onSending() {
+                                    ph.btnJoin.setEnabled(false);
+                                    ph.btnJoin.setAlpha(0.6f);
+                                    ph.btnJoin.setText("⏳ Đang gửi...");
+                                }
+
+                                @Override
+                                public void onSuccess(JoinGroupResponse result) {
+                                    post.setPendingApproval(true);
+                                    ph.btnJoin.setText("⏳ Đang chờ duyệt");
+                                    ph.btnJoin.setEnabled(false);
+                                    ph.btnJoin.setAlpha(0.6f);
+                                    ph.btnJoin.setOnClickListener(null);
+                                    JoinRequestHelper.showJoinToast(context, result);
+                                }
+
+                                @Override
+                                public void onError(String errorMessage) {
+                                    if (errorMessage != null && errorMessage.contains("đủ thành viên")) {
+                                        post.setMemberCount(post.getMaxMembers());
+                                        ph.btnJoin.setText("Đã đủ thành viên");
+                                        ph.btnJoin.setEnabled(false);
+                                        ph.btnJoin.setAlpha(0.6f);
+                                        ph.btnJoin.setOnClickListener(null);
+                                    } else {
                                         ph.btnJoin.setEnabled(true);
                                         ph.btnJoin.setAlpha(1.0f);
                                         ph.btnJoin.setText("Tham gia");
-                                        Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
                                     }
-                                });
-                    });
+                                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show();
+                                }
+                            }));
                 }
             }
 

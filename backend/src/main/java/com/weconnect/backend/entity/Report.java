@@ -57,7 +57,7 @@ public class Report {
     @Column(name = "penalty_point", columnDefinition = "INT DEFAULT 0")
     private Integer penaltyPoint = 0;
 
-    @Column(name = "admin_action", length = 30)
+    @Column(name = "admin_action", length = 500)
     private String adminAction;
 
     @Column(name = "admin_viewed", columnDefinition = "BOOLEAN DEFAULT false")

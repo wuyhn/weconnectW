@@ -100,6 +100,14 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         return messages;
     }
 
+    public int countMessagesBySender(long senderId) {
+        int count = 0;
+        for (ChatMessage msg : messages) {
+            if (!msg.isSystemMessage() && msg.getSenderId() == senderId) count++;
+        }
+        return count;
+    }
+
     @Override
     public int getItemCount() {
         return messages.size() + (showFriendCard ? 1 : 0);

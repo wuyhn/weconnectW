@@ -20,6 +20,7 @@ import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
+import com.example.weconnect.utils.InterestTextUtils;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -123,6 +124,7 @@ public class PendingListActivity extends AppCompatActivity
     private void updateTitle(PostResponse post) {
         String tag = post.getInterestTag();
         if (tag == null) tag = "";
+        tag = InterestTextUtils.stripLeadingIcon(tag);
 
         String startDate = formatDate(post.getStartTime());
         String endDate = formatDate(post.getEndTime());
@@ -149,6 +151,7 @@ public class PendingListActivity extends AppCompatActivity
         if (post == null) return;
 
         String tag = post.getInterestTag();
+        tag = InterestTextUtils.stripLeadingIcon(tag);
         tvCardActivityTag.setText(tag != null && !tag.isEmpty() ? tag : "Hoạt động");
 
         String startDate = formatDate(post.getStartTime());
@@ -265,49 +268,8 @@ public class PendingListActivity extends AppCompatActivity
             showEmpty();
             return;
         }
-
-        com.example.weconnect.api.UserApiService userApi =
-                RetrofitClient.getClient().create(com.example.weconnect.api.UserApiService.class);
-
+        // Server đã trả về enriched data (userName, avatarUrl, reputation, location, joinReason...)
         displayPendingList();
-
-        for (int i = 0; i < pendingMembers.size(); i++) {
-            Map<String, Object> member = pendingMembers.get(i);
-            long userId = member.get("userId") != null
-                    ? ((Number) member.get("userId")).longValue() : 0;
-            if (userId <= 0) continue;
-
-            int index = i;
-            userApi.getUserProfile(userId).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
-                @Override
-                public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
-                                       Response<ApiResponse<Map<String, Object>>> response) {
-                    if (response.isSuccessful() && response.body() != null
-                            && response.body().getResult() != null) {
-                        Map<String, Object> profile = response.body().getResult();
-                        if (index < pendingMembers.size()) {
-                            Map<String, Object> m = pendingMembers.get(index);
-                            m.put("userName", profile.get("fullName") != null
-                                    ? profile.get("fullName").toString() : "Người dùng #" + userId);
-                            m.put("avatarUrl", profile.get("avatarUrl") != null
-                                    ? profile.get("avatarUrl").toString() : "");
-                            m.put("reputationScore", profile.get("reputationScore") != null
-                                    ? ((Number) profile.get("reputationScore")).doubleValue() : 100.0);
-                            m.put("averageRating", profile.get("averageRating") != null
-                                    ? ((Number) profile.get("averageRating")).floatValue() : 0f);
-                            m.put("totalReviewCount", profile.get("totalReviewCount") != null
-                                    ? ((Number) profile.get("totalReviewCount")).intValue() : 0);
-                            m.put("isActivityJoinLocked",
-                                    Boolean.TRUE.equals(profile.get("isActivityJoinLocked")));
-                            if (adapter != null) adapter.notifyItemChanged(index);
-                        }
-                    }
-                }
-
-                @Override
-                public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {}
-            });
-        }
     }
 
     private void displayPendingList() {

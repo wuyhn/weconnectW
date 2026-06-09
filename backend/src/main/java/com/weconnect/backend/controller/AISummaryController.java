@@ -67,8 +67,8 @@ public class AISummaryController {
                     .code(1021).message("Bạn không phải thành viên phòng chat này.").build());
         }
 
-        // Lấy 50 tin nhắn gần nhất (theo thứ tự từ cũ → mới)
-        List<ChatMessage> recent = chatMessageRepository.findTop50ByRoomIdOrderByCreatedAtDesc(roomId);
+        // Lấy 50 tin nhắn thực gần nhất (loại trừ SUMMARY/SYSTEM), sắp xếp cũ → mới
+        List<ChatMessage> recent = chatMessageRepository.findTop50RealMessagesByRoomId(roomId);
         List<ChatMessage> ordered = new ArrayList<>(recent);
         ordered.sort((a, b) -> {
             if (a.getCreatedAt() == null || b.getCreatedAt() == null) return 0;

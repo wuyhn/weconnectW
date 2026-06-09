@@ -32,12 +32,17 @@ public class WebSocketManager {
     private Disposable avatarUpdateSubscription;
     private Disposable roomEventsSubscription;
     private Disposable notificationSubscription;
+    private Disposable accountStatusSubscription;
     private Consumer<String> chatListCallback;
     private Consumer<String> feedCallback;
     private Consumer<String> avatarUpdateCallback;
     private Consumer<String> roomEventsCallback;
     private Consumer<String> notificationCallback;
+    private Consumer<String> accountStatusCallback;
     private boolean connected = false;
+    // Callback được gọi ngay khi STOMP connection OPENED thành công.
+    // MainActivity đặt callback này để tự động đăng ký subscription dù connect() là async.
+    private Runnable onConnectedCallback;
 
     private WebSocketManager() {}
 
@@ -86,6 +91,11 @@ public class WebSocketManager {
                         case OPENED:
                             connected = true;
                             Log.d(TAG, "WebSocket connected");
+                            // Gọi callback ngay khi kết nối mở — đảm bảo các subscription
+                            // (đặc biệt account-status) được đăng ký dù connect() là async.
+                            if (onConnectedCallback != null) {
+                                onConnectedCallback.run();
+                            }
                             break;
                         case CLOSED:
                             connected = false;
@@ -321,6 +331,50 @@ public class WebSocketManager {
         }
     }
 
+    /**
+     * Subscribe nhận sự kiện trạng thái tài khoản (ACCOUNT_LOCKED) từ backend real-time.
+     * Backend dùng convertAndSendToUser(userId, "/queue/account-status", payload).
+     * Payload JSON: {"action": "ACCOUNT_LOCKED", "message": "..."}
+     *
+     * Dùng ở MainActivity để phát hiện ngay khi tài khoản bị khóa trong lúc đang dùng app.
+     */
+    public void subscribeToAccountStatus(Consumer<String> onEvent) {
+        if (stompClient == null) return;
+        accountStatusCallback = onEvent;
+
+        if (accountStatusSubscription != null && !accountStatusSubscription.isDisposed()) {
+            accountStatusSubscription.dispose();
+        }
+
+        accountStatusSubscription = stompClient.topic("/user/queue/account-status")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (accountStatusCallback != null) {
+                        accountStatusCallback.accept(frame.getPayload());
+                    }
+                }, error -> Log.e(TAG, "AccountStatus subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(accountStatusSubscription);
+    }
+
+    public void unsubscribeFromAccountStatus() {
+        accountStatusCallback = null;
+        if (accountStatusSubscription != null && !accountStatusSubscription.isDisposed()) {
+            accountStatusSubscription.dispose();
+            accountStatusSubscription = null;
+        }
+    }
+
+    /**
+     * Đặt callback được gọi ngay khi WebSocket OPENED thành công.
+     * Dùng ở MainActivity để subscribe các topic ngay sau khi kết nối mở,
+     * tránh race condition khi subscribeToRealtimeEvents() chạy trước OPENED event.
+     */
+    public void setOnConnectedCallback(Runnable callback) {
+        this.onConnectedCallback = callback;
+    }
+
     public boolean isConnected() {
         return connected && stompClient != null;
     }
@@ -335,6 +389,8 @@ public class WebSocketManager {
         avatarUpdateCallback = null;
         roomEventsCallback = null;
         notificationCallback = null;
+        accountStatusCallback = null;
+        onConnectedCallback = null;
         roomSubscriptions.clear();
         if (compositeDisposable != null && !compositeDisposable.isDisposed()) {
             compositeDisposable.dispose();

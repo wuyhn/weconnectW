@@ -17,6 +17,7 @@ import com.example.weconnect.R;
 import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.utils.JoinRequestDetailBottomSheet;
 import com.example.weconnect.models.ApiResponse;
 import com.google.android.material.button.MaterialButton;
 
@@ -72,11 +73,18 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                 ? member.get("userName").toString() : "Người dùng #" + userId;
         String status = member.get("status") != null
                 ? member.get("status").toString() : "PENDING";
+        boolean isFarLocation = Boolean.TRUE.equals(member.get("isFarLocation"));
+        String joinReason = member.get("joinReason") != null
+                ? member.get("joinReason").toString() : null;
+        String requesterProvince = member.get("requesterProvince") != null
+                ? member.get("requesterProvince").toString() : null;
+        String activityProvince = member.get("activityProvince") != null
+                ? member.get("activityProvince").toString() : null;
 
         holder.tvName.setText(userName);
         holder.tvInfo.setText("Đang chờ duyệt");
 
-        // Load avatar from server URL with Glide
+        // Avatar
         String avatarUrl = member.get("avatarUrl") != null
                 ? member.get("avatarUrl").toString() : null;
         if (avatarUrl != null && !avatarUrl.isEmpty()) {
@@ -91,6 +99,36 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                     .into(holder.ivAvatar);
         } else {
             holder.ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        }
+
+        // Far location badge
+        if (isFarLocation) {
+            holder.layoutFarLocationBadge.setVisibility(View.VISIBLE);
+            if (hasText(requesterProvince) && hasText(activityProvince)) {
+                holder.tvLocationInfo.setText(
+                        "Bạn: " + requesterProvince + "  ·  Hoạt động: " + activityProvince);
+                holder.tvLocationInfo.setVisibility(View.VISIBLE);
+            } else {
+                holder.tvLocationInfo.setVisibility(View.GONE);
+            }
+        } else {
+            holder.layoutFarLocationBadge.setVisibility(View.GONE);
+        }
+
+        // Join reason preview (tối đa 2 dòng)
+        if (hasText(joinReason) && !"Cùng địa phương".equalsIgnoreCase(joinReason)) {
+            holder.tvJoinReason.setVisibility(View.VISIBLE);
+            holder.tvJoinReason.setText("Lý do: " + joinReason);
+        } else {
+            holder.tvJoinReason.setVisibility(View.GONE);
+        }
+
+        // Nút Chi tiết: chỉ hiện khi có dữ liệu đáng xem
+        if (isFarLocation || hasText(joinReason)) {
+            holder.tvDetail.setVisibility(View.VISIBLE);
+            holder.tvDetail.setOnClickListener(v -> openDetailBottomSheet(member, userId, userName));
+        } else {
+            holder.tvDetail.setVisibility(View.GONE);
         }
 
         if ("PENDING".equals(status)) {
@@ -109,22 +147,51 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             holder.tvActioned.setText("APPROVED".equals(status) ? "✅ Đã chấp nhận" : "❌ Đã từ chối");
         }
 
-        // Click avatar/name to view profile
-        holder.ivAvatar.setOnClickListener(v -> {
-            Intent intent = new Intent(context, UserProfileActivity.class);
-            intent.putExtra("username", userName);
-            intent.putExtra("user_id", userId);
-            intent.putExtra("view_other", true);
-            context.startActivity(intent);
-        });
+        // Click avatar/name → profile
+        holder.ivAvatar.setOnClickListener(v -> openUserProfile(userId, userName));
         final String fUserName = userName;
-        holder.tvName.setOnClickListener(v -> {
-            Intent intent = new Intent(context, UserProfileActivity.class);
-            intent.putExtra("username", fUserName);
-            intent.putExtra("user_id", userId);
-            intent.putExtra("view_other", true);
-            context.startActivity(intent);
-        });
+        holder.tvName.setOnClickListener(v -> openUserProfile(userId, fUserName));
+    }
+
+    private void openUserProfile(long userId, String userName) {
+        Intent intent = new Intent(context, UserProfileActivity.class);
+        intent.putExtra("username", userName);
+        intent.putExtra("user_id", userId);
+        intent.putExtra("view_other", true);
+        context.startActivity(intent);
+    }
+
+    private void openDetailBottomSheet(Map<String, Object> member, long userId, String userName) {
+        JoinRequestDetailBottomSheet.show(context, member, postId, memberCount, maxMembers,
+                new JoinRequestDetailBottomSheet.OnActionListener() {
+                    @Override
+                    public void onApprove() {
+                        int pos = pendingMembers.indexOf(member);
+                        if (pos >= 0) {
+                            ViewHolder vh = getViewHolderAt(pos);
+                            approveMember(member, userId, vh);
+                        }
+                    }
+
+                    @Override
+                    public void onReject() {
+                        int pos = pendingMembers.indexOf(member);
+                        if (pos >= 0) {
+                            ViewHolder vh = getViewHolderAt(pos);
+                            rejectMember(userId, vh);
+                        }
+                    }
+                });
+    }
+
+    private ViewHolder getViewHolderAt(int pos) {
+        RecyclerView rv = null;
+        if (context instanceof androidx.fragment.app.FragmentActivity) {
+            rv = ((androidx.fragment.app.FragmentActivity) context).findViewById(R.id.rvPendingRequests);
+        }
+        if (rv == null) return null;
+        RecyclerView.ViewHolder vh = rv.findViewHolderForAdapterPosition(pos);
+        return vh instanceof ViewHolder ? (ViewHolder) vh : null;
     }
 
     private void approveMember(Map<String, Object> member, long userId, ViewHolder holder) {
@@ -150,31 +217,62 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         int totalReviewCount = member.get("totalReviewCount") != null
                 ? ((Number) member.get("totalReviewCount")).intValue() : 0;
 
-        // Reputation score is independent from review count. A user with 0 reviews can still have
-        // a low score because of approved reports/violations, so do not bypass the warning here.
         boolean hasEnoughReviews = totalReviewCount >= 3;
         boolean isHighRisk = reputationScore < 30
                 || (hasEnoughReviews && averageRating < 2.0f);
         boolean isWarning = !isHighRisk && (reputationScore < 50
                 || (hasEnoughReviews && averageRating < 3.0f));
 
+        boolean isFarLocation = Boolean.TRUE.equals(member.get("isFarLocation"));
+
         if (isHighRisk) {
             new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
                     .setTitle("Người này có mức uy tín rất thấp")
                     .setMessage("Người dùng này có mức uy tín rất thấp hoặc nhiều đánh giá không tốt từ các hoạt động trước đó. Bạn có chắc chắn muốn cho người này tham gia không?")
                     .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) -> doApproveMember(userId, holder))
+                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) ->
+                            checkFarLocationThenApprove(member, userId, holder, isFarLocation))
                     .show();
         } else if (isWarning) {
             new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
                     .setTitle("Người này có mức uy tín thấp")
                     .setMessage("Người dùng này có điểm uy tín hoặc trung bình đánh giá thấp. Bạn có chắc chắn muốn cho người này tham gia hoạt động không?")
                     .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) -> doApproveMember(userId, holder))
+                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) ->
+                            checkFarLocationThenApprove(member, userId, holder, isFarLocation))
                     .show();
         } else {
-            doApproveMember(userId, holder);
+            checkFarLocationThenApprove(member, userId, holder, isFarLocation);
         }
+    }
+
+    private void checkFarLocationThenApprove(Map<String, Object> member, long userId,
+                                              ViewHolder holder, boolean isFarLocation) {
+        if (!isFarLocation) {
+            doApproveMember(userId, holder);
+            return;
+        }
+
+        String requesterProvince = member.get("requesterProvince") != null
+                ? member.get("requesterProvince").toString() : "nơi khác";
+        String activityProvince = member.get("activityProvince") != null
+                ? member.get("activityProvince").toString() : "địa điểm tổ chức";
+        String joinReason = member.get("joinReason") != null
+                ? member.get("joinReason").toString() : "";
+
+        String message = "Người dùng này ở " + requesterProvince
+                + ", trong khi hoạt động tổ chức tại " + activityProvince
+                + ". Bạn nên chắc chắn rằng người này có thể tham gia đúng địa điểm.";
+        if (hasText(joinReason) && !"Cùng địa phương".equalsIgnoreCase(joinReason)) {
+            message += "\n\nLý do: " + joinReason;
+        }
+
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
+                .setTitle("Cân nhắc trước khi duyệt")
+                .setMessage(message)
+                .setNegativeButton("Hủy", null)
+                .setPositiveButton("Vẫn duyệt", (dialog, which) -> doApproveMember(userId, holder))
+                .show();
     }
 
     private void doApproveMember(long userId, ViewHolder holder) {
@@ -185,8 +283,8 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             @Override
             public void onResponse(Call<ApiResponse<Void>> call, Response<ApiResponse<Void>> response) {
                 if (response.isSuccessful()) {
-                    int pos = holder.getAdapterPosition();
-                    if (listener != null && pos != RecyclerView.NO_ID) {
+                    int pos = holder != null ? holder.getAdapterPosition() : RecyclerView.NO_POSITION;
+                    if (listener != null && pos != RecyclerView.NO_POSITION) {
                         listener.onApproved(pos);
                     }
                 } else {
@@ -222,8 +320,8 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                         public void onResponse(Call<ApiResponse<Void>> call,
                                                Response<ApiResponse<Void>> response) {
                             if (response.isSuccessful()) {
-                                int pos = holder.getAdapterPosition();
-                                if (listener != null && pos != RecyclerView.NO_ID) {
+                                int pos = holder != null ? holder.getAdapterPosition() : RecyclerView.NO_POSITION;
+                                if (listener != null && pos != RecyclerView.NO_POSITION) {
                                     listener.onRejected(pos);
                                 }
                             } else {
@@ -241,6 +339,10 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                 .show();
     }
 
+    private boolean hasText(String s) {
+        return s != null && !s.trim().isEmpty();
+    }
+
     @Override
     public int getItemCount() {
         return pendingMembers.size();
@@ -248,8 +350,8 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
 
     static class ViewHolder extends RecyclerView.ViewHolder {
         ImageView ivAvatar;
-        TextView tvName, tvInfo, tvActioned;
-        LinearLayout layoutActions;
+        TextView tvName, tvInfo, tvActioned, tvDetail, tvLocationInfo, tvJoinReason;
+        LinearLayout layoutActions, layoutFarLocationBadge;
         MaterialButton btnAccept, btnReject;
 
         ViewHolder(@NonNull View itemView) {
@@ -258,7 +360,11 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             tvName = itemView.findViewById(R.id.tvPendingName);
             tvInfo = itemView.findViewById(R.id.tvPendingInfo);
             tvActioned = itemView.findViewById(R.id.tvPendingActioned);
+            tvDetail = itemView.findViewById(R.id.tvPendingDetail);
+            tvLocationInfo = itemView.findViewById(R.id.tvPendingLocationInfo);
+            tvJoinReason = itemView.findViewById(R.id.tvPendingJoinReason);
             layoutActions = itemView.findViewById(R.id.layoutPendingActions);
+            layoutFarLocationBadge = itemView.findViewById(R.id.layoutFarLocationBadge);
             btnAccept = itemView.findViewById(R.id.btnPendingAccept);
             btnReject = itemView.findViewById(R.id.btnPendingReject);
         }

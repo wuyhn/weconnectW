@@ -24,7 +24,10 @@ import com.example.weconnect.activities.ParticipantsActivity;
 import com.example.weconnect.activities.PostDetailActivity;
 import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.data.FakePostRepository;
+import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
+import com.example.weconnect.utils.InterestTextUtils;
+import com.example.weconnect.utils.JoinRequestHelper;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -37,6 +40,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     private final List<Post> postList;
     private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("dd/MM", Locale.getDefault());
     private final String currentUsername;
+    private final long currentUserId;
     private java.util.Set<String> viewerInterests;
     private boolean isArchive = false;
 
@@ -44,6 +48,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         this.context = context;
         this.postList = postList;
         this.currentUsername = FakePostRepository.getInstance().getCurrentUsername();
+        this.currentUserId = com.example.weconnect.api.RetrofitClient.getUserId(context);
     }
 
     public PostAdapter(Context context, List<Post> postList, boolean isArchive) {
@@ -144,8 +149,9 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         }
 
         if (post.getInterestTag() != null && !post.getInterestTag().isEmpty()) {
+            String displayTag = InterestTextUtils.stripLeadingIcon(post.getInterestTag());
             holder.tvTag.setVisibility(View.VISIBLE);
-            holder.tvTag.setText(post.getInterestTag());
+            holder.tvTag.setText(displayTag);
         } else {
             holder.tvTag.setVisibility(View.GONE);
         }
@@ -160,38 +166,21 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         // Time Range
         bindTimeRange(holder, post);
 
-        // Expiration: tính từ startTime → endTime thực tế
-        long startMs = post.getStartTimeMillis();
-        long endMs = post.getEndTimeMillis();
-        if (startMs > 0 && endMs > 0 && endMs > startMs) {
-            holder.tvExpirationHours.setVisibility(View.VISIBLE);
-            long durationMinutes = (endMs - startMs) / (60L * 1000L);
-            long dHours = durationMinutes / 60;
-            long dMins = durationMinutes % 60;
-            if (dHours >= 24 && dHours % 24 == 0) {
-                holder.tvExpirationHours.setText("⏳ Thời hạn: " + (dHours / 24) + " ngày (" + dHours + " giờ)");
-            } else if (dHours > 0 && dMins > 0) {
-                holder.tvExpirationHours.setText("⏳ Thời hạn: " + dHours + " giờ " + dMins + " phút");
-            } else if (dHours > 0) {
-                holder.tvExpirationHours.setText("⏳ Thời hạn: " + dHours + " giờ");
-            } else {
-                holder.tvExpirationHours.setText("⏳ Thời hạn: " + dMins + " phút");
-            }
-        } else if (post.getExpirationHours() > 0) {
-            holder.tvExpirationHours.setVisibility(View.VISIBLE);
-            int hours = post.getExpirationHours();
-            holder.tvExpirationHours.setText("⏳ Thời hạn: " + hours + " giờ");
-        } else {
-            holder.tvExpirationHours.setVisibility(View.GONE);
-        }
+        // Ẩn tvExpirationHours hoàn toàn:
+        // Thông tin lịch hoạt động đã hiển thị đủ ở dòng "Ngày" + "Mỗi ngày / Kết thúc".
+        // Badge "Còn X" đã đảm nhận vai trò deadline. "Thời lượng" thừa và gây nhầm lẫn.
+        holder.tvExpirationHours.setVisibility(View.GONE);
 
         // Post menu (⋯)
         holder.ivPostMenu.setOnClickListener(v -> showPostMenu(post, position));
 
-        // Expired state
-        if (post.isExpired() || post.isArchived()) {
+        // Expired / archived / cancelled state
+        if (post.isExpired() || post.isArchived() || post.isCancelled()) {
             holder.layoutActiveButtons.setVisibility(View.GONE);
             holder.tvExpiredLabel.setVisibility(View.VISIBLE);
+            if (post.isCancelled()) {
+                holder.tvExpiredLabel.setText("Hoạt động đã bị hủy");
+            }
         } else {
             holder.layoutActiveButtons.setVisibility(View.VISIBLE);
             holder.tvExpiredLabel.setVisibility(View.GONE);
@@ -212,7 +201,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     }
 
     private void showPostMenu(Post post, int position) {
-        boolean isOwnPost = currentUsername.equalsIgnoreCase(post.getUsername());
+        boolean isOwnPost = currentUserId > 0 && post.getAuthorId() == currentUserId;
 
         if (isOwnPost) {
             showOwnPostMenu(post, position);
@@ -345,6 +334,10 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         Toast.makeText(context, "Đã ẩn bài viết", Toast.LENGTH_SHORT).show();
     }
 
+    private boolean isOtherReportReason(String reason) {
+        return "Khác".equalsIgnoreCase(reason) || "Lý do khác".equalsIgnoreCase(reason);
+    }
+
     private void showReportDialog(Post post, int position) {
         com.google.android.material.bottomsheet.BottomSheetDialog sheet =
                 new com.google.android.material.bottomsheet.BottomSheetDialog(context);
@@ -360,6 +353,8 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         };
         int[] selectedIndex = { -1 };
         TextView[] reasonRows = new TextView[reasons.length];
+        final LinearLayout[] customReasonGroupRef = new LinearLayout[1];
+        final EditText[] customReasonInputRef = new EditText[1];
 
         LinearLayout root = buildIosRoot();
 
@@ -387,6 +382,14 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 }
                 selectedIndex[0] = idx;
                 tv.setTextColor(0xFF007AFF);
+                boolean isOther = isOtherReportReason(reasons[idx]);
+                if (customReasonGroupRef[0] != null) {
+                    customReasonGroupRef[0].setVisibility(isOther ? View.VISIBLE : View.GONE);
+                }
+                if (!isOther && customReasonInputRef[0] != null) {
+                    customReasonInputRef[0].setText("");
+                    customReasonInputRef[0].setError(null);
+                }
             });
             reasonRows[i] = tv;
             group1.addView(tv, matchW());
@@ -394,10 +397,14 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
         root.addView(group1, matchW());
         addGroupGap(root);
 
-        // Group 2: description EditText (no border)
+        // Group 2: field nhập lý do khác, chỉ hiện khi chọn "Khác"
         LinearLayout group2 = buildIosGroup();
+        group2.setVisibility(View.GONE);
+        customReasonGroupRef[0] = group2;
+        addIosHeader(group2, "Nhập lý do khác");
         EditText etCustomReason = new EditText(context);
-        etCustomReason.setHint("Mô tả chi tiết (không bắt buộc)");
+        customReasonInputRef[0] = etCustomReason;
+        etCustomReason.setHint("Nhập lý do khác...");
         etCustomReason.setMinLines(2);
         etCustomReason.setPadding(dpPx(20), dpPx(14), dpPx(20), dpPx(14));
         etCustomReason.setBackground(null);
@@ -417,10 +424,15 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 Toast.makeText(context, "Vui lòng chọn lý do báo cáo", Toast.LENGTH_SHORT).show();
                 return;
             }
-            sheet.dismiss();
 
             String selectedReason = reasons[selectedIndex[0]];
             String description = etCustomReason.getText().toString().trim();
+            if (isOtherReportReason(selectedReason) && description.isEmpty()) {
+                Toast.makeText(context, "Vui lòng nhập lý do khác", Toast.LENGTH_SHORT).show();
+                etCustomReason.setError("Vui lòng nhập lý do khác");
+                return;
+            }
+            sheet.dismiss();
             long postId = 0;
             try {
                 postId = Long.parseLong(post.getId());
@@ -519,38 +531,51 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
             return;
         }
 
-        // Countdown badge based on post expiry
+        // Badge đếm ngược ĐỘNG: tính từ endTimeMillis đến hiện tại
+        // Hiển thị với mọi khoảng thời gian (không còn giới hạn ≤24h)
         if (end > 0) {
-            long remaining = end - System.currentTimeMillis();
-            if (remaining > 0 && remaining <= 24L * 60L * 60L * 1000L) {
-                holder.tvCountdown.setVisibility(View.VISIBLE);
-                holder.tvCountdown.setText("⏰ " + formatCountdown(remaining));
-            } else if (remaining <= 0) {
-                holder.tvCountdown.setVisibility(View.VISIBLE);
-                holder.tvCountdown.setText("Hết hạn");
+            long remainingMs = end - System.currentTimeMillis();
+            holder.tvCountdown.setVisibility(View.VISIBLE);
+            if (remainingMs <= 0) {
+                // Hoạt động đã kết thúc
+                holder.tvCountdown.setText("⏳ Đã kết thúc");
             } else {
-                holder.tvCountdown.setVisibility(View.GONE);
+                // Hiển thị thời gian còn lại theo đơn vị phù hợp nhất
+                holder.tvCountdown.setText("⏳ " + formatCountdown(remainingMs));
             }
         } else {
             holder.tvCountdown.setVisibility(View.GONE);
         }
     }
 
+    /**
+     * Định dạng thời gian còn lại thành chuỗi dễ đọc.
+     * Ưu tiên đơn vị lớn nhất: ngày → giờ → phút.
+     */
     private String formatCountdown(long millis) {
-        long hours = millis / (60L * 60L * 1000L);
-        long minutes = (millis % (60L * 60L * 1000L)) / (60L * 1000L);
+        long totalMinutes = millis / (60L * 1000L);
+        long days    = totalMinutes / (60 * 24);
+        long hours   = (totalMinutes % (60 * 24)) / 60;
+        long minutes = totalMinutes % 60;
 
-        if (hours > 0 && minutes > 0) {
-            return "Còn " + hours + " giờ " + minutes + " phút";
+        if (days >= 1) {
+            // Hiển thị ngày + giờ (bỏ phút khi đơn vị là ngày)
+            return hours > 0
+                    ? "Còn " + days + " ngày " + hours + " giờ"
+                    : "Còn " + days + " ngày";
         } else if (hours > 0) {
-            return "Còn " + hours + " giờ";
+            // Hiển thị giờ + phút
+            return minutes > 0
+                    ? "Còn " + hours + " giờ " + minutes + " phút"
+                    : "Còn " + hours + " giờ";
         } else {
-            return "Còn " + minutes + " phút";
+            // Chỉ còn vài phút
+            return "Còn " + Math.max(1, minutes) + " phút";
         }
     }
 
     private void bindActiveButtons(PostViewHolder holder, Post post, int position) {
-        boolean isOwnPost = currentUsername.equalsIgnoreCase(post.getUsername());
+        boolean isOwnPost = currentUserId > 0 && post.getAuthorId() == currentUserId;
 
         if (isOwnPost) {
             // Own post: show "Nhóm chat" to open the group chat
@@ -565,7 +590,7 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
             if (viewerInterests != null && !viewerInterests.isEmpty()) {
                 String postTag = post.getInterestTag();
                 tagMatchesViewer = postTag != null
-                        && viewerInterests.contains(postTag.trim().toLowerCase());
+                        && viewerInterests.contains(InterestTextUtils.stripLeadingIcon(postTag).toLowerCase());
             }
 
             if (!tagMatchesViewer) {
@@ -654,66 +679,41 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
                 holder.btnJoinGroup.setText("Tham gia");
                 holder.btnJoinGroup.setEnabled(true);
                 holder.btnJoinGroup.setAlpha(1.0f);
-                holder.btnJoinGroup.setOnClickListener(v -> {
-                    // Try real API first
-                    com.example.weconnect.api.RetrofitClient.loadToken(context);
-                    String token = com.example.weconnect.api.RetrofitClient.getAuthToken();
-                    
-                    if (token != null && post.getId() != null && !post.getId().isEmpty()) {
-                        com.example.weconnect.api.PostApiService postApi = 
-                                com.example.weconnect.api.RetrofitClient.getClient()
-                                        .create(com.example.weconnect.api.PostApiService.class);
-                        
-                        postApi.joinPost(Long.parseLong(post.getId())).enqueue(new retrofit2.Callback<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>>() {
+                holder.btnJoinGroup.setOnClickListener(v ->
+                        JoinRequestHelper.startJoinFlow(context, post, new JoinRequestHelper.JoinCallback() {
                             @Override
-                            public void onResponse(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> call,
-                                                   retrofit2.Response<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> response) {
-                                if (response.isSuccessful()) {
-                                    post.setPendingApproval(true);
-                                    holder.btnJoinGroup.setText("⏳ Đang chờ duyệt");
-                                    holder.btnJoinGroup.setEnabled(false);
-                                    holder.btnJoinGroup.setAlpha(0.6f);
-                                    com.example.weconnect.models.JoinGroupResponse result =
-                                            response.body() != null ? response.body().getResult() : null;
-                                    boolean learnedNewTag = result != null && result.isNewTagSuggested();
-                                    String toastMessage = learnedNewTag
-                                            ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
-                                            : "Tham gia nhóm thành công!";
-                                    Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show();
-                                } else {
-                                    String errorMsg = "Lỗi khi gửi yêu cầu. Thử lại!";
-                                    try {
-                                        if (response.errorBody() != null) {
-                                            String body = response.errorBody().string();
-                                            org.json.JSONObject json = new org.json.JSONObject(body);
-                                            if (json.has("message")) errorMsg = json.getString("message");
-                                        }
-                                    } catch (Exception ignored) {}
-                                    if (errorMsg.contains("đủ thành viên")) {
-                                        post.setMemberCount(post.getMaxMembers());
-                                        holder.btnJoinGroup.setText("Đã đủ thành viên");
-                                        holder.btnJoinGroup.setEnabled(false);
-                                        holder.btnJoinGroup.setAlpha(0.6f);
-                                        holder.btnJoinGroup.setOnClickListener(null);
-                                    }
-                                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show();
-                                }
+                            public void onSending() {
+                                holder.btnJoinGroup.setEnabled(false);
+                                holder.btnJoinGroup.setAlpha(0.6f);
+                                holder.btnJoinGroup.setText("⏳ Đang gửi...");
                             }
 
                             @Override
-                            public void onFailure(retrofit2.Call<com.example.weconnect.models.ApiResponse<com.example.weconnect.models.JoinGroupResponse>> call, Throwable t) {
-                                Toast.makeText(context, "Lỗi kết nối. Thử lại!", Toast.LENGTH_SHORT).show();
+                            public void onSuccess(JoinGroupResponse result) {
+                                post.setPendingApproval(true);
+                                holder.btnJoinGroup.setText("⏳ Đang chờ duyệt");
+                                holder.btnJoinGroup.setEnabled(false);
+                                holder.btnJoinGroup.setAlpha(0.6f);
+                                holder.btnJoinGroup.setOnClickListener(null);
+                                JoinRequestHelper.showJoinToast(context, result);
                             }
-                        });
-                    } else {
-                        // Fallback: local only
-                        post.setPendingApproval(true);
-                        Toast.makeText(context, "Đã gửi yêu cầu tham gia " + post.getUsername(), Toast.LENGTH_SHORT).show();
-                        holder.btnJoinGroup.setText("⏳ Đang chờ duyệt");
-                        holder.btnJoinGroup.setEnabled(false);
-                        holder.btnJoinGroup.setAlpha(0.6f);
-                    }
-                });
+
+                            @Override
+                            public void onError(String errorMessage) {
+                                if (errorMessage != null && errorMessage.contains("đủ thành viên")) {
+                                    post.setMemberCount(post.getMaxMembers());
+                                    holder.btnJoinGroup.setText("Đã đủ thành viên");
+                                    holder.btnJoinGroup.setEnabled(false);
+                                    holder.btnJoinGroup.setAlpha(0.6f);
+                                    holder.btnJoinGroup.setOnClickListener(null);
+                                } else {
+                                    holder.btnJoinGroup.setText("Tham gia");
+                                    holder.btnJoinGroup.setEnabled(true);
+                                    holder.btnJoinGroup.setAlpha(1.0f);
+                                }
+                                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show();
+                            }
+                        }));
             }
             } // close tagMatchesViewer else
         }
@@ -765,12 +765,12 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     }
 
     private void openUserProfile(String username, long authorId) {
-        String currentUser = com.example.weconnect.api.RetrofitClient.getUserName(context);
+        long currentUserId = com.example.weconnect.api.RetrofitClient.getUserId(context);
         Intent intent = new Intent(context, UserProfileActivity.class);
         intent.putExtra("username", username);
-        if (currentUser != null && !username.equalsIgnoreCase(currentUser)) {
+        intent.putExtra("user_id", authorId);
+        if (authorId > 0 && authorId != currentUserId) {
             intent.putExtra("view_other", true);
-            intent.putExtra("user_id", authorId);
         }
         context.startActivity(intent);
     }

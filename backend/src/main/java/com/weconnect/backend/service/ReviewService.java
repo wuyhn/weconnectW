@@ -7,6 +7,7 @@ import com.weconnect.backend.entity.UserReview;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.ReportRepository;
+import com.weconnect.backend.repository.SystemViolationLogRepository;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.repository.UserReviewRepository;
 import org.springframework.stereotype.Service;
@@ -30,17 +31,23 @@ public class ReviewService {
     private final PostMemberRepository postMemberRepository;
     private final PostRepository postRepository;
     private final ReportRepository reportRepository;
+    private final SystemViolationLogRepository systemViolationLogRepository;
+    private final ReputationSanctionService reputationSanctionService;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public ReviewService(UserReviewRepository reviewRepository, UserRepository userRepository,
                          PostMemberRepository postMemberRepository, PostRepository postRepository,
-                         ReportRepository reportRepository) {
+                         ReportRepository reportRepository,
+                         SystemViolationLogRepository systemViolationLogRepository,
+                         ReputationSanctionService reputationSanctionService) {
         this.reviewRepository = reviewRepository;
         this.userRepository = userRepository;
         this.postMemberRepository = postMemberRepository;
         this.postRepository = postRepository;
         this.reportRepository = reportRepository;
+        this.systemViolationLogRepository = systemViolationLogRepository;
+        this.reputationSanctionService = reputationSanctionService;
     }
 
     // Lấy danh sách review của 1 user
@@ -343,20 +350,25 @@ public class ReviewService {
     // ======================== REPUTATION HELPERS ========================
 
     /**
-     * Tính lại reputationScore từ đầu dựa trên 2 trường hợp tách biệt:
-     * - Chưa có review: ratingScore mặc định là 60.
-     * - Đã có review: ratingScore = averageRating / 5 * 100.
+     * Tính lại reputationScore hoàn toàn từ dữ liệu lịch sử trong DB — không phụ thuộc
+     * vào bất kỳ trường tích lũy nào trên bảng User.
      *
-     * Công thức: score = clamp(ratingScore - reportPenalty - violationPenaltySum, 0, 100)
+     * Công thức:
+     *   ratingScore          = 60.0 (mặc định) hoặc (avgRating / 5) * 100 nếu đã có review
+     *   reportPenalty        = SUM(penaltyPoint) từ bảng reports với status=VALID
+     *   violationPenaltySum  = SUM(penaltyPoint) từ bảng system_violation_logs (âm = tha phạt)
+     *   reputationScore      = clamp(ratingScore - reportPenalty - max(0, violationPenaltySum), 0, 100)
+     *
+     * Sau khi lưu điểm mới, tự động gọi ReputationSanctionService để áp chế tài nếu cần.
      */
     @Transactional
     public void recalculateReputation(Long userId) {
         userRepository.findById(userId).ifPresent(user -> {
-            int reviewCount = reviewRepository.countByReviewedUserId(userId);
-            double ratingScore;
 
+            // --- Thành phần 1: ratingScore từ các đánh giá ---
+            double ratingScore;
+            int reviewCount = reviewRepository.countByReviewedUserId(userId);
             if (reviewCount == 0) {
-                // User mới chưa có bất kỳ review nào vẫn phải giữ điểm uy tín nền là 60.
                 ratingScore = 60.0;
             } else {
                 List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
@@ -365,12 +377,11 @@ public class ReviewService {
                         .mapToInt(UserReview::getRating)
                         .average()
                         .orElse(0.0);
-
-                // Đồng bộ averageRating để profile/admin và reputationScore dùng cùng nguồn dữ liệu.
                 user.setAverageRating((float) averageRating);
                 ratingScore = (averageRating / 5.0) * 100.0;
             }
 
+            // --- Thành phần 2: reportPenalty — SUM từ bảng reports (VALID) ---
             int userPenalty = reportRepository.sumValidUserReportPenalties(userId);
             List<Long> postIds = postRepository.findByAuthorId(userId)
                     .stream().map(Post::getId).toList();
@@ -378,12 +389,23 @@ public class ReviewService {
                     : reportRepository.sumValidPostReportPenaltiesByPostIds(postIds);
             int reportPenalty = userPenalty + postPenalty;
 
-            // violationPenaltySum lưu điểm phạt tự động/AI/WebSocket để không mất sau recalculate.
-            int violationPenalty = Math.max(0, user.getViolationPenaltySum());
+            // --- Thành phần 3: violationPenalty — SUM từ system_violation_logs ---
+            // Giá trị âm trong bảng là record tha phạt (LOCK_EXPIRY_FORGIVENESS).
+            // clamp về 0 để tha phạt không biến thành "cộng thêm điểm".
+            int rawViolationSum = systemViolationLogRepository.sumPenaltyByUserId(userId);
+            int violationPenalty = Math.max(0, rawViolationSum);
 
-            double reputationScore = ratingScore - reportPenalty - violationPenalty;
-            user.setReputationScore(Math.max(0.0, Math.min(100.0, reputationScore)));
+            // Đồng bộ cache trên User để admin UI vẫn hiển thị được giá trị ròng
+            user.setViolationPenaltySum(violationPenalty);
+
+            // --- Tính toán và lưu ---
+            double computed = ratingScore - reportPenalty - violationPenalty;
+            double clampedScore = Math.max(0.0, Math.min(100.0, computed));
+            user.setReputationScore(clampedScore);
             userRepository.save(user);
+
+            // --- Áp chế tài nếu điểm về 0 (có idempotency guard bên trong) ---
+            reputationSanctionService.applySanctionBasedOnScore(userId, clampedScore);
         });
     }
 

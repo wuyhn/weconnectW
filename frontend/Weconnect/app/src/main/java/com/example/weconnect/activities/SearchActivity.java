@@ -48,6 +48,7 @@ public class SearchActivity extends AppCompatActivity {
     private List<SearchResultItem> userResults = new ArrayList<>();
     private List<SearchResultItem> postResults = new ArrayList<>();
     private boolean usersLoaded, postsLoaded;
+    private int searchRequestVersion = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,7 +99,11 @@ public class SearchActivity extends AppCompatActivity {
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 // Debounce 300ms
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
-                searchRunnable = () -> performSearch(s.toString());
+                searchRunnable = () -> {
+                    Editable editable = etSearch.getText();
+                    String keyword = editable != null ? editable.toString().trim() : "";
+                    performSearch(keyword);
+                };
                 searchHandler.postDelayed(searchRunnable, 300);
             }
 
@@ -109,7 +114,9 @@ public class SearchActivity extends AppCompatActivity {
         etSearch.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 if (searchRunnable != null) searchHandler.removeCallbacks(searchRunnable);
-                performSearch(etSearch.getText().toString());
+                Editable editable = etSearch.getText();
+                String keyword = editable != null ? editable.toString().trim() : "";
+                performSearch(keyword);
                 return true;
             }
             return false;
@@ -117,21 +124,29 @@ public class SearchActivity extends AppCompatActivity {
     }
 
     private void performSearch(String keyword) {
-        if (keyword == null || keyword.trim().isEmpty()) {
-            searchResultAdapter.submitList(new ArrayList<>());
+        String trimmedKeyword = keyword != null ? keyword.trim() : "";
+        int requestVersion = ++searchRequestVersion;
+
+        if (trimmedKeyword.isEmpty()) {
+            userResults.clear();
+            postResults.clear();
+            searchResultAdapter.clearData();
             return;
         }
 
+        // Xóa kết quả cũ ngay khi bắt đầu search mới để RecyclerView không hiển thị dữ liệu cũ.
+        searchResultAdapter.clearData();
         userResults.clear();
         postResults.clear();
         usersLoaded = false;
         postsLoaded = false;
 
         // Search users partial match
-        userApiService.searchUsersPartial(keyword.trim()).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
+        userApiService.searchUsersPartial(trimmedKeyword).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
             @Override
             public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
                                    Response<ApiResponse<List<Map<String, Object>>>> response) {
+                if (requestVersion != searchRequestVersion) return;
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     List<Map<String, Object>> users = response.body().getResult();
@@ -161,16 +176,18 @@ public class SearchActivity extends AppCompatActivity {
 
             @Override
             public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
+                if (requestVersion != searchRequestVersion) return;
                 usersLoaded = true;
                 mergeResults();
             }
         });
 
-        // Search posts
-        postApiService.searchPosts(keyword.trim()).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
+        // Search posts: chỉ truyền keyword đã trim vào @Query("keyword"), không gọi endpoint lấy toàn bộ bài viết.
+        postApiService.searchPosts(trimmedKeyword).enqueue(new Callback<ApiResponse<List<PostResponse>>>() {
             @Override
             public void onResponse(Call<ApiResponse<List<PostResponse>>> call,
                                    Response<ApiResponse<List<PostResponse>>> response) {
+                if (requestVersion != searchRequestVersion) return;
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     List<PostResponse> posts = response.body().getResult();
@@ -202,6 +219,7 @@ public class SearchActivity extends AppCompatActivity {
 
             @Override
             public void onFailure(Call<ApiResponse<List<PostResponse>>> call, Throwable t) {
+                if (requestVersion != searchRequestVersion) return;
                 postsLoaded = true;
                 mergeResults();
             }

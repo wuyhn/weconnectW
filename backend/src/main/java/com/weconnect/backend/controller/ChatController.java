@@ -123,6 +123,15 @@ public class ChatController {
         }
     }
 
+    // Tổng số tin nhắn chưa đọc của người dùng hiện tại
+    @GetMapping("/unread-total")
+    public ResponseEntity<?> getTotalUnreadCount(Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        int total = chatService.getTotalUnreadCount(user.getId());
+        return ResponseEntity.ok(ApiResponse.builder()
+                .code(1000).message("Thành công").result(Map.of("total", total)).build());
+    }
+
     // Dọn dẹp các phòng chat activity không hợp lệ (postId null hoặc post đã bị xóa)
     @DeleteMapping("/rooms/cleanup")
     public ResponseEntity<?> cleanupInvalidRooms() {
@@ -195,6 +204,34 @@ public class ChatController {
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(ApiResponse.builder()
                     .code(1005).message(e.getMessage()).build());
+        }
+    }
+
+    // Chấp nhận tin nhắn từ người lạ (receiver gọi)
+    @PostMapping("/message-requests/{id}/accept")
+    public ResponseEntity<?> acceptMessageRequest(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            chatService.acceptMessageRequest(id, user.getId());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã chấp nhận trò chuyện.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1021).message(e.getMessage()).build());
+        }
+    }
+
+    // Từ chối tin nhắn từ người lạ (receiver gọi)
+    @PostMapping("/message-requests/{id}/reject")
+    public ResponseEntity<?> rejectMessageRequest(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            chatService.rejectMessageRequest(id, user.getId());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Đã từ chối trò chuyện.").build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1021).message(e.getMessage()).build());
         }
     }
 

@@ -67,6 +67,7 @@ public class ChatRoom implements Serializable {
 
     private boolean friend = true;
     private boolean messageRequest = false;
+    private String strangerRequestStatus = null; // null | PENDING | ACCEPTED | REJECTED
     private long otherUserId = -1;
     private String otherUserName = "";
     private String otherUserAvatarUrl = "";
@@ -79,6 +80,8 @@ public class ChatRoom implements Serializable {
     public void setFriend(boolean friend) { this.friend = friend; }
     public boolean isMessageRequest() { return messageRequest; }
     public void setMessageRequest(boolean messageRequest) { this.messageRequest = messageRequest; }
+    public String getStrangerRequestStatus() { return strangerRequestStatus; }
+    public void setStrangerRequestStatus(String s) { this.strangerRequestStatus = s; }
     public long getOtherUserId() { return otherUserId; }
     public void setOtherUserId(long otherUserId) { this.otherUserId = otherUserId; }
     public String getOtherUserName() { return otherUserName; }
@@ -128,6 +131,17 @@ public class ChatRoom implements Serializable {
     public void setOtherUserOnline(boolean otherUserOnline) { this.otherUserOnline = otherUserOnline; }
     public Long getOtherUserLastActiveMins() { return otherUserLastActiveMins; }
     public void setOtherUserLastActiveMins(Long mins) { this.otherUserLastActiveMins = mins; }
+
+    // Trạng thái khóa/cấm tài khoản của người đối diện (chỉ dùng trong direct room)
+    private boolean otherUserBanned = false;
+    private boolean otherUserLockedTemp = false;
+    private String otherUserLockUntil = null;
+    public boolean isOtherUserBanned() { return otherUserBanned; }
+    public void setOtherUserBanned(boolean b) { this.otherUserBanned = b; }
+    public boolean isOtherUserLockedTemp() { return otherUserLockedTemp; }
+    public void setOtherUserLockedTemp(boolean b) { this.otherUserLockedTemp = b; }
+    public String getOtherUserLockUntil() { return otherUserLockUntil; }
+    public void setOtherUserLockUntil(String s) { this.otherUserLockUntil = s; }
 
     public String getId() {
         return id;

@@ -13,6 +13,9 @@ import com.weconnect.backend.repository.BlockedUserRepository;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.UserRepository;
+import com.weconnect.backend.repository.UserReviewRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,19 +37,26 @@ public class PostService {
     private final NotificationService notificationService;
     private final ChatService chatService;
     private final BlockedUserRepository blockedUserRepository;
+    private final UserReviewRepository userReviewRepository;
+
+    // @Lazy để tránh circular dependency nếu UserService tham chiếu PostService
+    @Autowired @Lazy
+    private UserService userService;
 
     public PostService(PostRepository postRepository,
                        PostMemberRepository postMemberRepository,
                        UserRepository userRepository,
                        NotificationService notificationService,
                        ChatService chatService,
-                       BlockedUserRepository blockedUserRepository) {
+                       BlockedUserRepository blockedUserRepository,
+                       UserReviewRepository userReviewRepository) {
         this.postRepository = postRepository;
         this.postMemberRepository = postMemberRepository;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
         this.chatService = chatService;
         this.blockedUserRepository = blockedUserRepository;
+        this.userReviewRepository = userReviewRepository;
     }
 
     // Lấy danh sách bài đăng active, sắp xếp theo 3 tầng ưu tiên sở thích:
@@ -253,12 +263,33 @@ public class PostService {
     // Xin tham gia hoạt động
     @Transactional
     public JoinGroupResponse joinPost(Long postId, Long userId) {
+        return joinPost(postId, userId, null, null, null, null);
+    }
+
+    @Transactional
+    public JoinGroupResponse joinPost(Long postId, Long userId, String joinReason,
+                                      String requesterProvince, String activityProvince,
+                                      Boolean isFarLocation) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy bài đăng."));
 
-        // Chặn tham gia bài viết đã hết hạn hoặc đã bị hủy/lưu trữ
+        // Chặn tham gia bài viết đã hết hạn hoặc đã bị lưu trữ
         if (!post.isActive()) {
             throw new RuntimeException("Hoạt động không khả dụng.");
+        }
+
+        // Case 2 (Tương lai bị hủy): Host bị khóa trước khi hoạt động bắt đầu → cancelled=true
+        if (post.isCancelled()) {
+            throw new RuntimeException("Hoạt động đã bị hủy.");
+        }
+
+        // Case 3 (Đang diễn ra): Host bị khóa tài khoản → đóng băng nhận thành viên mới.
+        // Client kiểm tra trạng thái này qua endpoint getPost và ẩn nút Join khi host bị locked/banned.
+        User hostUser = userRepository.findById(post.getAuthorId()).orElse(null);
+        if (hostUser != null
+                && (User.STATUS_LOCKED_TEMP.equals(hostUser.getStatus())
+                    || User.STATUS_BANNED.equals(hostUser.getStatus()))) {
+            throw new RuntimeException("Hoạt động hiện không nhận thành viên mới.");
         }
 
         if (post.getAuthorId().equals(userId)) {
@@ -294,6 +325,10 @@ public class PostService {
         PostMember member = PostMember.builder()
                 .postId(postId)
                 .userId(userId)
+                .joinReason(sanitizeJoinReason(joinReason))
+                .requesterProvince(sanitizeProvince(requesterProvince))
+                .activityProvince(sanitizeProvince(activityProvince))
+                .isFarLocation(isFarLocation != null ? isFarLocation : false)
                 .status(PostMember.Status.PENDING)
                 .build();
 
@@ -339,7 +374,12 @@ public class PostService {
         if (postTitle != null && postTitle.length() > 50) {
             postTitle = postTitle.substring(0, 50) + "...";
         }
+        String sanitizedJoinReason = member.getJoinReason();
         String message = joinerName + " muốn tham gia kèo \"" + postTitle + "\" của bạn.";
+        if (sanitizedJoinReason != null && !sanitizedJoinReason.isBlank()
+                && !"Cùng địa phương".equalsIgnoreCase(sanitizedJoinReason)) {
+            message += "\nLý do tham gia từ xa: " + sanitizedJoinReason;
+        }
         notificationService.createNotification(
                 post.getAuthorId(),
                 Notification.NotificationType.JOIN_REQUEST,
@@ -465,18 +505,51 @@ public class PostService {
             if (user != null) {
                 map.put("fullName", user.getFullName());
                 map.put("username", user.getEmail());
+                map.put("avatarUrl", user.getAvatarUrl() != null ? user.getAvatarUrl() : "");
             } else {
                 map.put("fullName", "Người dùng #" + pm.getUserId());
                 map.put("username", "");
+                map.put("avatarUrl", "");
             }
             result.add(map);
         }
         return result;
     }
 
-    // Lấy danh sách thành viên đang chờ duyệt
-    public List<PostMember> getPendingMembers(Long postId) {
-        return postMemberRepository.findByPostIdAndStatus(postId, PostMember.Status.PENDING);
+    // Lấy danh sách thành viên đang chờ duyệt (enriched với user info + location fields)
+    public List<java.util.Map<String, Object>> getPendingMembers(Long postId) {
+        List<PostMember> pendingList = postMemberRepository.findByPostIdAndStatus(postId, PostMember.Status.PENDING);
+        List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        for (PostMember pm : pendingList) {
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("userId", pm.getUserId());
+            map.put("status", pm.getStatus().name());
+            map.put("joinReason", pm.getJoinReason());
+            map.put("requesterProvince", pm.getRequesterProvince());
+            map.put("activityProvince", pm.getActivityProvince());
+            map.put("isFarLocation", pm.getIsFarLocation() != null && pm.getIsFarLocation());
+            User user = userRepository.findById(pm.getUserId()).orElse(null);
+            if (user != null) {
+                map.put("userName", user.getFullName());
+                map.put("avatarUrl", user.getAvatarUrl() != null ? user.getAvatarUrl() : "");
+                int reviewCount = userReviewRepository.countByReviewedUserId(user.getId());
+                map.put("reputationScore", user.getReputationScore());
+                map.put("averageRating", user.getAverageRating());
+                map.put("totalReviewCount", reviewCount);
+                map.put("isActivityJoinLocked", user.isBlocked());
+                map.put("provinceName", user.getProvinceName());
+            } else {
+                map.put("userName", "Người dùng #" + pm.getUserId());
+                map.put("avatarUrl", "");
+                map.put("reputationScore", 100.0);
+                map.put("averageRating", 0f);
+                map.put("totalReviewCount", 0);
+                map.put("isActivityJoinLocked", false);
+                map.put("provinceName", "");
+            }
+            result.add(map);
+        }
+        return result;
     }
 
     // Bài đăng của user (active)
@@ -537,8 +610,14 @@ public class PostService {
     }
 
     // Tìm kiếm bài đăng
-    public List<PostResponse> searchPosts(String query, Long currentUserId) {
-        List<Post> posts = postRepository.findByContentContainingIgnoreCaseOrInterestTagContainingIgnoreCase(query, query);
+    public List<PostResponse> searchPosts(String keyword, Long currentUserId) {
+        // Không dùng endpoint lấy toàn bộ bài viết khi keyword rỗng để tránh trả sai toàn bộ DB.
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String normalizedKeyword = keyword.trim();
+        List<Post> posts = postRepository.searchPosts(normalizedKeyword, LocalDateTime.now());
         posts = filterBlockedPosts(posts, currentUserId);
         return toResponseList(posts, currentUserId);
     }
@@ -636,6 +715,19 @@ public class PostService {
             }
         }
         return filtered;
+    }
+
+    private String sanitizeJoinReason(String joinReason) {
+        if (joinReason == null) return null;
+        String trimmed = joinReason.trim();
+        if (trimmed.isBlank()) return null;
+        return trimmed.length() > 500 ? trimmed.substring(0, 500) : trimmed;
+    }
+
+    private String sanitizeProvince(String province) {
+        if (province == null) return null;
+        String trimmed = province.trim();
+        return trimmed.isBlank() ? null : (trimmed.length() > 100 ? trimmed.substring(0, 100) : trimmed);
     }
 
     /**

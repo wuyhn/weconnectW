@@ -29,6 +29,10 @@ public class ChatRoomApiResponse {
     private Boolean isBlockedBetweenUsers;
     private Boolean otherUserOnline;
     private Long otherUserLastActiveMins;
+    private String strangerRequestStatus; // null | PENDING | ACCEPTED | REJECTED
+    private Boolean isOtherUserBanned;
+    private Boolean isOtherUserLockedTemp;
+    private String otherUserLockUntil;
     private int unreadCount;
     private String activityDateDisplay;
     private int memberCount;
@@ -59,6 +63,10 @@ public class ChatRoomApiResponse {
     public boolean isBlockedBetweenUsers() { return Boolean.TRUE.equals(isBlockedBetweenUsers); }
     public boolean isOtherUserOnline() { return Boolean.TRUE.equals(otherUserOnline); }
     public Long getOtherUserLastActiveMins() { return otherUserLastActiveMins; }
+    public String getStrangerRequestStatus() { return strangerRequestStatus; }
+    public boolean isOtherUserBanned() { return Boolean.TRUE.equals(isOtherUserBanned); }
+    public boolean isOtherUserLockedTemp() { return Boolean.TRUE.equals(isOtherUserLockedTemp); }
+    public String getOtherUserLockUntil() { return otherUserLockUntil; }
     public int getUnreadCount() { return unreadCount; }
     public String getActivityDateDisplay() { return activityDateDisplay; }
     public int getMemberCount() { return memberCount; }

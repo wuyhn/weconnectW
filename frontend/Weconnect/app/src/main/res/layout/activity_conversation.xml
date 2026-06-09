@@ -268,6 +268,34 @@
         android:orientation="vertical"
         app:layout_constraintBottom_toBottomOf="parent">
 
+        <!-- Notice bar khi tài khoản người dùng kia bị khóa/cấm -->
+        <LinearLayout
+            android:id="@+id/bannedNoticeBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#FFF3E0"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_info_circle"
+                android:tint="#F57C00" />
+
+            <TextView
+                android:id="@+id/tvBannedNotice"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:textColor="#BF360C"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <!-- Block state panel for direct messages -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/blockPanelCard"

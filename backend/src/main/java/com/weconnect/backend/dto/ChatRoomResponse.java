@@ -34,6 +34,10 @@ public class ChatRoomResponse {
     private Boolean isBlockedBetweenUsers;
     private Boolean otherUserOnline;
     private Long otherUserLastActiveMins;
+    private String strangerRequestStatus; // null | PENDING | ACCEPTED | REJECTED
+    private Boolean isOtherUserBanned;     // tài khoản bị cấm vĩnh viễn
+    private Boolean isOtherUserLockedTemp; // tài khoản bị khóa tạm thời
+    private String otherUserLockUntil;     // ngày mở khóa (dd/MM/yyyy HH:mm), nullable
     private int unreadCount;
     private String activityDateDisplay;
     private int memberCount;
@@ -59,6 +63,14 @@ public class ChatRoomResponse {
 
     public Boolean getIsBlockedBetweenUsers() {
         return isBlockedBetweenUsers;
+    }
+
+    public Boolean getIsOtherUserBanned() {
+        return isOtherUserBanned;
+    }
+
+    public Boolean getIsOtherUserLockedTemp() {
+        return isOtherUserLockedTemp;
     }
 
     @Data

@@ -37,9 +37,7 @@ public class LoginActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         // Kiểm tra session còn hạn: nếu đã có token thì bỏ qua Login
-        RetrofitClient.loadToken(this);
-        String savedToken = RetrofitClient.getAuthToken();
-        if (savedToken != null && !savedToken.isEmpty()) {
+        if (RetrofitClient.hasValidToken(this)) {
             startActivity(new Intent(LoginActivity.this, MainActivity.class));
             finish();
             return;
@@ -97,6 +95,13 @@ public class LoginActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<ApiResponse<AuthResponse>> call,
                                    Response<ApiResponse<AuthResponse>> response) {
+                // Kịch bản 3: Tài khoản bị khóa tạm thời cố đăng nhập lại.
+                // Backend trả về HTTP 423 kèm lockUntil trong error body.
+                if (response.code() == 423) {
+                    handleLockedAccount423(response.errorBody());
+                    return;
+                }
+
                 if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
                     AuthResponse authResult = response.body().getResult();
 
@@ -105,11 +110,11 @@ public class LoginActivity extends AppCompatActivity {
                     RetrofitClient.saveUserId(LoginActivity.this, authResult.getId());
                     RetrofitClient.saveUserName(LoginActivity.this, authResult.getFullName());
                     RetrofitClient.saveReputationScore(LoginActivity.this, authResult.getReputationScore());
+                    RetrofitClient.saveUserProvince(LoginActivity.this, "", "");
 
                     // Reset tất cả fake repos để tránh trộn dữ liệu giữa các tài khoản
                     com.example.weconnect.data.FakePostRepository.resetInstance();
                     com.example.weconnect.data.FakeSocialRepository.resetInstance();
-                    com.example.weconnect.data.FakeNotificationRepository.resetInstance();
                     // Set username cho fake repos
                     com.example.weconnect.data.FakePostRepository.getInstance()
                             .setCurrentUsername(authResult.getFullName());
@@ -134,6 +139,13 @@ public class LoginActivity extends AppCompatActivity {
                                     RetrofitClient.saveReputationScore(LoginActivity.this,
                                             ((Number) repObj).doubleValue());
                                 }
+                                Object provinceIdObj = profile.get("provinceId");
+                                Object provinceNameObj = profile.get("provinceName");
+                                RetrofitClient.saveUserProvince(
+                                        LoginActivity.this,
+                                        provinceIdObj != null ? provinceIdObj.toString() : "",
+                                        provinceNameObj != null ? provinceNameObj.toString() : ""
+                                );
                             }
                             navigateToMain();
                         }
@@ -162,6 +174,41 @@ public class LoginActivity extends AppCompatActivity {
                 Log.e("LoginDebug", err, t);
             }
         });
+    }
+
+    /**
+     * Kịch bản 3: Parse HTTP 423 error body để lấy lockUntil và hiển thị Toast.
+     * Backend trả về: {"code":1007,"message":"...","result":{"lockUntil":"2026-06-06T10:30:00"}}
+     * Toast format: "Tài khoản của bạn đã bị khóa. Vui lòng quay lại vào ngày dd/MM/yyyy"
+     */
+    private void handleLockedAccount423(okhttp3.ResponseBody errorBody) {
+        String lockDateStr = "không xác định";
+        try {
+            if (errorBody != null) {
+                String bodyStr = errorBody.string();
+                org.json.JSONObject json = new org.json.JSONObject(bodyStr);
+                org.json.JSONObject result = json.optJSONObject("result");
+                if (result != null) {
+                    String lockUntil = result.optString("lockUntil", "");
+                    if (!lockUntil.isEmpty()) {
+                        // Parse ISO-8601: "2026-06-06T10:30:00" → format dd/MM/yyyy
+                        java.text.SimpleDateFormat inputFmt = new java.text.SimpleDateFormat(
+                                "yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault());
+                        java.text.SimpleDateFormat outputFmt = new java.text.SimpleDateFormat(
+                                "dd/MM/yyyy", java.util.Locale.getDefault());
+                        java.util.Date date = inputFmt.parse(lockUntil);
+                        if (date != null) {
+                            lockDateStr = outputFmt.format(date);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Giữ nguyên "không xác định" nếu parse thất bại
+        }
+        Toast.makeText(LoginActivity.this,
+                "Tài khoản của bạn đã bị khóa. Vui lòng quay lại vào ngày " + lockDateStr,
+                Toast.LENGTH_LONG).show();
     }
 
     private void navigateToMain() {

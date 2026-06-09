@@ -190,7 +190,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Bạn phải đủ 18 tuổi"
+                android:text="Bạn phải từ 16 đến 60 tuổi"
                 android:textColor="#B0A898"
                 android:textSize="12sp" />
 
@@ -264,6 +264,59 @@
 
             <TextView
                 android:id="@+id/tvErrorGender"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="4dp"
+                android:textColor="#C0392B"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <!-- Province -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:letterSpacing="0.04"
+                android:text="Địa chỉ"
+                android:textColor="#3D3426"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilProvince"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Chọn tỉnh/thành phố"
+                app:boxBackgroundColor="#FFFFFF"
+                app:boxCornerRadiusBottomEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusTopStart="12dp"
+                app:boxStrokeColor="#D4CEC5"
+                app:boxStrokeWidth="1dp"
+                app:endIconDrawable="@drawable/ic_arrow_drop_down"
+                app:endIconMode="custom"
+                app:endIconTint="#7A7268"
+                app:hintTextColor="#9A9082">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etProvince"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:cursorVisible="false"
+                    android:focusable="false"
+                    android:inputType="none"
+                    android:paddingVertical="16dp"
+                    android:textColor="#1A1208"
+                    android:textSize="16sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <TextView
+                android:id="@+id/tvErrorProvince"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="4dp"

@@ -30,10 +30,12 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
 
 import com.bumptech.glide.Glide;
+import com.example.weconnect.api.FriendApiService;
 import com.example.weconnect.api.ReportApiService;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.models.ApiResponse;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -160,6 +162,7 @@ public class UserReportBottomSheet {
         EditText[]     descRef    = new EditText[1];
         TextView[]     submitRef  = new TextView[1];
         LinearLayout[] thumbRef   = new LinearLayout[1];
+        LinearLayout[] otherReasonSectionRef = new LinearLayout[1];
 
         // ── NestedScrollView (root, transparent) ──
         NestedScrollView scrollView = new NestedScrollView(context);
@@ -300,11 +303,16 @@ public class UserReportBottomSheet {
                 reasonTv.setTextColor(COLOR_BLUE);
                 reasonTv.setTypeface(null, Typeface.BOLD);
 
+                boolean isOther = isOtherReason(REASONS[idx]);
+                if (otherReasonSectionRef[0] != null) {
+                    otherReasonSectionRef[0].setVisibility(isOther ? View.VISIBLE : View.GONE);
+                }
                 if (descRef[0] != null) {
-                    boolean isOther = "Lý do khác".equals(REASONS[idx]);
-                    descRef[0].setHint(isOther
-                            ? "Mô tả thêm vấn đề bạn gặp phải... (bắt buộc)"
-                            : "Mô tả thêm vấn đề bạn gặp phải...");
+                    descRef[0].setHint("Nhập lý do khác...");
+                    descRef[0].setError(null);
+                    if (!isOther) {
+                        descRef[0].setText("");
+                    }
                 }
                 updateSubmitState(submitRef[0], selectedIndex[0], descRef[0]);
             });
@@ -316,11 +324,16 @@ public class UserReportBottomSheet {
         // ── Divider ──
         addDivider(context, card, 0);
 
-        // ── Section: Mô tả chi tiết ──
-        TextView descLabel = makeLabel(context, "Mô tả chi tiết");
+        // ── Section: Lý do khác, chỉ hiện khi chọn "Lý do khác" ──
+        LinearLayout otherReasonSection = new LinearLayout(context);
+        otherReasonSection.setOrientation(LinearLayout.VERTICAL);
+        otherReasonSection.setVisibility(View.GONE);
+        otherReasonSectionRef[0] = otherReasonSection;
+
+        TextView descLabel = makeLabel(context, "Nhập lý do khác");
         descLabel.setPadding(
                 dp(context, 20), dp(context, 16), dp(context, 20), dp(context, 8));
-        card.addView(descLabel, matchW());
+        otherReasonSection.addView(descLabel, matchW());
 
         LinearLayout descWrap = new LinearLayout(context);
         descWrap.setOrientation(LinearLayout.VERTICAL);
@@ -328,7 +341,7 @@ public class UserReportBottomSheet {
 
         EditText descInput = new EditText(context);
         descRef[0] = descInput;
-        descInput.setHint("Mô tả thêm vấn đề bạn gặp phải...");
+        descInput.setHint("Nhập lý do khác...");
         descInput.setTextSize(15);
         descInput.setTextColor(COLOR_TEXT);
         descInput.setMinLines(3);
@@ -344,6 +357,9 @@ public class UserReportBottomSheet {
         descInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
+                if (descInput.getText() != null && descInput.getText().toString().trim().length() > 0) {
+                    descInput.setError(null);
+                }
                 updateSubmitState(submitRef[0], selectedIndex[0], descInput);
             }
             @Override public void afterTextChanged(Editable s) {}
@@ -351,14 +367,14 @@ public class UserReportBottomSheet {
         descWrap.addView(descInput, matchW());
 
         TextView descHint = new TextView(context);
-        descHint.setText("Không bắt buộc, trừ khi bạn chọn 'Lý do khác'");
+        descHint.setText("Bắt buộc khi chọn 'Lý do khác'");
         descHint.setTextSize(12);
         descHint.setTextColor(COLOR_MUTED);
         descHint.setPadding(dp(context, 4), dp(context, 6), 0, 0);
         descWrap.addView(descHint, matchW());
 
-        card.addView(descWrap, matchW());
-        addSpacer(context, card, 16);
+        otherReasonSection.addView(descWrap, matchW());
+        card.addView(otherReasonSection, matchW());
 
         // ── Divider ──
         addDivider(context, card, 0);
@@ -481,8 +497,8 @@ public class UserReportBottomSheet {
             String reason = REASONS[selectedIndex[0]];
             String desc   = descInput.getText() != null
                     ? descInput.getText().toString().trim() : "";
-            if ("Lý do khác".equals(reason) && desc.isEmpty()) {
-                descInput.setError("Vui lòng mô tả lý do báo cáo.");
+            if (isOtherReason(reason) && desc.isEmpty()) {
+                descInput.setError("Vui lòng nhập lý do khác.");
                 descInput.requestFocus();
                 return;
             }
@@ -490,7 +506,7 @@ public class UserReportBottomSheet {
             submit.setAlpha(0.45f);
             submit.setText("Đang gửi...");
             doSubmit(context, sheet, userId, reason, desc,
-                    new ArrayList<>(selectedImages), submit);
+                    new ArrayList<>(selectedImages), submit, displayName);
         });
         footer.addView(submit, matchW());
 
@@ -583,7 +599,8 @@ public class UserReportBottomSheet {
 
     private static void doSubmit(Context context, BottomSheetDialog sheet, long userId,
                                   String reason, String description,
-                                  List<Uri> imageUris, TextView submit) {
+                                  List<Uri> imageUris, TextView submit,
+                                  String displayName) {
         RetrofitClient.loadToken(context);
         uploadImagesSequentially(context, imageUris, 0, new ArrayList<>(),
                 urls -> {
@@ -602,9 +619,7 @@ public class UserReportBottomSheet {
                                                        Response<ApiResponse<Void>> response) {
                                     if (response.isSuccessful()) {
                                         sheet.dismiss();
-                                        Toast.makeText(context,
-                                                "Đã gửi báo cáo. Cảm ơn bạn đã phản hồi.",
-                                                Toast.LENGTH_SHORT).show();
+                                        showBlockSuggestionDialog(context, userId, displayName);
                                     } else {
                                         resetSubmit(submit);
                                         Toast.makeText(context,
@@ -628,6 +643,47 @@ public class UserReportBottomSheet {
                             "Không thể upload ảnh. Vui lòng thử lại.",
                             Toast.LENGTH_SHORT).show();
                 });
+    }
+
+    private static void showBlockSuggestionDialog(Context context, long userId, String displayName) {
+        if (context == null || userId <= 0) return;
+        String safeName = displayName != null && !displayName.trim().isEmpty()
+                ? displayName.trim()
+                : "người dùng này";
+
+        new MaterialAlertDialogBuilder(context)
+                .setTitle("Đã gửi báo cáo")
+                .setMessage("Cảm ơn bạn đã phản hồi. Bạn có muốn chặn " + safeName
+                        + " để hạn chế tương tác và tin nhắn từ người này không?")
+                .setNegativeButton("Để sau", null)
+                .setPositiveButton("Chặn", (dialog, which) -> {
+                    RetrofitClient.loadToken(context);
+                    RetrofitClient.getClient()
+                            .create(FriendApiService.class)
+                            .blockUser(userId)
+                            .enqueue(new Callback<ApiResponse<Void>>() {
+                                @Override
+                                public void onResponse(Call<ApiResponse<Void>> call,
+                                                       Response<ApiResponse<Void>> response) {
+                                    if (response.isSuccessful()) {
+                                        Toast.makeText(context,
+                                                "Đã chặn " + safeName,
+                                                Toast.LENGTH_SHORT).show();
+                                    } else {
+                                        Toast.makeText(context,
+                                                "Không thể chặn người dùng",
+                                                Toast.LENGTH_SHORT).show();
+                                    }
+                                }
+
+                                @Override
+                                public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
+                                    Toast.makeText(context,
+                                            "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                })
+                .show();
     }
 
     private static void uploadImagesSequentially(Context context, List<Uri> uris, int index,
@@ -748,13 +804,17 @@ public class UserReportBottomSheet {
     private static void updateSubmitState(TextView submit, int selectedIndex, EditText descInput) {
         if (submit == null) return;
         boolean enabled = selectedIndex >= 0;
-        if (enabled && "Lý do khác".equals(REASONS[selectedIndex])) {
+        if (enabled && isOtherReason(REASONS[selectedIndex])) {
             String text = descInput != null && descInput.getText() != null
                     ? descInput.getText().toString().trim() : "";
             enabled = !text.isEmpty();
         }
         submit.setEnabled(enabled);
         submit.setAlpha(enabled ? 1.0f : 0.45f);
+    }
+
+    private static boolean isOtherReason(String reason) {
+        return "Lý do khác".equalsIgnoreCase(reason) || "Khác".equalsIgnoreCase(reason);
     }
 
     // ── Drawable builders ──

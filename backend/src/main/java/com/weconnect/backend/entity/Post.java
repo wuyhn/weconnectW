@@ -36,6 +36,9 @@ public class Post {
     @Column(columnDefinition = "INT DEFAULT 10")
     private int maxMembers;
 
+    @Transient
+    private Integer memberCount;
+
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private LocalDateTime activityEndTime;

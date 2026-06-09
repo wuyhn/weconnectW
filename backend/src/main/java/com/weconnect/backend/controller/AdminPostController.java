@@ -2,6 +2,7 @@ package com.weconnect.backend.controller;
 
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.Post;
+import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +28,7 @@ public class AdminPostController {
     @GetMapping
     public ResponseEntity<?> getAllPosts() {
         List<Post> posts = postRepository.findAll();
+        posts.forEach(this::attachMemberCount);
         // Sort by createdAt descending
         posts.sort((a, b) -> {
             if (a.getCreatedAt() == null || b.getCreatedAt() == null) return 0;
@@ -45,6 +47,7 @@ public class AdminPostController {
             return ResponseEntity.status(404).body(ApiResponse.builder()
                     .code(1003).message("Không tìm thấy bài đăng").build());
         }
+        attachMemberCount(postOpt.get());
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Thành công")
                 .result(postOpt.get()).build());
@@ -61,6 +64,7 @@ public class AdminPostController {
         Post post = postOpt.get();
         post.setArchived(true);
         postRepository.save(post);
+        attachMemberCount(post);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã lưu trữ bài đăng")
                 .result(post).build());
@@ -77,6 +81,7 @@ public class AdminPostController {
         Post post = postOpt.get();
         post.setArchived(false);
         postRepository.save(post);
+        attachMemberCount(post);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã khôi phục bài đăng")
                 .result(post).build());
@@ -96,5 +101,10 @@ public class AdminPostController {
         postRepository.deleteById(id);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã xóa bài đăng").build());
+    }
+
+    private void attachMemberCount(Post post) {
+        int approvedMembers = postMemberRepository.countByPostIdAndStatus(post.getId(), PostMember.Status.APPROVED);
+        post.setMemberCount(approvedMembers + 1);
     }
 }

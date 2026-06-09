@@ -196,6 +196,45 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="8dp"
+                        android:text="Địa điểm"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilProvince"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="16dp"
+                        android:hint="Chọn tỉnh/thành phố"
+                        app:boxCornerRadiusBottomEnd="14dp"
+                        app:boxCornerRadiusBottomStart="14dp"
+                        app:boxCornerRadiusTopEnd="14dp"
+                        app:boxCornerRadiusTopStart="14dp"
+                        app:boxBackgroundColor="@color/card_surface"
+                        app:boxStrokeColor="@color/text_secondary"
+                        app:endIconDrawable="@drawable/ic_arrow_drop_down"
+                        app:endIconMode="custom"
+                        app:endIconTint="@color/text_secondary"
+                        app:hintTextColor="@color/text_secondary">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etProvince"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:cursorVisible="false"
+                            android:focusable="false"
+                            android:inputType="none"
+                            android:paddingVertical="14dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
                         android:text="Giới tính"
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
@@ -363,9 +402,9 @@
                         android:layout_height="0.5dp"
                         android:background="#F2EFEA" />
 
-                    <!-- Category: Sáng tạo -->
+                    <!-- Category: Học tập / Công nghệ -->
                     <LinearLayout
-                        android:id="@+id/rowCategoryCreative"
+                        android:id="@+id/rowCategoryTech"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:background="?attr/selectableItemBackground"
@@ -378,13 +417,13 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Sáng tạo"
+                            android:text="Học tập / Công nghệ"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp"
                             android:textStyle="bold" />
 
                         <ImageView
-                            android:id="@+id/ivChevronCreative"
+                            android:id="@+id/ivChevronTech"
                             android:layout_width="18dp"
                             android:layout_height="18dp"
                             android:src="@drawable/ic_arrow_right"
@@ -392,7 +431,7 @@
                     </LinearLayout>
 
                     <com.google.android.material.chip.ChipGroup
-                        android:id="@+id/chipGroupCreative"
+                        android:id="@+id/chipGroupTech"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="4dp"
@@ -406,9 +445,9 @@
                         android:layout_height="0.5dp"
                         android:background="#F2EFEA" />
 
-                    <!-- Category: Học tập -->
+                    <!-- Category: Đời sống / Du lịch -->
                     <LinearLayout
-                        android:id="@+id/rowCategoryStudy"
+                        android:id="@+id/rowCategoryLifestyle"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:background="?attr/selectableItemBackground"
@@ -421,13 +460,13 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Học tập"
+                            android:text="Đời sống / Du lịch"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp"
                             android:textStyle="bold" />
 
                         <ImageView
-                            android:id="@+id/ivChevronStudy"
+                            android:id="@+id/ivChevronLifestyle"
                             android:layout_width="18dp"
                             android:layout_height="18dp"
                             android:src="@drawable/ic_arrow_right"
@@ -435,7 +474,7 @@
                     </LinearLayout>
 
                     <com.google.android.material.chip.ChipGroup
-                        android:id="@+id/chipGroupStudy"
+                        android:id="@+id/chipGroupLifestyle"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="4dp"
@@ -449,7 +488,7 @@
                         android:layout_height="0.5dp"
                         android:background="#F2EFEA" />
 
-                    <!-- Category: Xã hội -->
+                    <!-- Category: Giao lưu / Hobby -->
                     <LinearLayout
                         android:id="@+id/rowCategorySocial"
                         android:layout_width="match_parent"
@@ -464,7 +503,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Xã hội"
+                            android:text="Giao lưu / Hobby"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp"
                             android:textStyle="bold" />
@@ -479,6 +518,49 @@
 
                     <com.google.android.material.chip.ChipGroup
                         android:id="@+id/chipGroupSocial"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"
+                        android:visibility="gone"
+                        app:chipSpacingHorizontal="6dp"
+                        app:chipSpacingVertical="4dp"
+                        app:singleSelection="false" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="0.5dp"
+                        android:background="#F2EFEA" />
+
+                    <!-- Category: Xu hướng & Kỹ năng -->
+                    <LinearLayout
+                        android:id="@+id/rowCategoryTrend"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Xu hướng &amp; Kỹ năng"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <ImageView
+                            android:id="@+id/ivChevronTrend"
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:src="@drawable/ic_arrow_right"
+                            app:tint="@color/text_secondary" />
+                    </LinearLayout>
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/chipGroupTrend"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="8dp"

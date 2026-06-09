@@ -6,6 +6,7 @@ import com.weconnect.backend.entity.ChatMessage;
 import com.weconnect.backend.entity.ChatRoom;
 import com.weconnect.backend.entity.ChatRoomMember;
 import com.weconnect.backend.entity.Friendship;
+import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.Post;
 import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.entity.User;
@@ -37,6 +38,9 @@ public class ChatService {
     private final PostMemberRepository postMemberRepository;
     private final FriendshipRepository friendshipRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final NotificationService notificationService;
+
+    private static final int STRANGER_MSG_LIMIT = 5;
 
     public ChatService(ChatRoomRepository chatRoomRepository,
                        ChatRoomMemberRepository chatRoomMemberRepository,
@@ -46,7 +50,8 @@ public class ChatService {
                        PostRepository postRepository,
                        PostMemberRepository postMemberRepository,
                        FriendshipRepository friendshipRepository,
-                       SimpMessagingTemplate messagingTemplate) {
+                       SimpMessagingTemplate messagingTemplate,
+                       NotificationService notificationService) {
         this.chatRoomRepository = chatRoomRepository;
         this.chatRoomMemberRepository = chatRoomMemberRepository;
         this.chatMessageRepository = chatMessageRepository;
@@ -56,6 +61,7 @@ public class ChatService {
         this.postMemberRepository = postMemberRepository;
         this.friendshipRepository = friendshipRepository;
         this.messagingTemplate = messagingTemplate;
+        this.notificationService = notificationService;
     }
 
     // Danh sách phòng chat của user
@@ -76,6 +82,13 @@ public class ChatService {
                     continue;
                 }
                 if (!room.isActive() && "CANCELLED".equals(room.getInactiveStatusLabel())) {
+                    continue;
+                }
+            }
+
+            // Direct room chưa có tin nhắn nào → ẩn khỏi mọi danh sách
+            if (ChatRoom.TYPE_DIRECT.equals(room.getType())) {
+                if (chatMessageRepository.countByRoomIdAndIdGreaterThan(room.getId(), 0L) == 0) {
                     continue;
                 }
             }
@@ -403,6 +416,11 @@ public class ChatService {
                 .userId(userId)
                 .role(ChatRoomMember.Role.MEMBER)
                 .build());
+
+        // Push real-time để MessagesFragment của user vừa được duyệt tự reload chat list
+        messagingTemplate.convertAndSendToUser(
+                userId.toString(), "/queue/chat-list",
+                Map.of("roomId", room.getId(), "event", "JOINED"));
     }
 
     // Lấy hoặc tạo phòng DM
@@ -430,11 +448,15 @@ public class ChatService {
         User otherUser = userRepository.findById(user2Id)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng."));
 
+        // Nếu hai bên chưa là bạn bè → đặt trạng thái PENDING (người lạ nhắn tin)
+        String strangerStatus = isAcceptedFriendship(user1Id, user2Id) ? null : "PENDING";
+
         ChatRoom room = ChatRoom.builder()
                 .title(otherUser.getFullName())
                 .type(ChatRoom.TYPE_DIRECT)
                 .ownerId(user1Id)
                 .active(true)
+                .strangerRequestStatus(strangerStatus)
                 .build();
         room = chatRoomRepository.save(room);
 
@@ -468,9 +490,8 @@ public class ChatService {
 
         // Kiểm tra block trong phòng DM
         ChatRoom room = chatRoomRepository.findById(roomId).orElse(null);
-        if (room != null && ChatRoom.TYPE_ACTIVITY.equals(room.getType())
-                && !room.isActive() && "CANCELLED".equals(room.getInactiveStatusLabel())) {
-            throw new RuntimeException("Hoạt động này đã bị hủy.");
+        if (room != null && ChatRoom.TYPE_ACTIVITY.equals(room.getType()) && !room.isActive()) {
+            throw new RuntimeException("Hoạt động này đã bị hủy hoặc không còn khả dụng.");
         }
         if (room != null && ChatRoom.TYPE_DIRECT.equals(room.getType())) {
             var members = chatRoomMemberRepository.findByRoomId(roomId);
@@ -480,6 +501,45 @@ public class ChatService {
                         throw new RuntimeException("Bạn không thể nhắn tin cho người này.");
                     }
                 }
+            }
+
+            // Kiểm tra trạng thái stranger request
+            String srStatus = room.getStrangerRequestStatus();
+            if (srStatus != null) {
+                Long otherUserId = members.stream()
+                        .map(m -> m.getUserId())
+                        .filter(id -> !id.equals(senderId))
+                        .findFirst().orElse(null);
+                boolean nowFriends = otherUserId != null && isAcceptedFriendship(senderId, otherUserId);
+                if (!nowFriends) {
+                    boolean isInitiator = senderId.equals(room.getOwnerId());
+                    if ("REJECTED".equals(srStatus) && isInitiator) {
+                        throw new RuntimeException("Người này chưa chấp nhận trò chuyện với bạn.");
+                    }
+                    if ("PENDING".equals(srStatus) && isInitiator) {
+                        long sentCount = chatMessageRepository.countByRoomIdAndSenderId(roomId, senderId);
+                        if (sentCount >= STRANGER_MSG_LIMIT) {
+                            throw new RuntimeException("Bạn đã gửi tối đa " + STRANGER_MSG_LIMIT
+                                    + " tin nhắn. Hãy chờ người này chấp nhận trò chuyện.");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Chặn Host bị khóa tài khoản gửi tin nhắn trong phòng hoạt động.
+        // Áp dụng cho mọi con đường khóa: qua báo cáo (status=LOCKED_TEMP/BANNED)
+        // hoặc qua Admin block trực tiếp (isBlocked=true).
+        if (room != null && ChatRoom.TYPE_ACTIVITY.equals(room.getType())
+                && room.getOwnerId() != null && room.getOwnerId().equals(senderId)) {
+            User hostUser = userRepository.findById(senderId).orElse(null);
+            boolean hostLocked = hostUser != null && (
+                    hostUser.isBlocked()
+                    || User.STATUS_LOCKED_TEMP.equals(hostUser.getStatus())
+                    || User.STATUS_BANNED.equals(hostUser.getStatus()));
+            if (hostLocked) {
+                throw new RuntimeException(
+                        "Tài khoản của bạn đang bị khóa. Bạn không thể gửi tin nhắn trong phòng hoạt động này.");
             }
         }
 
@@ -496,6 +556,67 @@ public class ChatService {
             chatRoomMemberRepository.save(member);
         });
         return toMessageResponse(savedMessage, senderId);
+    }
+
+    // Receiver chấp nhận tin nhắn từ người lạ
+    public void acceptMessageRequest(Long roomId, Long receiverId) {
+        ChatRoom room = chatRoomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy phòng chat."));
+        if (!ChatRoom.TYPE_DIRECT.equals(room.getType())) {
+            throw new RuntimeException("Chỉ áp dụng cho tin nhắn trực tiếp.");
+        }
+        if (!chatRoomMemberRepository.existsByRoomIdAndUserId(roomId, receiverId)) {
+            throw new RuntimeException("Bạn không phải thành viên phòng chat này.");
+        }
+        if (receiverId.equals(room.getOwnerId())) {
+            throw new RuntimeException("Bạn không thể chấp nhận yêu cầu của chính mình.");
+        }
+
+        room.setStrangerRequestStatus("ACCEPTED");
+        chatRoomRepository.save(room);
+
+        // Thông báo cho người khởi tạo
+        Long initiatorId = room.getOwnerId();
+        String receiverName = userRepository.findById(receiverId)
+                .map(User::getFullName).orElse("Người dùng");
+        try {
+            notificationService.createNotification(
+                    initiatorId,
+                    Notification.NotificationType.STRANGER_REQUEST_ACCEPTED,
+                    receiverName + " đã chấp nhận trò chuyện với bạn.",
+                    receiverName, null, receiverId);
+        } catch (Exception ignored) {}
+
+        // WebSocket event để cả hai bên refresh trạng thái phòng
+        messagingTemplate.convertAndSendToUser(initiatorId.toString(), "/queue/room-events",
+                Map.of("type", "STRANGER_ACCEPTED", "roomId", roomId));
+        messagingTemplate.convertAndSendToUser(receiverId.toString(), "/queue/room-events",
+                Map.of("type", "STRANGER_ACCEPTED", "roomId", roomId));
+    }
+
+    // Receiver từ chối tin nhắn từ người lạ
+    public void rejectMessageRequest(Long roomId, Long receiverId) {
+        ChatRoom room = chatRoomRepository.findById(roomId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy phòng chat."));
+        if (!ChatRoom.TYPE_DIRECT.equals(room.getType())) {
+            throw new RuntimeException("Chỉ áp dụng cho tin nhắn trực tiếp.");
+        }
+        if (!chatRoomMemberRepository.existsByRoomIdAndUserId(roomId, receiverId)) {
+            throw new RuntimeException("Bạn không phải thành viên phòng chat này.");
+        }
+        if (receiverId.equals(room.getOwnerId())) {
+            throw new RuntimeException("Bạn không thể từ chối yêu cầu của chính mình.");
+        }
+
+        room.setStrangerRequestStatus("REJECTED");
+        chatRoomRepository.save(room);
+
+        // WebSocket event để initiator biết ngay
+        Long initiatorId = room.getOwnerId();
+        messagingTemplate.convertAndSendToUser(initiatorId.toString(), "/queue/room-events",
+                Map.of("type", "STRANGER_REJECTED", "roomId", roomId));
+        messagingTemplate.convertAndSendToUser(receiverId.toString(), "/queue/room-events",
+                Map.of("type", "STRANGER_REJECTED", "roomId", roomId));
     }
 
     // --- Helpers ---
@@ -550,6 +671,9 @@ public class ChatService {
         Boolean isBlockedByMe = null;
         Boolean hasBlockedMe = null;
         Boolean isBlockedBetweenUsers = null;
+        Boolean isOtherUserBanned = null;
+        Boolean isOtherUserLockedTemp = null;
+        String otherUserLockUntil = null;
         String activityDateDisplay = null;
         int maxMembers = 0;
 
@@ -623,10 +747,33 @@ public class ChatService {
                 roomTitle = otherUserName != null && !otherUserName.isBlank()
                         ? otherUserName : roomTitle;
                 isFriend = isAcceptedFriendship(currentUserId, otherUserId);
-                isMessageRequest = !isFriend;
                 isBlockedByMe = blockedUserRepository.existsByBlockerIdAndBlockedId(currentUserId, otherUserId);
                 hasBlockedMe = blockedUserRepository.existsByBlockerIdAndBlockedId(otherUserId, currentUserId);
                 isBlockedBetweenUsers = isBlockedByMe || hasBlockedMe;
+
+                // Kiểm tra trạng thái khóa/cấm tài khoản của người đối diện
+                User otherUserForBanCheck = userRepository.findById(otherUserId).orElse(null);
+                if (otherUserForBanCheck != null) {
+                    isOtherUserBanned = User.STATUS_BANNED.equals(otherUserForBanCheck.getStatus());
+                    isOtherUserLockedTemp = User.STATUS_LOCKED_TEMP.equals(otherUserForBanCheck.getStatus());
+                    if (Boolean.TRUE.equals(isOtherUserLockedTemp) && otherUserForBanCheck.getLockUntil() != null) {
+                        otherUserLockUntil = otherUserForBanCheck.getLockUntil()
+                                .format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
+                    }
+                }
+
+                // Tính isMessageRequest dựa trên strangerRequestStatus (nếu có)
+                String srStatus = room.getStrangerRequestStatus();
+                if (Boolean.TRUE.equals(isFriend)) {
+                    isMessageRequest = false;
+                } else if ("ACCEPTED".equals(srStatus)) {
+                    isMessageRequest = false; // stranger đã chấp nhận → chuyển vào list chat chính
+                } else if ("PENDING".equals(srStatus) || "REJECTED".equals(srStatus)) {
+                    isMessageRequest = true;
+                } else {
+                    // Legacy (status null): dùng logic cũ
+                    isMessageRequest = !isFriend;
+                }
             }
         }
 
@@ -680,12 +827,23 @@ public class ChatService {
             lastTime = last.getCreatedAt() != null ? last.getCreatedAt().toString() : "";
         }
 
-        // isMessageRequest = true chỉ khi người lạ nhắn trước và current user chưa phản hồi.
-        // Nếu current user đã từng gửi tin trong room này → không còn là message request.
-        if (Boolean.TRUE.equals(isMessageRequest) && currentUserId != null) {
+        // Legacy fallback: nếu không có strangerRequestStatus và là non-friend,
+        // dùng logic cũ: nếu currentUser đã từng reply → không phải message request
+        if (Boolean.TRUE.equals(isMessageRequest) && currentUserId != null
+                && room.getStrangerRequestStatus() == null) {
             boolean hasReplied = messages.stream()
                     .anyMatch(m -> currentUserId.equals(m.getSenderId()));
             if (hasReplied) isMessageRequest = false;
+        }
+
+        // Phòng mới tạo chưa có tin nhắn nào → không phải message request
+        if (Boolean.TRUE.equals(isMessageRequest) && messages.isEmpty()) {
+            isMessageRequest = false;
+        }
+
+        // REJECTED: không đếm unread (receiver không cần biết có tin nhắn mới từ initiator)
+        if ("REJECTED".equals(room.getStrangerRequestStatus())) {
+            unreadCount = 0;
         }
 
         return ChatRoomResponse.builder()
@@ -711,6 +869,10 @@ public class ChatService {
                 .isBlockedBetweenUsers(isBlockedBetweenUsers)
                 .otherUserOnline(otherUserOnline)
                 .otherUserLastActiveMins(otherUserLastActiveMins)
+                .strangerRequestStatus(room.getStrangerRequestStatus())
+                .isOtherUserBanned(isOtherUserBanned)
+                .isOtherUserLockedTemp(isOtherUserLockedTemp)
+                .otherUserLockUntil(otherUserLockUntil)
                 .unreadCount(unreadCount)
                 .activityDateDisplay(activityDateDisplay)
                 .memberCount(memberInfos.size())
@@ -718,6 +880,27 @@ public class ChatService {
                 .members(memberInfos)
                 .createdAt(room.getCreatedAt() != null ? room.getCreatedAt().toString() : "")
                 .build();
+    }
+
+    public int getTotalUnreadCount(Long userId) {
+        List<ChatRoomMember> memberships = chatRoomMemberRepository.findByUserId(userId);
+        int total = 0;
+        for (ChatRoomMember membership : memberships) {
+            Long roomId = membership.getRoomId();
+            ChatRoom room = chatRoomRepository.findById(roomId).orElse(null);
+            if (room == null) continue;
+            if (ChatRoom.TYPE_ACTIVITY.equals(room.getType())) {
+                if (room.getPostId() == null || !postRepository.existsById(room.getPostId())) continue;
+                if (!room.isActive() && "CANCELLED".equals(room.getInactiveStatusLabel())) continue;
+            }
+            if (ChatRoom.TYPE_DIRECT.equals(room.getType())) {
+                if (chatMessageRepository.countByRoomIdAndIdGreaterThan(roomId, 0L) == 0) continue;
+            }
+            if ("REJECTED".equals(room.getStrangerRequestStatus())) continue;
+            Long lastReadId = membership.getLastReadMessageId() != null ? membership.getLastReadMessageId() : 0L;
+            total += chatMessageRepository.countByRoomIdAndIdGreaterThan(roomId, lastReadId);
+        }
+        return total;
     }
 
     private boolean isAcceptedFriendship(Long user1Id, Long user2Id) {
@@ -775,6 +958,12 @@ public class ChatService {
         ChatMessage saved = chatMessageRepository.save(msg);
         ChatMessageResponse response = toMessageResponse(saved, -1L);
         messagingTemplate.convertAndSend("/topic/chat/" + roomId, response);
+    }
+
+    // Gửi tin nhắn hệ thống vào phòng chat từ bên ngoài (ví dụ: ReportService khi Host bị khóa).
+    // Lưu vào DB và broadcast realtime qua STOMP /topic/chat/{roomId}.
+    public void insertSystemMessageToRoom(Long roomId, String content) {
+        sendSystemMessage(roomId, content);
     }
 
     private List<ChatMessageResponse> toMessageResponseList(List<ChatMessage> messages, Long currentUserId) {

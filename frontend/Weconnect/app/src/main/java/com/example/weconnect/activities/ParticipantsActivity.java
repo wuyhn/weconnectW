@@ -68,6 +68,8 @@ public class ParticipantsActivity extends AppCompatActivity {
         RetrofitClient.loadToken(this);
         PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
 
+        long authorUserId = getIntent().getLongExtra("author_user_id", -1);
+
         postApi.getMembers(id).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
             @Override
             public void onResponse(Call<ApiResponse<List<Map<String, Object>>>> call,
@@ -76,17 +78,17 @@ public class ParticipantsActivity extends AppCompatActivity {
                         && response.body().getResult() != null) {
                     List<Map<String, Object>> membersData = response.body().getResult();
                     List<ParticipantAdapter.Participant> participants = new ArrayList<>();
-                    android.util.Log.d("Participants", "Members count from API: " + membersData.size());
 
                     // Always show post author first as organizer
                     boolean authorAdded = false;
                     for (Map<String, Object> member : membersData) {
-                        android.util.Log.d("Participants", "Member raw data keys: " + member.keySet() + " values: " + member);
                         String name = member.get("fullName") != null
                                 ? member.get("fullName").toString()
                                 : (member.get("username") != null ? member.get("username").toString() : "Người dùng");
                         String status = member.get("status") != null
                                 ? member.get("status").toString() : "";
+                        String avatarUrl = member.get("avatarUrl") != null
+                                ? member.get("avatarUrl").toString() : "";
 
                         // Extract userId from API response (try both "userId" and "id" keys)
                         long memberId = -1;
@@ -101,21 +103,21 @@ public class ParticipantsActivity extends AppCompatActivity {
                         // Only show APPROVED members
                         if (!"APPROVED".equalsIgnoreCase(status)) continue;
 
-                        boolean isAuthor = (postAuthor != null && name.equalsIgnoreCase(postAuthor));
+                        // Nhận diện tác giả bằng userId (không dùng tên để tránh trùng tên)
+                        boolean isAuthor = (authorUserId > 0 && memberId == authorUserId)
+                                || (authorUserId <= 0 && postAuthor != null && name.equalsIgnoreCase(postAuthor));
                         if (isAuthor) {
                             participants.add(0, new ParticipantAdapter.Participant(
-                                    name + " (Người tổ chức)", R.drawable.ic_user_placeholder, memberId));
+                                    name + " (Người tổ chức)", R.drawable.ic_user_placeholder, memberId, avatarUrl));
                             authorAdded = true;
                         } else {
                             participants.add(new ParticipantAdapter.Participant(
-                                    name, R.drawable.ic_user_placeholder, memberId));
+                                    name, R.drawable.ic_user_placeholder, memberId, avatarUrl));
                         }
                     }
 
                     // If author wasn't in the members list, add them at the top
                     if (!authorAdded && postAuthor != null && !postAuthor.isEmpty()) {
-                        // Try to get author's userId from intent
-                        long authorUserId = getIntent().getLongExtra("author_user_id", -1);
                         participants.add(0, new ParticipantAdapter.Participant(
                                 postAuthor + " (Người tổ chức)", R.drawable.ic_user_placeholder, authorUserId));
                     }

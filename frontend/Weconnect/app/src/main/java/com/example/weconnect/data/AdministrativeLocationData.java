@@ -56,8 +56,39 @@ public final class AdministrativeLocationData {
     public static List<Province> provinces() {
         return Arrays.asList(
                 new Province(HANOI_ID, HANOI_NAME),
-                new Province("HCM", "TP.HCM"),
-                new Province("DNG", "Đà Nẵng")
+                new Province("HCM", "Thành phố Hồ Chí Minh"),
+                new Province("HP", "Hải Phòng"),
+                new Province("DNG", "Đà Nẵng"),
+                new Province("HUE", "Huế"),
+                new Province("CT", "Cần Thơ"),
+                new Province("AG", "An Giang"),
+                new Province("BN", "Bắc Ninh"),
+                new Province("CM", "Cà Mau"),
+                new Province("CB", "Cao Bằng"),
+                new Province("DLK", "Đắk Lắk"),
+                new Province("DB", "Điện Biên"),
+                new Province("DNA", "Đồng Nai"),
+                new Province("DT", "Đồng Tháp"),
+                new Province("GL", "Gia Lai"),
+                new Province("HT", "Hà Tĩnh"),
+                new Province("HY", "Hưng Yên"),
+                new Province("KH", "Khánh Hòa"),
+                new Province("LCH", "Lai Châu"),
+                new Province("LD", "Lâm Đồng"),
+                new Province("LS", "Lạng Sơn"),
+                new Province("LCA", "Lào Cai"),
+                new Province("NA", "Nghệ An"),
+                new Province("NB", "Ninh Bình"),
+                new Province("PT", "Phú Thọ"),
+                new Province("QNG", "Quảng Ngãi"),
+                new Province("QN", "Quảng Ninh"),
+                new Province("QT", "Quảng Trị"),
+                new Province("SL", "Sơn La"),
+                new Province("TN", "Tây Ninh"),
+                new Province("TNG", "Thái Nguyên"),
+                new Province("TH", "Thanh Hóa"),
+                new Province("TQ", "Tuyên Quang"),
+                new Province("VL", "Vĩnh Long")
         );
     }
 

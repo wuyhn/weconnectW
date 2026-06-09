@@ -18,11 +18,17 @@ import com.example.weconnect.models.User;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.textfield.TextInputEditText;
 
+import org.json.JSONObject;
+
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
 
 public class RegisterActivity extends AppCompatActivity {
+
+    private static final String PASSWORD_REGEX = "^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s]).{8,}$";
+    private static final String PASSWORD_RULE_MESSAGE =
+            "Mật khẩu phải gồm: Phải chứa ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, chữ số và ký tự đặc biệt!";
 
     private TextInputEditText etEmail, etPassword, etConfirmPassword;
     private TextView tvErrorEmail, tvErrorPassword, tvErrorConfirmPassword;
@@ -50,6 +56,12 @@ public class RegisterActivity extends AppCompatActivity {
         });
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        resetRegisterButtonState();
+    }
+
     private void register() {
         btnContinue.setEnabled(false);
         btnContinue.setText("Đang xử lý...");
@@ -70,20 +82,27 @@ public class RegisterActivity extends AppCompatActivity {
                             intent.putExtra("email", email);
                             startActivity(intent);
                         } else {
-                            btnContinue.setEnabled(true);
-                            btnContinue.setText("Tiếp tục →");
-                            String msg = (resp.body() != null) ? resp.body().getMessage() : "Đăng ký thất bại";
+                            resetRegisterButtonState();
+                            String msg = getRegisterErrorMessage(resp);
+                            show(tvErrorPassword, msg);
                             Toast.makeText(RegisterActivity.this, msg, Toast.LENGTH_LONG).show();
                         }
                     }
 
                     @Override
                     public void onFailure(Call<ApiResponse<Void>> call, Throwable t) {
-                        btnContinue.setEnabled(true);
-                        btnContinue.setText("Tiếp tục →");
+                        resetRegisterButtonState();
                         Toast.makeText(RegisterActivity.this, "Lỗi kết nối. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
                     }
                 });
+    }
+
+    private void resetRegisterButtonState() {
+        btnContinue.setEnabled(true);
+        btnContinue.setText("Đăng ký");
+        // Nếu màn hình bổ sung ProgressBar hoặc LinearProgressIndicator cho luồng đăng ký,
+        // hãy ẩn indicator tại đây để trạng thái loading không bị giữ lại khi quay về từ OTP.
+        // progressBar.setVisibility(View.GONE);
     }
 
     private void setupValidation() {
@@ -97,7 +116,7 @@ public class RegisterActivity extends AppCompatActivity {
 
         etPassword.addTextChangedListener(new Watcher(s -> {
             if (s.length() == 0) show(tvErrorPassword, "Mật khẩu không được để trống");
-            else if (s.length() < 8) show(tvErrorPassword, "Mật khẩu phải ít nhất 8 ký tự");
+            else if (!isPasswordValid(s.toString())) show(tvErrorPassword, PASSWORD_RULE_MESSAGE);
             else hide(tvErrorPassword);
             String confirm = etConfirmPassword.getText().toString();
             if (!confirm.isEmpty() && !confirm.equals(s.toString()))
@@ -124,10 +143,34 @@ public class RegisterActivity extends AppCompatActivity {
             show(tvErrorEmail, "Email chưa đúng định dạng"); ok = false;
         }
         if (pass.isEmpty()) { show(tvErrorPassword, "Mật khẩu không được để trống"); ok = false; }
-        else if (pass.length() < 8) { show(tvErrorPassword, "Mật khẩu phải ít nhất 8 ký tự"); ok = false; }
+        else if (!isPasswordValid(pass)) { show(tvErrorPassword, PASSWORD_RULE_MESSAGE); ok = false; }
         if (confirm.isEmpty()) { show(tvErrorConfirmPassword, "Vui lòng xác nhận mật khẩu"); ok = false; }
         else if (!confirm.equals(pass)) { show(tvErrorConfirmPassword, "Mật khẩu không khớp"); ok = false; }
         return ok;
+    }
+
+    private boolean isPasswordValid(String password) {
+        return password != null && password.matches(PASSWORD_REGEX);
+    }
+
+    private String getRegisterErrorMessage(Response<ApiResponse<Void>> resp) {
+        if (resp.body() != null && resp.body().getMessage() != null && !resp.body().getMessage().trim().isEmpty()) {
+            return resp.body().getMessage();
+        }
+
+        try {
+            if (resp.errorBody() != null) {
+                JSONObject json = new JSONObject(resp.errorBody().string());
+                String message = json.optString("message", "").trim();
+                if (!message.isEmpty()) {
+                    return message;
+                }
+            }
+        } catch (Exception ignored) {
+            // Nếu response lỗi không phải JSON chuẩn, dùng thông báo mặc định cho register.
+        }
+
+        return "Đăng ký thất bại";
     }
 
     private void show(TextView tv, String msg) { tv.setText(msg); tv.setVisibility(View.VISIBLE); }

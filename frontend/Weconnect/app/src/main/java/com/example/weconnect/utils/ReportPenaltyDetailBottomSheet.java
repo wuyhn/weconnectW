@@ -40,6 +40,10 @@ public class ReportPenaltyDetailBottomSheet {
     private static final int COLOR_PINK      = 0xFFFF4D6D;
 
     public static void show(Context context, long reportId) {
+        show(context, reportId, false);
+    }
+
+    public static void show(Context context, long reportId, boolean isReporterView) {
         BottomSheetDialog sheet = new BottomSheetDialog(context);
         if (sheet.getWindow() != null) {
             sheet.getWindow().setBackgroundDrawable(new ColorDrawable(0x00000000));
@@ -176,14 +180,21 @@ public class ReportPenaltyDetailBottomSheet {
 
         RetrofitClient.loadToken(context);
         ReportApiService api = RetrofitClient.getClient().create(ReportApiService.class);
-        api.getMyReportDetail(reportId).enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
+        Call<ApiResponse<Map<String, Object>>> call = isReporterView
+                ? api.getReporterReportDetail(reportId)
+                : api.getMyReportDetail(reportId);
+        call.enqueue(new Callback<ApiResponse<Map<String, Object>>>() {
             @Override
-            public void onResponse(Call<ApiResponse<Map<String, Object>>> call,
+            public void onResponse(Call<ApiResponse<Map<String, Object>>> c,
                                    Response<ApiResponse<Map<String, Object>>> response) {
                 progressBar.setVisibility(View.GONE);
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
-                    bindData(context, contentLayout, response.body().getResult());
+                    if (isReporterView) {
+                        bindReporterData(context, contentLayout, response.body().getResult());
+                    } else {
+                        bindData(context, contentLayout, response.body().getResult());
+                    }
                     contentLayout.setVisibility(View.VISIBLE);
                 } else {
                     layoutError.setVisibility(View.VISIBLE);
@@ -192,7 +203,7 @@ public class ReportPenaltyDetailBottomSheet {
             }
 
             @Override
-            public void onFailure(Call<ApiResponse<Map<String, Object>>> call, Throwable t) {
+            public void onFailure(Call<ApiResponse<Map<String, Object>>> c, Throwable t) {
                 progressBar.setVisibility(View.GONE);
                 layoutError.setVisibility(View.VISIBLE);
                 btnUnderstood.setVisibility(View.VISIBLE);
@@ -313,6 +324,115 @@ public class ReportPenaltyDetailBottomSheet {
         String reviewedAt = data.get("reviewedAt") != null
                 ? data.get("reviewedAt").toString() : null;
         addRow(context, infoCard, "THỜI GIAN XỬ LÝ", formatDateTime(reviewedAt), COLOR_TEXT, true);
+
+        contentLayout.addView(infoCard, cardLp);
+    }
+
+    private static void bindReporterData(Context context, LinearLayout contentLayout,
+                                          Map<String, Object> data) {
+        String status = data.get("status") != null ? data.get("status").toString() : "";
+        boolean isValid = "VALID".equals(status);
+
+        // Banner cảm ơn
+        LinearLayout banner = new LinearLayout(context);
+        banner.setOrientation(LinearLayout.HORIZONTAL);
+        GradientDrawable bannerBg = new GradientDrawable();
+        bannerBg.setColor(isValid ? 0xFFDCFCE7 : 0xFFF0F9FF);
+        bannerBg.setCornerRadius(dp(context, 10));
+        banner.setBackground(bannerBg);
+        banner.setPadding(dp(context, 14), dp(context, 13), dp(context, 14), dp(context, 13));
+        banner.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams bannerLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bannerLp.bottomMargin = dp(context, 14);
+
+        TextView emojiTv = new TextView(context);
+        emojiTv.setText(isValid ? "✅" : "ℹ️");
+        emojiTv.setTextSize(20);
+        LinearLayout.LayoutParams emojiLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        emojiLp.setMarginEnd(dp(context, 10));
+        banner.addView(emojiTv, emojiLp);
+
+        LinearLayout bannerText = new LinearLayout(context);
+        bannerText.setOrientation(LinearLayout.VERTICAL);
+
+        TextView bannerTitle = new TextView(context);
+        bannerTitle.setText("Báo cáo đã được xử lý");
+        bannerTitle.setTextSize(15);
+        bannerTitle.setTextColor(isValid ? 0xFF15803D : 0xFF0369A1);
+        bannerTitle.setTypeface(null, Typeface.BOLD);
+        bannerText.addView(bannerTitle, matchW());
+
+        TextView bannerSub = new TextView(context);
+        bannerSub.setText(isValid
+                ? "Báo cáo của bạn đã được admin xử lý. Cảm ơn bạn đã góp phần xây dựng cộng đồng WeConnect văn minh."
+                : "Báo cáo của bạn đã được admin kiểm tra. Hiện chưa phát hiện vi phạm từ nội dung được báo cáo.");
+        bannerSub.setTextSize(13);
+        bannerSub.setTextColor(isValid ? 0xFF166534 : 0xFF075985);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        subLp.topMargin = dp(context, 2);
+        bannerText.addView(bannerSub, subLp);
+
+        banner.addView(bannerText,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        contentLayout.addView(banner, bannerLp);
+
+        // Info card
+        LinearLayout infoCard = new LinearLayout(context);
+        infoCard.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable cardBg2 = new GradientDrawable();
+        cardBg2.setColor(COLOR_WHITE);
+        cardBg2.setCornerRadius(dp(context, 12));
+        cardBg2.setStroke(1, COLOR_SEPARATOR);
+        infoCard.setBackground(cardBg2);
+        infoCard.setClipToOutline(true);
+        infoCard.setPadding(dp(context, 16), dp(context, 16), dp(context, 16), dp(context, 4));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cardLp.bottomMargin = dp(context, 4);
+
+        // Kết quả xử lý
+        String statusDisplay = isValid ? "Đã xác nhận vi phạm" : "Không phát hiện vi phạm";
+        int statusColor = isValid ? COLOR_RED : 0xFF16A34A;
+        addRow(context, infoCard, "KẾT QUẢ XỬ LÝ", statusDisplay, statusColor, false);
+
+        // Đối tượng bị báo cáo
+        String targetType = data.get("targetType") != null ? data.get("targetType").toString() : "";
+        String targetUserName = data.get("targetUserName") != null
+                ? data.get("targetUserName").toString() : "Unknown";
+        String targetDisplay = "POST".equals(targetType)
+                ? "Bài viết của " + targetUserName
+                : "Người dùng " + targetUserName;
+        addRow(context, infoCard, "ĐỐI TƯỢNG BỊ BÁO CÁO", targetDisplay, COLOR_TEXT, true);
+
+        // Điểm phạt
+        int penalty = data.get("penaltyPoint") != null
+                ? ((Number) data.get("penaltyPoint")).intValue() : 0;
+        String penaltyDisplay = isValid && penalty > 0
+                ? targetUserName + " bị trừ " + penalty + " điểm uy tín"
+                : "0 điểm";
+        addRow(context, infoCard, "ĐIỂM PHẠT", penaltyDisplay,
+                isValid && penalty > 0 ? COLOR_RED : COLOR_TEXT, true);
+
+        // Lý do báo cáo
+        String reason = data.get("reason") != null ? data.get("reason").toString() : "—";
+        addRow(context, infoCard, "LÝ DO BÁO CÁO", reason, COLOR_TEXT, true);
+
+        // Thời gian xử lý
+        String reviewedAt = data.get("reviewedAt") != null
+                ? data.get("reviewedAt").toString() : null;
+        if (reviewedAt != null && !reviewedAt.isEmpty()) {
+            addRow(context, infoCard, "THỜI GIAN XỬ LÝ", formatDateTime(reviewedAt), COLOR_TEXT, true);
+        }
+
+        // Ghi chú admin (ẩn nếu không có)
+        String adminNote = data.get("adminAction") != null
+                ? data.get("adminAction").toString().trim() : "";
+        if (!adminNote.isEmpty()) {
+            addRow(context, infoCard, "GHI CHÚ ADMIN", adminNote, COLOR_TEXT, true);
+        }
 
         contentLayout.addView(infoCard, cardLp);
     }

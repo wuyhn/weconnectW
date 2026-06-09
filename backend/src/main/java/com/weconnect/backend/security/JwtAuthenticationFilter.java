@@ -39,8 +39,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             User user = userRepository.findById(userId).orElse(null);
 
             if (user != null) {
+                // Từ chối ngay nếu tài khoản đang bị khóa — JWT còn hạn không đủ để dùng app
+                if (User.STATUS_LOCKED_TEMP.equals(user.getStatus())
+                        || User.STATUS_BANNED.equals(user.getStatus())
+                        || user.isBlocked()) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"error\":\"ACCOUNT_LOCKED\",\"message\":\"Tài khoản đang bị khóa.\"}");
+                    return;
+                }
+
                 // Gán authority dựa theo role: ADMIN hoặc USER
-                int role = tokenProvider.getRoleFromToken(token);
+                int role = user.getRole();
                 String authority = (role == 1) ? "ROLE_ADMIN" : "ROLE_USER";
 
                 UsernamePasswordAuthenticationToken authentication =

@@ -68,6 +68,19 @@ public class ReportController {
         }
     }
 
+    @GetMapping("/reports/{id}/reporter-detail")
+    public ResponseEntity<?> getReporterReportDetail(@PathVariable Long id, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        try {
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message("Thành công")
+                    .result(reportService.getReporterReportDetail(id, user.getId())).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1041).message(e.getMessage()).build());
+        }
+    }
+
     // === Admin endpoints ===
 
     @GetMapping("/admin/reports")
@@ -89,6 +102,76 @@ public class ReportController {
         }
     }
 
+    // ===================================================================
+    // Admin phê duyệt báo cáo theo Mã Vi Phạm (Violation Code Matrix)
+    // ===================================================================
+    //
+    // Endpoint tích hợp đầy đủ 5 bước:
+    //   1. Tìm Report → đặt VALID
+    //   2. Tính điểm phạt từ Ma trận ViolationCode (hoặc customPenalty cho U_OTHER/P_OTHER)
+    //   3. Ẩn bài viết nếu targetType = POST
+    //   4. Tái tính điểm uy tín theo công thức đầy đủ
+    //   5. Thực thi chế tài (ADMIN_WARNING / LOCKED_TEMP / BANNED) + gửi FCM
+    //
+    // Request body:
+    //   violationCode  : String  — bắt buộc
+    //                    USER: SPAM | INAPPROPRIATE | FRAUD | HARASSMENT | U_OTHER
+    //                    POST: SPAM_POST | MISLEADING | VULGAR | VIOLATION | BULLYING | P_OTHER
+    //   customPenalty  : Integer — chỉ dùng khi violationCode = U_OTHER hoặc P_OTHER, khoảng [0, 50]
+    //   adminNote      : String  — bắt buộc khi violationCode = U_OTHER / P_OTHER (tối thiểu 10 ký tự)
+    //
+    @PostMapping("/admin/reports/{id}/approve-violation")
+    public ResponseEntity<?> approveReportWithViolationCode(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            Authentication authentication) {
+
+        // Parse các tham số từ request body
+        String violationCode = body.get("violationCode") != null
+                ? body.get("violationCode").toString().trim() : null;
+
+        Integer customPenalty = null;
+        if (body.get("customPenalty") != null) {
+            try {
+                customPenalty = Integer.valueOf(body.get("customPenalty").toString());
+            } catch (NumberFormatException e) {
+                return ResponseEntity.badRequest().body(ApiResponse.builder()
+                        .code(1046)
+                        .message("customPenalty phải là số nguyên hợp lệ.")
+                        .build());
+            }
+        }
+
+        String adminNote = body.get("adminNote") != null
+                ? body.get("adminNote").toString().trim() : null;
+
+        try {
+            Map<String, Object> result = reportService.handleApprovedReportViolation(
+                    id, violationCode, customPenalty, adminNote);
+
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000)
+                    .message("Đã phê duyệt báo cáo vi phạm. Người dùng bị trừ "
+                            + result.get("penaltyPoint")
+                            + " điểm uy tín. Trạng thái tài khoản: "
+                            + result.get("userStatus") + ".")
+                    .result(result)
+                    .build());
+
+        } catch (IllegalArgumentException e) {
+            // Lỗi validation: mã vi phạm không hợp lệ / customPenalty ngoài [0,50] / thiếu adminNote
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1046)
+                    .message(e.getMessage())
+                    .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1043)
+                    .message(e.getMessage())
+                    .build());
+        }
+    }
+
     // Admin xác nhận báo cáo hợp lệ (VALID) với điểm phạt
     @PostMapping("/admin/reports/{id}/approve")
     public ResponseEntity<?> approveReport(@PathVariable Long id,
@@ -99,9 +182,14 @@ public class ReportController {
         if (body != null && body.get("penaltyPoint") != null) {
             penaltyPoint = Integer.valueOf(body.get("penaltyPoint").toString());
         }
+        String adminNote = null;
+        if (body != null && body.get("adminNote") != null) {
+            adminNote = body.get("adminNote").toString().trim();
+            if (adminNote.isEmpty()) adminNote = null;
+        }
 
         try {
-            Map<String, Object> result = reportService.approveReport(id, admin.getId(), penaltyPoint);
+            Map<String, Object> result = reportService.approveReport(id, admin.getId(), penaltyPoint, adminNote);
 
             return ResponseEntity.ok(ApiResponse.builder()
                     .code(1000)
@@ -133,6 +221,21 @@ public class ReportController {
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(ApiResponse.builder()
                     .code(1043).message(e.getMessage()).build());
+        }
+    }
+
+    // Admin phê duyệt báo cáo sai Tag: ẩn bài + trừ 10 điểm + thông báo phạt (gộp 3 bước tự động)
+    @PutMapping("/admin/reports/{id}/approve-wrong-tag")
+    public ResponseEntity<?> approveWrongTagReport(@PathVariable Long id) {
+        try {
+            reportService.approveWrongTagReport(id);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000)
+                    .message("Đã xử lý vi phạm sai tag: bài viết bị ẩn, tài khoản bị trừ 10 điểm uy tín và nhận thông báo.")
+                    .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1045).message(e.getMessage()).build());
         }
     }
 

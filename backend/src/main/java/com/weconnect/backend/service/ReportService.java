@@ -1,15 +1,28 @@
 package com.weconnect.backend.service;
 
+import com.weconnect.backend.dto.ChatMessageResponse;
+import com.weconnect.backend.entity.ChatMessage;
+import com.weconnect.backend.entity.ChatRoom;
+import com.weconnect.backend.entity.ChatRoomMember;
 import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.Post;
+import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.entity.Report;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.enums.ViolationCode;
+import com.weconnect.backend.repository.ChatMessageRepository;
+import com.weconnect.backend.repository.ChatRoomMemberRepository;
+import com.weconnect.backend.repository.ChatRoomRepository;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,14 +38,23 @@ public class ReportService {
 
     private static final Logger log = LoggerFactory.getLogger(ReportService.class);
 
+    // Self-injection qua @Lazy để gọi @Async method từ chính bean này mà vẫn qua Spring proxy.
+    // Nếu gọi trực tiếp bằng this.handleHostSanctionEvent() sẽ bypass proxy → @Async không hoạt động.
+    @Lazy
+    @Autowired
+    private ReportService self;
+
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final PostRepository postRepository;
     private final PostMemberRepository postMemberRepository;
     private final NotificationService notificationService;
     private final ReviewService reviewService;
-    private final UserService userService;
     private final FCMService fcmService;
+    private final ChatRoomRepository chatRoomRepository;
+    private final ChatRoomMemberRepository chatRoomMemberRepository;
+    private final ChatMessageRepository chatMessageRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     public ReportService(ReportRepository reportRepository,
                          UserRepository userRepository,
@@ -40,16 +62,22 @@ public class ReportService {
                          PostMemberRepository postMemberRepository,
                          NotificationService notificationService,
                          ReviewService reviewService,
-                         UserService userService,
-                         FCMService fcmService) {
+                         FCMService fcmService,
+                         ChatRoomRepository chatRoomRepository,
+                         ChatRoomMemberRepository chatRoomMemberRepository,
+                         ChatMessageRepository chatMessageRepository,
+                         SimpMessagingTemplate messagingTemplate) {
         this.reportRepository = reportRepository;
         this.userRepository = userRepository;
         this.postRepository = postRepository;
         this.postMemberRepository = postMemberRepository;
         this.notificationService = notificationService;
         this.reviewService = reviewService;
-        this.userService = userService;
         this.fcmService = fcmService;
+        this.chatRoomRepository = chatRoomRepository;
+        this.chatRoomMemberRepository = chatRoomMemberRepository;
+        this.chatMessageRepository = chatMessageRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     // User tạo report từ app
@@ -93,10 +121,287 @@ public class ReportService {
         return "Gửi báo cáo thành công!";
     }
 
+    // =====================================================================
+    // === MỚI: Phê duyệt báo cáo theo Mã Vi Phạm (ViolationCode Matrix) ===
+    // =====================================================================
+    //
+    // Luồng xử lý đầy đủ (5 bước):
+    //   Bước 1 → Tìm Report, đặt trạng thái VALID
+    //   Bước 2 → Tính điểm phạt từ Ma trận Enum (hoặc customPenalty nếu là mã "Khác")
+    //   Bước 3 → Xác định userId bị phạt; ẩn bài viết nếu targetType = POST
+    //   Bước 4 → Gọi reviewService.recalculateReputation() để tái tính điểm uy tín
+    //             theo công thức: clamp(ratingScore - reportPenalty - violationPenalty, 0, 100)
+    //   Bước 5 → Thực thi chế tài và gửi thông báo (FCM + DB + WebSocket)
+    //
+    // @param reportId       ID của báo cáo cần xử lý
+    // @param violationCode  Mã vi phạm (SPAM, FRAUD, SPAM_POST, U_OTHER, P_OTHER, ...)
+    // @param customPenalty  Điểm phạt tùy chỉnh — chỉ dùng khi violationCode = U_OTHER / P_OTHER
+    // @param adminNote      Ghi chú Admin — bắt buộc ≥ 10 ký tự khi dùng mã "Khác"
+    //
+    @Transactional
+    public Map<String, Object> handleApprovedReportViolation(
+            Long reportId,
+            String violationCode,
+            Integer customPenalty,
+            String adminNote) {
+
+        log.info("[VIOLATION-APPROVE] ▶ START — reportId={}, violationCode={}, customPenalty={}",
+                reportId, violationCode, customPenalty);
+
+        // ================================================================
+        // BƯỚC 1: Tìm bản ghi Report và đánh dấu VALID
+        // ================================================================
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException(
+                        "Báo cáo #" + reportId + " không tồn tại trong hệ thống."));
+
+        // Chặn phê duyệt lại báo cáo đã VALID để tránh trừ điểm trùng lặp
+        if (report.getStatus() == Report.Status.VALID) {
+            throw new RuntimeException("Báo cáo này đã được phê duyệt rồi. Không thể phê duyệt lại.");
+        }
+
+        // ================================================================
+        // BƯỚC 2: Parse ViolationCode và tính điểm phạt
+        // ================================================================
+        ViolationCode code = parseViolationCode(violationCode);
+        int penaltyPoint = determinePenaltyPoint(code, customPenalty, adminNote);
+
+        // Cập nhật bản ghi Report: trạng thái VALID + điểm phạt đã xác định
+        report.setStatus(Report.Status.VALID);
+        report.setPenaltyPoint(penaltyPoint);
+        report.setReviewedAt(LocalDateTime.now());
+
+        // Nếu mã "Khác": ghi đè trường reason bằng nội dung giải trình của Admin
+        // để thay thế chuỗi rác "U_OTHER"/"P_OTHER" mà user gửi lên ban đầu
+        if (code.isCustomPenalty()) {
+            report.setReason(adminNote.trim());
+        }
+        // Luôn lưu adminNote vào adminAction để hiển thị trong timeline lịch sử xử lý
+        if (adminNote != null && !adminNote.isBlank()) {
+            report.setAdminAction(adminNote.trim());
+        }
+        reportRepository.save(report);
+        log.info("[VIOLATION-APPROVE] ✔ Đã lưu Report VALID — penaltyPoint={}, code={}",
+                penaltyPoint, code.name());
+
+        // ================================================================
+        // BƯỚC 3: Xác định userId bị xử phạt
+        // ================================================================
+        Long affectedUserId;
+        Long hiddenPostId = null;
+
+        if (code.isUserReport()) {
+            // Báo cáo USER → targetId chính là userId của người bị báo cáo
+            affectedUserId = report.getTargetId();
+
+        } else {
+            // Báo cáo POST → phải tra bài viết để lấy authorId
+            Post post = postRepository.findById(report.getTargetId())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Bài viết bị báo cáo không tồn tại hoặc đã bị xóa."));
+
+            affectedUserId = post.getAuthorId();
+            hiddenPostId = post.getId();
+
+            // Ẩn bài viết vi phạm (archived = true tương đương trạng thái "Đã gỡ bỏ")
+            // Không xóa cứng để admin có thể tra cứu lịch sử sau này
+            post.setArchived(true);
+            postRepository.save(post);
+            log.info("[VIOLATION-APPROVE] ✔ Đã ẩn bài viết postId={}, authorId={}",
+                    hiddenPostId, affectedUserId);
+        }
+
+        // ================================================================
+        // BƯỚC 4: Tái tính toàn bộ điểm uy tín theo công thức đầy đủ
+        // ================================================================
+        // ReviewService.recalculateReputation() thực hiện tính lại từ đầu:
+        //   ratingScore   = 60.0 (nếu chưa có review) hoặc (avgRating / 5) * 100
+        //   reportPenalty = SUM(penaltyPoint) của tất cả báo cáo VALID nhắm vào user
+        //                   (bao gồm cả penaltyPoint vừa được lưu ở Bước 1+2 phía trên)
+        //   violationPenalty = user.violationPenaltySum (phạt tự động wrong-tag, AI...)
+        //   reputationScore  = clamp(ratingScore - reportPenalty - violationPenalty, 0, 100)
+        try {
+            reviewService.recalculateReputation(affectedUserId);
+            log.info("[VIOLATION-APPROVE] ✔ recalculateReputation hoàn tất cho userId={}", affectedUserId);
+        } catch (Exception e) {
+            // Điểm uy tín là dữ liệu cốt lõi — lỗi ở đây phải rollback toàn bộ transaction
+            log.error("[VIOLATION-APPROVE] ✘ recalculateReputation thất bại userId={}: {}",
+                    affectedUserId, e.getMessage(), e);
+            throw e;
+        }
+
+        // Đọc lại user từ DB để lấy điểm uy tín vừa được tính lại
+        User affectedUser = userRepository.findById(affectedUserId)
+                .orElseThrow(() -> new RuntimeException(
+                        "Không tìm thấy người dùng bị ảnh hưởng (userId=" + affectedUserId + ")."));
+        double newReputationScore = affectedUser.getReputationScore();
+
+        log.info("[VIOLATION-APPROVE] userId={} | điểm uy tín mới = {}", affectedUserId, newReputationScore);
+
+        // ================================================================
+        // BƯỚC 5: Gửi thông báo cảnh báo (khi score > 0)
+        // Lock/ban đã được ReputationSanctionService xử lý bên trong recalculateReputation().
+        // ================================================================
+        if (newReputationScore > 0) {
+            // Score còn dương: chỉ cảnh báo, không khóa tài khoản
+            String warnMsg = "Tài khoản của bạn bị trừ " + penaltyPoint
+                    + " điểm uy tín do vi phạm [" + violationCode + "]. "
+                    + "Điểm uy tín hiện tại: " + Math.round(newReputationScore) + " điểm. "
+                    + "Hãy tuân thủ quy chuẩn cộng đồng để tránh bị khóa tài khoản.";
+            try {
+                notificationService.createNotificationForReport(
+                        affectedUserId,
+                        Notification.NotificationType.ADMIN_WARNING,
+                        warnMsg,
+                        "Admin",
+                        reportId);
+            } catch (Exception e) {
+                log.error("[VIOLATION-APPROVE] Gửi ADMIN_WARNING thất bại userId={}: {}",
+                        affectedUserId, e.getMessage());
+            }
+            sendFcmToUserSafely(affectedUser,
+                    "⚠️ Cảnh báo vi phạm từ WeConnect",
+                    "Tài khoản của bạn vừa bị trừ " + penaltyPoint
+                            + " điểm uy tín. Điểm còn lại: " + Math.round(newReputationScore)
+                            + " điểm. Vui lòng tuân thủ tiêu chuẩn cộng đồng.",
+                    "VIOLATION_WARNING",
+                    reportId);
+        }
+        // Nếu score <= 0: ReputationSanctionService đã gửi notification lock/ban.
+        // Ngoài ra nếu Host vừa bị khóa → kích hoạt chế tài dây chuyền toàn bộ bài đăng của họ.
+        // Gọi qua self (không phải this) để Spring proxy xử lý @Async đúng cách.
+        if (newReputationScore <= 0) {
+            log.info("[VIOLATION-APPROVE] Tài khoản userId={} vừa bị khóa — kích hoạt handleHostSanctionEvent", affectedUserId);
+            self.handleHostSanctionEvent(affectedUserId);
+        }
+
+        // Gửi thông báo xác nhận cho người đã gửi báo cáo (cảm ơn đã cộng đồng văn minh)
+        sendReporterConfirmNotification(report.getReporterId(), affectedUserId, reportId);
+
+        // Tổng hợp kết quả trả về cho Controller / Frontend Admin
+        Map<String, Object> result = new HashMap<>();
+        result.put("reportId", reportId);
+        result.put("violationCode", violationCode);
+        result.put("penaltyPoint", penaltyPoint);
+        result.put("targetUserId", affectedUserId);
+        result.put("hiddenPostId", hiddenPostId);
+        result.put("newReputationScore", newReputationScore);
+        result.put("userStatus", affectedUser.getStatus());
+        result.put("userViolationCount", affectedUser.getViolationCount());
+
+        log.info("[VIOLATION-APPROVE] ■ DONE — reportId={}, userId={}, score={}, status={}",
+                reportId, affectedUserId, newReputationScore, affectedUser.getStatus());
+        return result;
+    }
+
+    // =====================================================================
+    //  HELPER: Parse chuỗi violationCode → ViolationCode enum
+    // =====================================================================
+
+    /**
+     * Chuyển đổi chuỗi violationCode (từ request) thành ViolationCode enum.
+     * Ném IllegalArgumentException với danh sách mã hợp lệ nếu không nhận ra.
+     */
+    private ViolationCode parseViolationCode(String violationCodeStr) {
+        if (violationCodeStr == null || violationCodeStr.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Mã vi phạm (violationCode) không được để trống.");
+        }
+        try {
+            return ViolationCode.valueOf(violationCodeStr.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "Mã vi phạm '" + violationCodeStr + "' không hợp lệ. "
+                            + "Báo cáo USER hợp lệ: SPAM, INAPPROPRIATE, FRAUD, HARASSMENT, U_OTHER. "
+                            + "Báo cáo POST hợp lệ: SPAM_POST, MISLEADING, VULGAR, VIOLATION, BULLYING, P_OTHER.");
+        }
+    }
+
+    // =====================================================================
+    //  HELPER: Tính điểm phạt từ ViolationCode (hoặc customPenalty)
+    // =====================================================================
+
+    /**
+     * Xác định điểm phạt cuối cùng:
+     *   - Mã cố định → lấy thẳng từ Ma trận Enum (không cần thêm input)
+     *   - Mã "Khác" (U_OTHER / P_OTHER) → validate customPenalty ∈ [0, 50]
+     *                                     và adminNote có ít nhất 10 ký tự
+     */
+    private int determinePenaltyPoint(ViolationCode code, Integer customPenalty, String adminNote) {
+        if (!code.isCustomPenalty()) {
+            // Mã cố định — điểm phạt đã được định nghĩa sẵn trong Ma trận Enum
+            return code.getFixedPenaltyPoint();
+        }
+
+        // ====== Xử lý mã "Khác" (U_OTHER / P_OTHER) ======
+
+        // Kiểm tra adminNote: bắt buộc phải có ít nhất 10 ký tự giải trình
+        // để đảm bảo Admin có lý do rõ ràng khi không dùng mã có sẵn
+        if (adminNote == null || adminNote.trim().length() < 10) {
+            throw new IllegalArgumentException(
+                    "Khi chọn lý do 'Khác', Admin phải nhập ghi chú giải trình tối thiểu 10 ký tự.");
+        }
+
+        // Kiểm tra customPenalty: phải nằm trong khoảng [0, 50]
+        // theo yêu cầu nghiệp vụ — giới hạn trên 50 điểm để tránh lạm dụng
+        if (customPenalty == null || customPenalty < 0 || customPenalty > 50) {
+            throw new IllegalArgumentException(
+                    "Số điểm phạt tùy chỉnh cho lý do Khác phải nằm trong khoảng từ 0 đến 50 điểm!");
+        }
+
+        return customPenalty;
+    }
+
+    // =====================================================================
+    //  HELPER: Gửi thông báo xác nhận cho người đã gửi báo cáo
+    // =====================================================================
+
+    /**
+     * Gửi thông báo REPORT_CONFIRMED cho người đã báo cáo vi phạm:
+     * cảm ơn họ đã tham gia xây dựng cộng đồng văn minh.
+     * Dùng createNotificationForReportWithoutPush để tránh gửi FCM trùng lặp,
+     * sau đó gửi FCM riêng với title/body rõ ràng.
+     */
+    private void sendReporterConfirmNotification(Long reporterId, Long reportedUserId, Long reportId) {
+        try {
+            User reportedUser = userRepository.findById(reportedUserId).orElse(null);
+            String reportedName = displayName(reportedUser);
+
+            String confirmMsg = "Cảm ơn bạn đã gửi báo cáo. Hành vi vi phạm của người dùng "
+                    + reportedName
+                    + " đã được Admin xác minh và xử lý thành công. "
+                    + "Cảm ơn bạn đã chung tay xây dựng cộng đồng WeConnect văn minh!";
+
+            // Lưu DB + WebSocket (không gửi FCM tránh duplicate)
+            notificationService.createNotificationForReportWithoutPush(
+                    reporterId,
+                    Notification.NotificationType.REPORT_CONFIRMED,
+                    confirmMsg,
+                    "Admin",
+                    reportId);
+
+            // Gửi FCM push riêng với title thân thiện
+            User reporter = userRepository.findById(reporterId).orElse(null);
+            if (reporter != null) {
+                sendFcmToUserSafely(
+                        reporter,
+                        "🎉 Kết quả báo cáo vi phạm từ WeConnect",
+                        confirmMsg,
+                        "REPORTER_CONFIRMED",
+                        reportId);
+            }
+            log.info("[VIOLATION-APPROVE] ✔ Đã gửi REPORT_CONFIRMED cho reporterId={}", reporterId);
+        } catch (Exception e) {
+            // Notification cho reporter là kênh phụ — không rollback transaction chính
+            log.error("[VIOLATION-APPROVE] ✘ Gửi REPORT_CONFIRMED thất bại reporterId={}: {}",
+                    reporterId, e.getMessage());
+        }
+    }
+
     // === Admin: Xác nhận báo cáo hợp lệ (VALID) ===
 
     @Transactional
-    public Map<String, Object> approveReport(Long reportId, Long adminId, Integer penaltyPoint) {
+    public Map<String, Object> approveReport(Long reportId, Long adminId, Integer penaltyPoint, String adminNote) {
         log.info("[REPORT-APPROVE] START reportId={}, adminId={}, penaltyInput={}", reportId, adminId, penaltyPoint);
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
@@ -124,6 +429,9 @@ public class ReportService {
         report.setPenaltyPoint(penalty);
         report.setReviewedBy(adminId);
         report.setReviewedAt(LocalDateTime.now());
+        if (adminNote != null && !adminNote.isBlank()) {
+            report.setAdminAction(adminNote);
+        }
         reportRepository.save(report);
 
         boolean sanctionApplied = false;
@@ -149,18 +457,40 @@ public class ReportService {
         sendFcmToUserSafely(reporter, reporterTitle, reporterBody, "REPORTER_APPROVED", reportId);
 
         if (penalty > 0) {
-            // 2) Thong bao va che tai nguoi bi bao cao qua UserService de dung mot luong tru diem/khoa tai khoan.
-            // penaltyPoint da duoc luu o report VALID, nen overload nay khong cong vao violationPenaltySum.
-            String reportedTitle = "🚫 Cảnh báo xác nhận vi phạm từ Admin";
-            String reportedBody = "Hành vi của bạn đã bị cộng đồng báo cáo vi phạm tiêu chuẩn cộng đồng "
-                    + "và đã được Admin xác nhận. Bạn vừa bị trừ " + penalty + " điểm uy tín.";
-            userService.handleApprovedReportViolation(
-                    reportedUser.getId(), penalty, reportedTitle, reportedBody, "REPORT_APPROVE:" + reportId);
+            // 2) Tái tính điểm uy tín từ DB (penaltyPoint đã lưu vào report VALID ở trên).
+            // recalculateReputation() query SUM từ bảng reports nên tự tính được khoản phạt mới.
+            // ReputationSanctionService xử lý lock/ban nếu score về 0 (có idempotency guard).
+            reviewService.recalculateReputation(reportedUser.getId());
             sanctionApplied = true;
-            log.info("[REPORT-APPROVE] Da goi handleApprovedReportViolation targetUserId={}, penalty={}",
+            log.info("[REPORT-APPROVE] Da recalculate reputation targetUserId={}, penalty={}",
                     reportedUser.getId(), penalty);
+
+            // Gửi thông báo cụ thể cho người bị phạt (nếu score > 0 — chưa bị khóa)
+            User refreshed = userRepository.findById(reportedUser.getId()).orElse(reportedUser);
+            double newScore = refreshed.getReputationScore();
+            if (newScore > 0) {
+                String reportedTitle = "🚫 Cảnh báo xác nhận vi phạm từ Admin";
+                String reportedBody = "Hành vi của bạn đã bị cộng đồng báo cáo vi phạm tiêu chuẩn cộng đồng "
+                        + "và đã được Admin xác nhận. Bạn vừa bị trừ " + penalty
+                        + " điểm uy tín. Điểm còn lại: " + Math.round(newScore) + ".";
+                try {
+                    notificationService.createNotificationWithoutPush(
+                            refreshed.getId(), Notification.NotificationType.ADMIN_WARNING,
+                            reportedBody, "Admin");
+                } catch (Exception e) {
+                    log.error("[REPORT-APPROVE] Gửi ADMIN_WARNING thất bại userId={}: {}",
+                            refreshed.getId(), e.getMessage());
+                }
+                sendFcmToUserSafely(refreshed, reportedTitle, reportedBody, "REPORT_APPROVED", reportId);
+            }
+            // Nếu score <= 0: ReputationSanctionService đã gửi notification lock/ban.
+            // Kích hoạt xử lý dây chuyền bài đăng nếu tài khoản vừa bị khóa.
+            if (newScore <= 0) {
+                log.info("[REPORT-APPROVE] Tài khoản userId={} bị khóa — kích hoạt handleHostSanctionEvent", reportedUser.getId());
+                self.handleHostSanctionEvent(reportedUser.getId());
+            }
         } else {
-            log.info("[REPORT-APPROVE] Report {} penalty=0, bo qua luong tru diem user.", reportId);
+            log.info("[REPORT-APPROVE] Report {} penalty=0, bỏ qua luồng trừ điểm user.", reportId);
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -224,6 +554,303 @@ public class ReportService {
         post.setArchived(true);
         postRepository.save(post);
         return "Đã ẩn bài viết";
+    }
+
+    // === Admin: Phê duyệt báo cáo sai Tag — ẩn bài + trừ điểm + thông báo phạt tự động ===
+
+    @Transactional
+    public void approveWrongTagReport(Long reportId) {
+        log.info("[WRONG-TAG-APPROVE] START reportId={}", reportId);
+
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Report không tồn tại."));
+
+        if (report.getTargetType() != Report.TargetType.POST) {
+            throw new RuntimeException("Chỉ áp dụng cho báo cáo bài viết (targetType = POST).");
+        }
+        if (report.getStatus() == Report.Status.VALID) {
+            throw new RuntimeException("Report này đã được xử lý rồi.");
+        }
+
+        // Bước 1: Ẩn bài viết vi phạm
+        Post post = postRepository.findById(report.getTargetId())
+                .orElseThrow(() -> new RuntimeException("Bài viết bị báo cáo không còn tồn tại."));
+        Long authorId = post.getAuthorId();
+        post.setArchived(true);
+        postRepository.save(post);
+        log.info("[WRONG-TAG-APPROVE] Da an bai viet postId={}, authorId={}", post.getId(), authorId);
+
+        // Bước 2: Đánh dấu Report đã xem và cập nhật trạng thái
+        report.setAdminViewed(true);
+        report.setStatus(Report.Status.VALID);
+        report.setPenaltyPoint(10);
+        report.setReviewedAt(LocalDateTime.now());
+        reportRepository.save(report);
+
+        // Bước 3: Tái tính điểm uy tín từ DB (report vừa được lưu VALID với penaltyPoint=10 ở trên,
+        // nên recalculateReputation() sẽ tự cộng khoản phạt này qua SQL SUM).
+        // KHÔNG gọi handleUserViolation() vì sẽ tạo thêm SystemViolationLog — double-counting.
+        reviewService.recalculateReputation(authorId);
+        log.info("[WRONG-TAG-APPROVE] Da recalculate reputation authorId={}", authorId);
+
+        // Bước 4: Gửi thông báo kỷ luật realtime (lưu DB + WebSocket + FCM push)
+        String penaltyMessage = "Bài viết của bạn đã bị hệ thống gỡ bỏ và tài khoản bị trừ 10 điểm uy tín do hành vi cố tình gắn sai thẻ tag sở thích để câu tương tác bừa bãi.";
+        try {
+            notificationService.createNotificationForReport(
+                    authorId, Notification.NotificationType.REPORT_PENALTY, penaltyMessage, null, reportId);
+            log.info("[WRONG-TAG-APPROVE] Da gui REPORT_PENALTY notification authorId={}, reportId={}", authorId, reportId);
+        } catch (Exception e) {
+            log.error("[WRONG-TAG-APPROVE] Gui notification that bai, tiep tuc xu ly reportId={}, authorId={}, error={}",
+                    reportId, authorId, e.getMessage(), e);
+        }
+
+        log.info("[WRONG-TAG-APPROVE] DONE reportId={}, authorId={}", reportId, authorId);
+    }
+
+    // =====================================================================
+    // === XỬ LÝ CHẾ TÀI DÂY CHUYỀN KHI HOST BỊ KHÓA TÀI KHOẢN         ===
+    // =====================================================================
+    //
+    // Được gọi sau khi ReputationSanctionService đã khóa tài khoản Host.
+    // Phương thức này chạy bất đồng bộ (@Async) trong một transaction riêng
+    // để không block luồng chính xử lý lệnh phê duyệt của Admin.
+    //
+    // PHÂN LOẠI 3 MỐC THỜI GIAN:
+    //   Case 1 (Quá khứ)  : now > endTime → GIỮ NGUYÊN lịch sử
+    //   Case 2 (Tương lai): now < startTime → HỦY hoạt động + đóng phòng + FCM thành viên
+    //   Case 3 (Hiện tại) : startTime ≤ now ≤ endTime → ĐÓNG BĂNG tuyển thành viên mới
+    //
+    // @param hostId  userId của Host vừa bị hệ thống khóa tài khoản
+
+    @Async
+    @Transactional
+    public void handleHostSanctionEvent(Long hostId) {
+        log.info("[HOST-SANCTION] ▶ START — hostId={}", hostId);
+
+        // Tìm tất cả bài đăng do hostId tạo và chưa bị xóa cứng
+        List<Post> hostPosts = postRepository.findByAuthorId(hostId);
+        if (hostPosts.isEmpty()) {
+            log.info("[HOST-SANCTION] Không tìm thấy bài đăng nào của hostId={}", hostId);
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        log.info("[HOST-SANCTION] Tìm thấy {} bài đăng của hostId={}", hostPosts.size(), hostId);
+
+        for (Post post : hostPosts) {
+            // Bỏ qua bài đăng đã bị xóa cứng (archived do báo cáo trước đó)
+            if (post.isArchived()) {
+                log.debug("[HOST-SANCTION] postId={} đã archived → bỏ qua", post.getId());
+                continue;
+            }
+
+            try {
+                processSinglePost(post, hostId, now);
+            } catch (Exception e) {
+                // Lỗi 1 post không làm dừng toàn bộ vòng lặp
+                log.error("[HOST-SANCTION] ✘ Lỗi khi xử lý postId={}: {}",
+                        post.getId(), e.getMessage(), e);
+            }
+        }
+
+        log.info("[HOST-SANCTION] ■ DONE — hostId={}", hostId);
+    }
+
+    // Phân loại và xử lý từng bài đăng theo 3 mốc thời gian
+    private void processSinglePost(Post post, Long hostId, LocalDateTime now) {
+        Long postId = post.getId();
+        LocalDateTime startTime = post.getStartTime();
+        LocalDateTime endTime = post.getEndTime();
+
+        // ================================================================
+        // CASE 1: HOẠT ĐỘNG ĐÃ KẾT THÚC (Quá khứ)
+        // Điều kiện: endTime đã qua HOẶC bài đã cancelled (trạng thái hoàn tất)
+        // ================================================================
+        boolean isPast = (endTime != null && now.isAfter(endTime)) || post.isCancelled();
+        if (isPast) {
+            log.info("[HOST-SANCTION] postId={} → Case 1: ĐÃ KẾT THÚC — giữ nguyên lịch sử", postId);
+            // Không làm gì — bảo toàn toàn bộ dữ liệu lịch sử tham gia của thành viên
+            return;
+        }
+
+        // ================================================================
+        // CASE 2: HOẠT ĐỘNG SẮP DIỄN RA (Tương lai)
+        // Điều kiện: thời điểm hiện tại còn chưa đến startTime
+        // ================================================================
+        boolean isFuture = (startTime != null && now.isBefore(startTime));
+        if (isFuture) {
+            log.info("[HOST-SANCTION] postId={} → Case 2: SẮP DIỄN RA — hủy + đóng phòng + FCM", postId);
+            handleFuturePost(post, hostId, now);
+            return;
+        }
+
+        // ================================================================
+        // CASE 3: HOẠT ĐỘNG ĐANG DIỄN RA (Hiện tại)
+        // Điều kiện: startTime ≤ now ≤ endTime (hoặc startTime null mà endTime chưa qua)
+        // ================================================================
+        log.info("[HOST-SANCTION] postId={} → Case 3: ĐANG DIỄN RA — đóng băng tuyển thành viên", postId);
+        handleOngoingPost(post, hostId, now);
+    }
+
+    // ================================================================
+    // CASE 2 HANDLER: Hủy hoàn toàn hoạt động sắp diễn ra
+    // ================================================================
+    private void handleFuturePost(Post post, Long hostId, LocalDateTime now) {
+        Long postId = post.getId();
+
+        // Bước 2.1: Đánh dấu bài đăng đã bị hủy bởi hệ thống
+        // Dùng cancelled=true để phân biệt với archived (vi phạm nội dung)
+        post.setCancelled(true);
+        postRepository.save(post);
+        log.info("[HOST-SANCTION] postId={} → đã set cancelled=true (CANCELED_BY_SYSTEM)", postId);
+
+        // Bước 2.2: Đóng hoàn toàn phòng chat — các thành viên không thể nhắn tin tiếp
+        ChatRoom room = chatRoomRepository.findByPostId(postId).orElse(null);
+        if (room != null) {
+            room.setActive(false);
+            // Dùng label riêng để phân biệt với cancel do host chủ động (CANCELLED)
+            room.setInactiveStatusLabel("HOST_LOCKED");
+            chatRoomRepository.save(room);
+            log.info("[HOST-SANCTION] postId={} → roomId={} đã đóng (HOST_LOCKED)", postId, room.getId());
+
+            // Bước 2.3: Push WebSocket event ACTIVITY_CANCELLED để Android dismiss màn hình chat ngay lập tức
+            List<ChatRoomMember> roomMembers = chatRoomMemberRepository.findByRoomId(room.getId());
+            for (ChatRoomMember member : roomMembers) {
+                messagingTemplate.convertAndSendToUser(
+                        member.getUserId().toString(),
+                        "/queue/room-events",
+                        Map.of("type", "ACTIVITY_CANCELLED", "roomId", room.getId())
+                );
+            }
+        }
+
+        // Bước 2.4: Gửi FCM thông báo hủy đến toàn bộ thành viên đã được APPROVED
+        List<Long> approvedUserIds = postMemberRepository.findApprovedUserIdsByPostId(postId);
+        log.info("[HOST-SANCTION] postId={} → {} thành viên APPROVED sẽ được thông báo hủy", postId, approvedUserIds.size());
+
+        for (Long memberId : approvedUserIds) {
+            if (memberId.equals(hostId)) continue; // Bỏ qua Host chính (đang bị khóa)
+
+            try {
+                User member = userRepository.findById(memberId).orElse(null);
+                if (member == null) continue;
+
+                // Lưu notification vào DB + WebSocket (không FCM để gửi riêng bên dưới)
+                notificationService.createNotificationWithoutPush(
+                        memberId,
+                        Notification.NotificationType.ACTIVITY_CANCELLED,
+                        "Hoạt động \"" + truncate(post.getContent(), 40) + "\" đã bị hủy do tài khoản "
+                                + "người tổ chức vi phạm tiêu chuẩn cộng đồng. Chúng tôi xin lỗi vì sự bất tiện này.",
+                        "WeConnect");
+
+                // FCM push để thông báo khi app đang tắt màn hình
+                if (member.getFcmToken() != null && !member.getFcmToken().isBlank()) {
+                    Map<String, String> data = new HashMap<>();
+                    data.put("type", "ACTIVITY_CANCELLED");
+                    data.put("postId", String.valueOf(postId));
+                    fcmService.sendNotification(
+                            member.getFcmToken(),
+                            "🚫 Hoạt động đã bị hủy",
+                            "Hoạt động bạn đã đăng ký tham gia vừa bị hủy do tổ chức vi phạm quy định.",
+                            data);
+                }
+            } catch (Exception e) {
+                log.error("[HOST-SANCTION] Gửi thông báo hủy cho memberId={} thất bại: {}", memberId, e.getMessage());
+            }
+        }
+    }
+
+    // ================================================================
+    // CASE 3 HANDLER: Đóng băng tuyển thành viên, giữ nguyên hoạt động
+    // ================================================================
+    private void handleOngoingPost(Post post, Long hostId, LocalDateTime now) {
+        Long postId = post.getId();
+
+        // Bước 3.1: GIỮ NGUYÊN trạng thái bài đăng và KHÔNG đóng phòng chat.
+        // Các thành viên APPROVED vẫn dùng phòng chat để phục vụ buổi gặp mặt thực tế.
+        // Phòng chat chủ động KHÔNG gọi room.setActive(false).
+
+        // Bước 3.2: Tước quyền nhắn tin của Host → được xử lý tại
+        //           ChatService.sendMessage() bằng cách kiểm tra trạng thái tài khoản Host.
+        //           (Xem phần "Kiểm tra Host bị khóa trong phòng hoạt động" tại ChatService)
+        log.info("[HOST-SANCTION] postId={} → Bước 3.2: Host sẽ bị chặn tại ChatService.sendMessage()", postId);
+
+        // Bước 3.3: Tự động từ chối tất cả yêu cầu PENDING → REJECTED_BY_SYSTEM
+        int rejectedCount = postMemberRepository.rejectAllPendingByPostId(postId);
+        log.info("[HOST-SANCTION] postId={} → Bước 3.3: {} yêu cầu PENDING → REJECTED_BY_SYSTEM", postId, rejectedCount);
+
+        // Bước 3.4: Chèn tin nhắn hệ thống vào phòng chat realtime
+        ChatRoom room = chatRoomRepository.findByPostId(postId).orElse(null);
+        if (room != null) {
+            String warningMessage =
+                    "⚠️ Cảnh báo bảo mật: Tài khoản của người tổ chức hoạt động này vừa bị hệ thống " +
+                    "khóa do vi phạm tiêu chuẩn cộng đồng. Hoạt động hiện tại tạm dừng nhận thành viên " +
+                    "mới. Các thành viên có mặt vui lòng cẩn trọng khi tương tác và tự bảo vệ thông tin " +
+                    "cá nhân.";
+
+            // Lưu vào DB với type="SYSTEM" và broadcast realtime qua STOMP /topic/chat/{roomId}
+            ChatMessage sysMsg = ChatMessage.builder()
+                    .roomId(room.getId())
+                    .senderId(0L)           // senderId=0 → đây là tin nhắn hệ thống
+                    .content(warningMessage)
+                    .type("SYSTEM")
+                    .build();
+            ChatMessage savedMsg = chatMessageRepository.save(sysMsg);
+            log.info("[HOST-SANCTION] postId={} → roomId={} → Đã lưu SYSTEM message id={}", postId, room.getId(), savedMsg.getId());
+
+            // Broadcast tới tất cả client đang subscribe /topic/chat/{roomId}
+            // Dùng ChatMessageResponse DTO (không dùng Map) để tránh overload ambiguity
+            ChatMessageResponse sysResponse = ChatMessageResponse.builder()
+                    .id(savedMsg.getId())
+                    .roomId(savedMsg.getRoomId())
+                    .senderId(0L)
+                    .senderName("")
+                    .content(savedMsg.getContent())
+                    .type("SYSTEM")
+                    .sentByCurrentUser(false)
+                    .createdAt(savedMsg.getCreatedAt())
+                    .build();
+            messagingTemplate.convertAndSend("/topic/chat/" + room.getId(), sysResponse);
+
+            // Cập nhật lastMessage cho từng member (để chat-list hiển thị tin nhắn mới)
+            List<ChatRoomMember> roomMembers = chatRoomMemberRepository.findByRoomId(room.getId());
+            for (ChatRoomMember member : roomMembers) {
+                messagingTemplate.convertAndSendToUser(
+                        member.getUserId().toString(),
+                        "/queue/chat-list",
+                        Map.of("roomId", room.getId())
+                );
+            }
+        } else {
+            log.warn("[HOST-SANCTION] postId={} → Không tìm thấy ChatRoom → bỏ qua Bước 3.4", postId);
+        }
+
+        // Bước 3.5 (Tùy chọn): Gửi FCM thông báo cho thành viên APPROVED về sự việc
+        List<Long> approvedUserIds = postMemberRepository.findApprovedUserIdsByPostId(postId);
+        for (Long memberId : approvedUserIds) {
+            if (memberId.equals(hostId)) continue;
+            try {
+                User member = userRepository.findById(memberId).orElse(null);
+                if (member == null || member.getFcmToken() == null || member.getFcmToken().isBlank()) continue;
+                Map<String, String> data = new HashMap<>();
+                data.put("type", "HOST_LOCKED_WARNING");
+                data.put("postId", String.valueOf(postId));
+                fcmService.sendNotification(
+                        member.getFcmToken(),
+                        "⚠️ Cảnh báo bảo mật từ WeConnect",
+                        "Người tổ chức hoạt động bạn đang tham gia vừa bị hệ thống khóa tài khoản. "
+                                + "Vui lòng cẩn trọng.",
+                        data);
+            } catch (Exception e) {
+                log.error("[HOST-SANCTION] FCM warning cho memberId={} thất bại: {}", memberId, e.getMessage());
+            }
+        }
+    }
+
+    // Cắt ngắn chuỗi, tránh NPE
+    private String truncate(String s, int maxLen) {
+        if (s == null) return "hoạt động";
+        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "…";
     }
 
     // === Admin: Xóa bài viết từ report (POST target only) ===
@@ -430,6 +1057,36 @@ public class ReportService {
 
         User user = userRepository.findById(userId).orElse(null);
         map.put("currentReputationScore", user != null ? user.getReputationScore() : null);
+
+        if (report.getTargetType() == Report.TargetType.POST) {
+            Post post = postRepository.findById(report.getTargetId()).orElse(null);
+            if (post != null) map.put("postContent", post.getContent());
+        }
+
+        return map;
+    }
+
+    public Map<String, Object> getReporterReportDetail(Long reportId, Long userId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy báo cáo."));
+
+        if (!userId.equals(report.getReporterId())) {
+            throw new RuntimeException("Bạn không có quyền xem báo cáo này.");
+        }
+
+        Long targetUserId = resolveTargetUserId(report);
+        User targetUser = targetUserId != null ? userRepository.findById(targetUserId).orElse(null) : null;
+        String targetUserName = displayName(targetUser);
+
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", report.getId());
+        map.put("targetType", report.getTargetType().name());
+        map.put("targetUserName", targetUserName);
+        map.put("reason", report.getReason());
+        map.put("status", report.getStatus().name());
+        map.put("penaltyPoint", report.getPenaltyPoint() != null ? report.getPenaltyPoint() : 0);
+        map.put("adminAction", report.getAdminAction());
+        map.put("reviewedAt", report.getReviewedAt());
 
         if (report.getTargetType() == Report.TargetType.POST) {
             Post post = postRepository.findById(report.getTargetId()).orElse(null);

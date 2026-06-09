@@ -3,46 +3,60 @@ package com.weconnect.backend.config;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.service.ReviewService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 
 @Configuration
 public class AdminAccountInitializer {
 
-    private static final String ADMIN_EMAIL = "admin@weconnect.com";
-    private static final String ADMIN_PASSWORD = "admin123";
-    private static final String ADMIN_NAME = "Admin WeConnect";
+    private static final String DEFAULT_ADMIN_NAME = "Admin WeConnect";
 
-    // Migrate: đổi cột status từ ENUM sang VARCHAR rồi cập nhật giá trị cũ
+    @Value("${app.admin.email:admin@weconnect.com}")
+    private String adminEmail;
+
+    @Value("${app.admin.password:}")
+    private String adminPassword;
+
+    @Value("${app.admin.full-name:Admin WeConnect}")
+    private String adminFullName;
+
+    @Value("${app.migration.report-status-on-startup:false}")
+    private boolean migrateReportStatusOnStartup;
+
+    @Value("${app.migration.recalculate-reputation-on-startup:false}")
+    private boolean recalculateReputationOnStartup;
+
     @Bean
     @Order(0)
     public CommandLineRunner migrateReportStatuses(JdbcTemplate jdbcTemplate) {
         return args -> {
+            if (!migrateReportStatusOnStartup) {
+                return;
+            }
+
             try {
-                jdbcTemplate.execute(
-                    "ALTER TABLE notifications MODIFY COLUMN type VARCHAR(50) NOT NULL");
+                jdbcTemplate.execute("ALTER TABLE notifications MODIFY COLUMN type VARCHAR(50) NOT NULL");
                 System.out.println("Notification migration: notifications.type = VARCHAR(50)");
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
 
-            // Đổi ENUM → VARCHAR để thoát khỏi ràng buộc enum cũ (PENDING/REVIEWED/RESOLVED)
-            // Nếu column đã là VARCHAR thì lệnh này vẫn chạy được (idempotent)
             try {
-                jdbcTemplate.execute(
-                    "ALTER TABLE reports MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'PENDING'");
-            } catch (Exception ignored) {}
+                jdbcTemplate.execute("ALTER TABLE reports MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'PENDING'");
+            } catch (Exception ignored) {
+            }
 
-            int toValid = jdbcTemplate.update(
-                    "UPDATE reports SET status = 'VALID' WHERE status = 'RESOLVED'");
-            int toPending = jdbcTemplate.update(
-                    "UPDATE reports SET status = 'PENDING' WHERE status = 'REVIEWED'");
+            int toValid = jdbcTemplate.update("UPDATE reports SET status = 'VALID' WHERE status = 'RESOLVED'");
+            int toPending = jdbcTemplate.update("UPDATE reports SET status = 'PENDING' WHERE status = 'REVIEWED'");
             if (toValid > 0 || toPending > 0) {
-                System.out.println("✅ Report migration: " + toValid + " RESOLVED→VALID, " + toPending + " REVIEWED→PENDING");
+                System.out.println("Report migration: " + toValid + " RESOLVED->VALID, " + toPending + " REVIEWED->PENDING");
             }
         };
     }
@@ -52,39 +66,59 @@ public class AdminAccountInitializer {
     public CommandLineRunner initAdminAccount(UserRepository userRepository,
                                               PasswordEncoder passwordEncoder) {
         return args -> {
-            if (userRepository.findByEmail(ADMIN_EMAIL).isEmpty()) {
-                User admin = User.builder()
-                        .email(ADMIN_EMAIL)
-                        .password(passwordEncoder.encode(ADMIN_PASSWORD))
-                        .fullName(ADMIN_NAME)
-                        .role(1)
-                        .isBlocked(false)
-                        .build();
-                userRepository.save(admin);
-                System.out.println("✅ Tài khoản Admin đã được tạo: " + ADMIN_EMAIL);
-            } else {
-                System.out.println("ℹ️ Tài khoản Admin đã tồn tại: " + ADMIN_EMAIL);
+            String email = adminEmail == null ? "admin@weconnect.com" : adminEmail.trim();
+            String fullName = StringUtils.hasText(adminFullName) ? adminFullName.trim() : DEFAULT_ADMIN_NAME;
+
+            var existingAdmin = userRepository.findByEmail(email);
+            if (existingAdmin.isPresent()) {
+                if (StringUtils.hasText(adminPassword)) {
+                    User admin = existingAdmin.get();
+                    admin.setPassword(passwordEncoder.encode(adminPassword));
+                    admin.setRole(1);
+                    if (!StringUtils.hasText(admin.getFullName())) {
+                        admin.setFullName(fullName);
+                    }
+                    userRepository.save(admin);
+                    System.out.println("Admin account password updated from ADMIN_DEFAULT_PASSWORD: " + email);
+                } else {
+                    System.out.println("Admin account already exists: " + email);
+                }
+                return;
             }
+
+            if (!StringUtils.hasText(adminPassword)) {
+                System.out.println("Admin account was not created because ADMIN_DEFAULT_PASSWORD is not set.");
+                return;
+            }
+
+            User admin = User.builder()
+                    .email(email)
+                    .password(passwordEncoder.encode(adminPassword))
+                    .fullName(fullName)
+                    .role(1)
+                    .isBlocked(false)
+                    .build();
+            userRepository.save(admin);
+            System.out.println("Admin account created from environment config: " + email);
         };
     }
 
-    // Tính lại reputationScore cho tất cả user theo công thức mới:
-    // ratingScore = avgRating/5*100 (hoặc 60 nếu chưa có review)
-    // reportPenalty = tổng penaltyPoint từ báo cáo VALID
-    // score = clamp(ratingScore - reportPenalty, 0, 100)
     @Bean
     @Order(2)
     public CommandLineRunner migrateReputationScores(UserRepository userRepository,
                                                      ReviewService reviewService) {
         return args -> {
+            if (!recalculateReputationOnStartup) {
+                return;
+            }
+
             List<User> users = userRepository.findAll();
             for (User user : users) {
-                // Reset adminPenalty (không còn dùng trong công thức mới)
                 user.setAdminPenalty(0.0);
                 userRepository.save(user);
                 reviewService.recalculateReputation(user.getId());
             }
-            System.out.println("✅ Migrated " + users.size() + " user(s): reputationScore = rating-based - reportPenalty");
+            System.out.println("Migrated " + users.size() + " user(s): reputationScore = rating-based - reportPenalty");
         };
     }
 }

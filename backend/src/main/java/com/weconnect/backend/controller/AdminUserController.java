@@ -9,6 +9,8 @@ import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.ReportRepository;
 import com.weconnect.backend.repository.UserRepository;
 import com.weconnect.backend.repository.UserReviewRepository;
+import com.weconnect.backend.service.ReportService;
+import com.weconnect.backend.service.ReputationSanctionService;
 import com.weconnect.backend.service.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -26,16 +28,22 @@ public class AdminUserController {
     private final PostMemberRepository postMemberRepository;
     private final UserReviewRepository userReviewRepository;
     private final ReportRepository reportRepository;
+    private final ReputationSanctionService reputationSanctionService;
+    private final ReportService reportService;
 
     public AdminUserController(UserRepository userRepository, UserService userService,
                                PostRepository postRepository, PostMemberRepository postMemberRepository,
-                               UserReviewRepository userReviewRepository, ReportRepository reportRepository) {
+                               UserReviewRepository userReviewRepository, ReportRepository reportRepository,
+                               ReputationSanctionService reputationSanctionService,
+                               ReportService reportService) {
         this.userRepository = userRepository;
         this.userService = userService;
         this.postRepository = postRepository;
         this.postMemberRepository = postMemberRepository;
         this.userReviewRepository = userReviewRepository;
         this.reportRepository = reportRepository;
+        this.reputationSanctionService = reputationSanctionService;
+        this.reportService = reportService;
     }
 
     // Lấy tất cả users (cho admin web)
@@ -62,7 +70,9 @@ public class AdminUserController {
                 .result(toAdminMap(userOpt.get())).build());
     }
 
-    // Block user
+    // Khóa tài khoản người dùng (Admin chủ động)
+    // Luồng đầy đủ: set LOCKED_TEMP + WebSocket ACCOUNT_LOCKED + FCM FORCE_LOGOUT
+    //               + handleHostSanctionEvent() async để xử lý cascade bài đăng / phòng chat
     @PutMapping("/{id}/block")
     public ResponseEntity<?> blockUser(@PathVariable Long id) {
         Optional<User> userOpt = userRepository.findById(id);
@@ -71,14 +81,24 @@ public class AdminUserController {
                     .code(1003).message("Không tìm thấy user").build());
         }
         User user = userOpt.get();
-        user.setBlocked(true);
-        userRepository.save(user);
+
+        // Bước 1: Khóa tài khoản đúng cách (set status + lockUntil + isBlocked + WS + FCM)
+        boolean locked = reputationSanctionService.lockAccountByAdmin(user.getId());
+
+        // Bước 2: Kích hoạt xử lý dây chuyền bài đăng / phòng chat của Host bị khóa.
+        // Gọi trực tiếp trên Spring bean (không phải this) → @Async proxy hoạt động đúng.
+        if (locked) {
+            reportService.handleHostSanctionEvent(user.getId());
+        }
+
+        // Đọc lại user để trả về trạng thái mới nhất
+        User updated = userRepository.findById(id).orElse(user);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã khóa tài khoản")
-                .result(toAdminMap(user)).build());
+                .result(toAdminMap(updated)).build());
     }
 
-    // Unblock user
+    // Mở khóa tài khoản người dùng
     @PutMapping("/{id}/unblock")
     public ResponseEntity<?> unblockUser(@PathVariable Long id) {
         Optional<User> userOpt = userRepository.findById(id);
@@ -86,12 +106,12 @@ public class AdminUserController {
             return ResponseEntity.status(404).body(ApiResponse.builder()
                     .code(1003).message("Không tìm thấy user").build());
         }
-        User user = userOpt.get();
-        user.setBlocked(false);
-        userRepository.save(user);
+        // Reset status ACTIVE + xóa lockUntil + isBlocked = false
+        reputationSanctionService.unlockAccountByAdmin(id);
+        User updated = userRepository.findById(id).orElse(userOpt.get());
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Đã mở khóa tài khoản")
-                .result(toAdminMap(user)).build());
+                .result(toAdminMap(updated)).build());
     }
 
     // Xóa user
@@ -141,6 +161,8 @@ public class AdminUserController {
         map.put("fullName", user.getFullName());
         map.put("birthday", user.getBirthday());
         map.put("gender", user.getGender());
+        map.put("provinceId", user.getProvinceId());
+        map.put("provinceName", user.getProvinceName());
         map.put("avatarUrl", user.getAvatarUrl());
         map.put("bio", user.getBio());
 

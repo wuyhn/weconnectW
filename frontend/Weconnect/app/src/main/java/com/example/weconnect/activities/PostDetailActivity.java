@@ -20,6 +20,8 @@ import com.example.weconnect.models.ChatRoomApiResponse;
 import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
 import com.example.weconnect.models.PostResponse;
+import com.example.weconnect.utils.InterestTextUtils;
+import com.example.weconnect.utils.JoinRequestHelper;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.Map;
@@ -127,24 +129,30 @@ public class PostDetailActivity extends AppCompatActivity {
         btnDetailMembers.setText("👥 " + post.getMemberCount() + "/" + post.getMaxMembers());
 
         // Chỉ cập nhật join button nếu user chưa joined / pending
-        String currentUser = RetrofitClient.getUserName(this);
+        // Tính lại diffMs tại thời điểm gọi để đảm bảo giá trị mới nhất
         long myId = RetrofitClient.getUserId(this);
-        boolean isOwnPost = (currentUser != null && currentUser.equalsIgnoreCase(username))
-                || (myId > 0 && post.getAuthorId() == myId);
+        boolean isOwnPost = myId > 0 && post.getAuthorId() == myId;
 
         if (!isOwnPost && !post.isJoined() && !post.isPendingApproval()) {
-            if (post.isArchived() || post.isExpired()) {
+            long currentDiffMs = post.getEndTimeMillis() > 0
+                    ? post.getEndTimeMillis() - System.currentTimeMillis()
+                    : -1L;
+
+            if (post.isArchived() || (post.getEndTimeMillis() > 0 && currentDiffMs <= 0)) {
+                // Hết hạn: khóa nút, đồng bộ với trạng thái hiển thị countdown
                 btnDetailJoin.setText("Hoạt động đã kết thúc");
                 btnDetailJoin.setEnabled(false);
                 btnDetailJoin.setAlpha(0.5f);
                 btnDetailJoin.setOnClickListener(null);
             } else if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
+                // Đã đầy thành viên
                 btnDetailJoin.setText("Đã đủ thành viên");
                 btnDetailJoin.setEnabled(false);
                 btnDetailJoin.setAlpha(0.6f);
                 btnDetailJoin.setOnClickListener(null);
             } else {
-                btnDetailJoin.setText("Tham gia");
+                // Vẫn còn slot → cho phép gửi yêu cầu
+                btnDetailJoin.setText("Gửi yêu cầu tham gia");
                 btnDetailJoin.setEnabled(true);
                 btnDetailJoin.setAlpha(1f);
                 btnDetailJoin.setOnClickListener(v -> joinPost());
@@ -184,8 +192,8 @@ public class PostDetailActivity extends AppCompatActivity {
             if (post == null) return;
             Intent intent = new Intent(PostDetailActivity.this, UserProfileActivity.class);
             intent.putExtra("username", username);
-            String currentUser = RetrofitClient.getUserName(this);
-            if (currentUser == null || !username.equalsIgnoreCase(currentUser)) {
+            long myId = RetrofitClient.getUserId(this);
+            if (myId <= 0 || post.getAuthorId() != myId) {
                 intent.putExtra("view_other", true);
                 if (post.getAuthorId() > 0) intent.putExtra("user_id", post.getAuthorId());
             }
@@ -223,6 +231,13 @@ public class PostDetailActivity extends AppCompatActivity {
             }
         }
         tvPostDetailContent.setText(post.getContent());
+
+        // ── Single Source of Truth cho toàn bộ màn hình chi tiết ──
+        // diffMs được tính một lần từ endTimeMillis, dùng chung cho cả countdown
+        // lẫn trạng thái nút Tham gia để đảm bảo không bao giờ bị lệch pha.
+        long diffMs = post.getEndTimeMillis() > 0
+                ? post.getEndTimeMillis() - System.currentTimeMillis()
+                : -1L;
 
         // Show activity date/time rows if activityEndTime is set
         String activityEndTimeStr = post.getActivityEndTimeStr();
@@ -262,29 +277,34 @@ public class PostDetailActivity extends AppCompatActivity {
                     }
                 }
 
-                // Post expiry = activity end time → show remaining time
-                long now = System.currentTimeMillis();
-                long diffMs = actEndDate.getTime() - now;
+                // ── Countdown hiển thị ──
+                // Dùng diffMs đã tính từ endTimeMillis (không phụ thuộc actEndDate)
+                // để đảm bảo giá trị luôn đồng bộ với trạng thái nút Tham gia bên dưới.
                 String expiryLabel;
                 if (diffMs <= 0) {
-                    expiryLabel = "Đã hết hạn";
+                    // Hoạt động đã kết thúc
+                    expiryLabel = "Hoạt động đã kết thúc";
                 } else {
-                    long diffMin = diffMs / (60_000L);
+                    long diffMin  = diffMs / 60_000L;
                     long diffHour = diffMin / 60;
-                    long diffDay = diffHour / 24;
+                    long diffDay  = diffHour / 24;
                     if (diffDay >= 1) {
                         long remHours = diffHour % 24;
-                        expiryLabel = "Còn " + diffDay + " ngày" + (remHours > 0 ? " " + remHours + " giờ" : "");
+                        expiryLabel = "Còn " + diffDay + " ngày"
+                                + (remHours > 0 ? " " + remHours + " giờ" : "");
                     } else if (diffHour >= 1) {
-                        expiryLabel = "Còn " + diffHour + " giờ";
+                        long remMins = diffMin % 60;
+                        expiryLabel = "Còn " + diffHour + " giờ"
+                                + (remMins > 0 ? " " + remMins + " phút" : "");
                     } else {
-                        expiryLabel = "Còn " + diffMin + " phút";
+                        expiryLabel = "Còn " + Math.max(1, diffMin) + " phút";
                     }
                 }
                 String postedDateStr = post.getPostedDate();
                 String postedLine = (postedDateStr != null && !postedDateStr.isEmpty())
                         ? "🕐 Đăng lúc: " + postedDateStr + "\n" : "";
-                tvPostDetailTime.setText(postedLine + "⏳ Thời hạn bài viết: " + expiryLabel);
+                // Nhãn "Thời hạn đăng ký" = thời điểm hệ thống không còn nhận yêu cầu tham gia
+                tvPostDetailTime.setText(postedLine + "⏳ Thời hạn đăng ký: " + expiryLabel);
             } catch (Exception e) {
                 if (tvPostDetailActivityDate != null) tvPostDetailActivityDate.setVisibility(android.view.View.GONE);
                 if (tvPostDetailActivityTime != null) tvPostDetailActivityTime.setVisibility(android.view.View.GONE);
@@ -326,7 +346,7 @@ public class PostDetailActivity extends AppCompatActivity {
 
         if (post.getInterestTag() != null && post.getInterestTag().length() > 0) {
             tvPostDetailTag.setVisibility(View.VISIBLE);
-            tvPostDetailTag.setText(post.getInterestTag());
+            tvPostDetailTag.setText(InterestTextUtils.stripLeadingIcon(post.getInterestTag()));
         } else {
             tvPostDetailTag.setVisibility(View.GONE);
         }
@@ -361,38 +381,50 @@ public class PostDetailActivity extends AppCompatActivity {
             return;
         }
 
-        // Join/Chat button — state theo role
-        String currentUser = RetrofitClient.getUserName(this);
+        // ── Trạng thái nút hành động chính ──
+        // Sử dụng diffMs (đã tính ở trên từ endTimeMillis) làm trục thời gian duy nhất.
+        // Thứ tự ưu tiên kiểm tra: chủ phòng → đã tham gia → chờ duyệt → hết hạn → đủ thành viên → có thể tham gia
         long myId = RetrofitClient.getUserId(this);
-        boolean isOwnPost = (currentUser != null && currentUser.equalsIgnoreCase(username))
-                || (myId > 0 && post.getAuthorId() == myId);
+        boolean isOwnPost = myId > 0 && post.getAuthorId() == myId;
 
         if (isOwnPost) {
+            // Chủ phòng: luôn có thể vào nhóm chat của mình
             btnDetailJoin.setText("💬 Nhóm chat");
             btnDetailJoin.setEnabled(true);
             btnDetailJoin.setAlpha(1f);
             btnDetailJoin.setOnClickListener(v -> openRelatedGroupChat());
+
         } else if (post.isJoined()) {
-            btnDetailJoin.setText("💬 Mở nhóm chat");
+            // Trạng thái APPROVED: đã được duyệt → mở phòng chat
+            btnDetailJoin.setText("Đã tham gia (Vào phòng chat)");
             btnDetailJoin.setEnabled(true);
             btnDetailJoin.setAlpha(1f);
             btnDetailJoin.setOnClickListener(v -> openRelatedGroupChat());
+
         } else if (post.isPendingApproval()) {
-            btnDetailJoin.setText("⏳ Đang chờ duyệt");
+            // Trạng thái PENDING: đang chờ chủ phòng duyệt, disable để tránh gửi trùng
+            btnDetailJoin.setText("Đang chờ chủ phòng duyệt...");
             btnDetailJoin.setEnabled(false);
             btnDetailJoin.setAlpha(0.6f);
-        } else if (post.isArchived() || post.isExpired()) {
+            btnDetailJoin.setOnClickListener(null);
+
+        } else if (post.isArchived() || (post.getEndTimeMillis() > 0 && diffMs <= 0)) {
+            // Hết hạn: diffMs <= 0 nghĩa là endTime đã qua, không còn nhận yêu cầu
             btnDetailJoin.setText("Hoạt động đã kết thúc");
             btnDetailJoin.setEnabled(false);
             btnDetailJoin.setAlpha(0.5f);
             btnDetailJoin.setOnClickListener(null);
+
         } else if (post.getMaxMembers() > 0 && post.getMemberCount() >= post.getMaxMembers()) {
+            // Đã đủ số lượng thành viên tối đa
             btnDetailJoin.setText("Đã đủ thành viên");
             btnDetailJoin.setEnabled(false);
             btnDetailJoin.setAlpha(0.6f);
             btnDetailJoin.setOnClickListener(null);
+
         } else {
-            btnDetailJoin.setText("Tham gia");
+            // Hoạt động đang mở, user chưa đăng ký → cho phép gửi yêu cầu tham gia
+            btnDetailJoin.setText("Gửi yêu cầu tham gia");
             btnDetailJoin.setEnabled(true);
             btnDetailJoin.setAlpha(1f);
             btnDetailJoin.setOnClickListener(v -> joinPost());
@@ -631,54 +663,41 @@ public class PostDetailActivity extends AppCompatActivity {
 
     private void joinPost() {
         if (post == null) return;
-        long postId;
-        try {
-            postId = Long.parseLong(post.getId());
-        } catch (NumberFormatException e) {
-            Toast.makeText(this, "Lỗi ID bài viết", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        RetrofitClient.loadToken(this);
-        PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
-        postApi.joinPost(postId).enqueue(new Callback<ApiResponse<JoinGroupResponse>>() {
+
+        JoinRequestHelper.startJoinFlow(this, post, new JoinRequestHelper.JoinCallback() {
             @Override
-            public void onResponse(Call<ApiResponse<JoinGroupResponse>> call, Response<ApiResponse<JoinGroupResponse>> resp) {
-                if (resp.isSuccessful()) {
-                    post.setPendingApproval(true);
-                    btnDetailJoin.setText("⏳ Đang chờ duyệt");
+            public void onSending() {
+                btnDetailJoin.setText("⏳ Đang gửi...");
+                btnDetailJoin.setEnabled(false);
+                btnDetailJoin.setAlpha(0.6f);
+            }
+
+            @Override
+            public void onSuccess(JoinGroupResponse result) {
+                post.setPendingApproval(true);
+                btnDetailJoin.setText("⏳ Đang chờ duyệt");
+                btnDetailJoin.setEnabled(false);
+                btnDetailJoin.setAlpha(0.6f);
+                btnDetailJoin.setOnClickListener(null);
+                JoinRequestHelper.showJoinToast(PostDetailActivity.this, result);
+            }
+
+            @Override
+            public void onError(String errorMessage) {
+                if (errorMessage != null && errorMessage.contains("đủ thành viên")) {
+                    btnDetailJoin.setText("Đã đủ thành viên");
                     btnDetailJoin.setEnabled(false);
                     btnDetailJoin.setAlpha(0.6f);
-
-                    // Backend trả flag true khi tag của hoạt động là tag mới được học ngầm vào behavioralTags.
-                    JoinGroupResponse result = resp.body() != null ? resp.body().getResult() : null;
-                    boolean learnedNewTag = result != null && result.isNewTagSuggested();
-                    String toastMessage = learnedNewTag
-                            ? "Tham gia thành công! WeConnect đã tự động ghi nhận chủ đề mới này để ưu tiên gợi ý lên trang chủ của bạn từ lần sau."
-                            : "Tham gia nhóm thành công!";
-                    Toast.makeText(PostDetailActivity.this, toastMessage, Toast.LENGTH_SHORT).show();
+                    btnDetailJoin.setOnClickListener(null);
+                    post.setMemberCount(post.getMaxMembers());
+                    updateMemberCountUI();
                 } else {
-                    String errorMsg = "Không thể tham gia. Thử lại.";
-                    try {
-                        if (resp.errorBody() != null) {
-                            String body = resp.errorBody().string();
-                            org.json.JSONObject json = new org.json.JSONObject(body);
-                            if (json.has("message")) errorMsg = json.getString("message");
-                        }
-                    } catch (Exception ignored) {}
-                    if (errorMsg.contains("đủ thành viên")) {
-                        btnDetailJoin.setText("Đã đủ thành viên");
-                        btnDetailJoin.setEnabled(false);
-                        btnDetailJoin.setAlpha(0.6f);
-                        btnDetailJoin.setOnClickListener(null);
-                        post.setMemberCount(post.getMaxMembers());
-                        updateMemberCountUI();
-                    }
-                    Toast.makeText(PostDetailActivity.this, errorMsg, Toast.LENGTH_LONG).show();
+                    btnDetailJoin.setText("Tham gia");
+                    btnDetailJoin.setEnabled(true);
+                    btnDetailJoin.setAlpha(1f);
+                    btnDetailJoin.setOnClickListener(v -> joinPost());
                 }
-            }
-            @Override
-            public void onFailure(Call<ApiResponse<JoinGroupResponse>> call, Throwable t) {
-                Toast.makeText(PostDetailActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+                Toast.makeText(PostDetailActivity.this, errorMessage, Toast.LENGTH_LONG).show();
             }
         });
     }

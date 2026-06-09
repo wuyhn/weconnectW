@@ -159,9 +159,9 @@
                     <ImageView
                         android:id="@+id/ivPostImagePreview"
                         android:layout_width="match_parent"
-                        android:layout_height="200dp"
+                        android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:scaleType="centerCrop"
+                        android:scaleType="fitCenter"
                         android:visibility="gone"
                         android:adjustViewBounds="true"
                         app:layout_constraintEnd_toEndOf="parent"
@@ -381,7 +381,7 @@
                     android:textColor="@android:color/white"
                     android:textSize="14sp"
                     android:textStyle="bold"
-                    tools:text="⚽ Đá bóng" />
+                    tools:text="Đá bóng" />
 
             </com.google.android.material.card.MaterialCardView>
 
