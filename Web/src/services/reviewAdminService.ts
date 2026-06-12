@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import { UserReview, PaginationParams, PaginatedResponse } from '../types'
+import { cleanTagText, matchesSearchQuery } from '../utils/text'
 
 /**
  * Review Admin Service
@@ -9,6 +10,57 @@ import { UserReview, PaginationParams, PaginatedResponse } from '../types'
  * - GET /admin/reviews/:id (detail)
  */
 
+export type ReviewLabelFilter = 'positive' | 'medium' | 'improve' | null
+
+const parseDateMillis = (value: unknown) => {
+  if (Array.isArray(value)) {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = value as number[]
+    if (!year || !month || !day) return 0
+    const time = new Date(year, month - 1, day, hour, minute, second).getTime()
+    return Number.isFinite(time) ? time : 0
+  }
+
+  if (!value) return 0
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    const viDate = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s*[·,-]?\s*(\d{1,2}):(\d{2}))?/)
+    if (viDate) {
+      const [, day, month, year, hour = '0', minute = '0'] = viDate
+      const time = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)).getTime()
+      return Number.isFinite(time) ? time : 0
+    }
+  }
+
+  const time = new Date(value as string | number | Date).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+const clampRating = (value?: number) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 0
+  return Math.max(0, Math.min(5, value))
+}
+
+const getReviewRating = (review: UserReview) => {
+  const rating = clampRating(review.rating)
+  if (rating > 0) return rating
+
+  const label = (review.reputationLabel || '').toLowerCase()
+  if (label.includes('excellent') || label.includes('đáng') || label.includes('dang')) return 5
+  if (label.includes('good') || label.includes('nhiệt') || label.includes('nhiet') || label.includes('tích cực')) return 4
+  if (label.includes('average') || label.includes('bình') || label.includes('binh') || label.includes('trung')) return 3
+  if (label.includes('poor') || label.includes('không') || label.includes('khong') || label.includes('cải thiện')) return 2
+  return 0
+}
+
+const getReviewLabel = (review: UserReview): Exclude<ReviewLabelFilter, null> => {
+  const rating = getReviewRating(review)
+  if (rating >= 4) return 'positive'
+  if (rating === 3) return 'medium'
+  if (rating > 0) return 'improve'
+  return 'medium'
+}
+
 export const reviewAdminService = {
   /**
    * Get all reviews from backend
@@ -16,30 +68,52 @@ export const reviewAdminService = {
    */
   async getReviews(
     params: PaginationParams,
-    filter?: { search?: string; reputationLabel?: string | null }
+    filter?: { search?: string; label?: ReviewLabelFilter; rating?: number | null; reputationLabel?: string | null }
   ): Promise<PaginatedResponse<UserReview>> {
     try {
       const reviews = await apiClient.get<UserReview[]>('/admin/reviews')
 
       let filtered = [...reviews]
 
-      // Apply client-side filters
       if (filter?.search) {
-        const search = filter.search.toLowerCase()
-        filtered = filtered.filter(
-          (r) =>
-            (r.comment || '').toLowerCase().includes(search) ||
-            (r.activityName || '').toLowerCase().includes(search) ||
-            (r.reviewerName || '').toLowerCase().includes(search) ||
-            (r.reviewedUserName || '').toLowerCase().includes(search)
+        filtered = filtered.filter((review) =>
+          matchesSearchQuery(
+            [
+              review.id,
+              `review ${review.id}`,
+              review.comment,
+              review.activityName,
+              review.interestTag,
+              cleanTagText(review.interestTag || review.activityName),
+              review.reviewerName,
+              review.reviewerId,
+              `user ${review.reviewerId}`,
+              review.reviewedUserName,
+              review.reviewedUserId,
+              `user ${review.reviewedUserId}`,
+              review.rating,
+              getReviewLabel(review),
+              review.reputationLabel,
+            ],
+            filter.search
+          )
         )
       }
 
-      if (filter?.reputationLabel) {
-        filtered = filtered.filter((r) => r.reputationLabel === filter.reputationLabel)
+      if (filter?.label) {
+        filtered = filtered.filter((review) => getReviewLabel(review) === filter.label)
       }
 
-      // Paginate
+      if (filter?.rating) {
+        filtered = filtered.filter((review) => Math.round(getReviewRating(review)) === filter.rating)
+      }
+
+      if (filter?.reputationLabel) {
+        filtered = filtered.filter((review) => review.reputationLabel === filter.reputationLabel)
+      }
+
+      filtered.sort((a, b) => parseDateMillis(b.createdAt) - parseDateMillis(a.createdAt))
+
       const start = (params.page - 1) * params.pageSize
       const end = start + params.pageSize
 
@@ -50,8 +124,8 @@ export const reviewAdminService = {
         pageSize: params.pageSize,
       }
     } catch (error) {
-      console.error('Failed to fetch reviews from API, returning empty', error)
-      return { data: [], total: 0, page: params.page, pageSize: params.pageSize }
+      console.error('Failed to fetch reviews from API', error)
+      throw error
     }
   },
 
@@ -69,7 +143,9 @@ export const reviewAdminService = {
   async getRecentReviews(limit: number = 5): Promise<UserReview[]> {
     try {
       const reviews = await apiClient.get<UserReview[]>('/admin/reviews')
-      return reviews.slice(0, limit)
+      return [...reviews]
+        .sort((a, b) => parseDateMillis(b.createdAt) - parseDateMillis(a.createdAt))
+        .slice(0, limit)
     } catch {
       return []
     }
@@ -79,7 +155,7 @@ export const reviewAdminService = {
    * Get reputation labels available
    */
   getReputationLabels(): string[] {
-    return ['Đáng tin cậy', 'Nhiệt tình', 'Bình thường', 'Không tốt']
+    return ['Tích cực', 'Trung bình', 'Cần cải thiện']
   },
 
   /**

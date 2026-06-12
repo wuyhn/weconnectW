@@ -17,6 +17,7 @@ import com.example.weconnect.R;
 import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.api.PostApiService;
 import com.example.weconnect.api.RetrofitClient;
+import com.example.weconnect.utils.AppDialogHelper;
 import com.example.weconnect.utils.JoinRequestDetailBottomSheet;
 import com.example.weconnect.models.ApiResponse;
 import com.google.android.material.button.MaterialButton;
@@ -84,9 +85,11 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         holder.tvName.setText(userName);
         holder.tvInfo.setText("Đang chờ duyệt");
 
-        // Avatar
-        String avatarUrl = member.get("avatarUrl") != null
-                ? member.get("avatarUrl").toString() : null;
+        // Avatar — ưu tiên global cache (normalized) → raw field
+        String globalCached = userId > 0 ? RetrofitClient.getCachedAvatarForUser(userId) : null;
+        String avatarUrl = (globalCached != null && !globalCached.isEmpty())
+                ? globalCached
+                : (member.get("avatarUrl") != null ? member.get("avatarUrl").toString() : null);
         if (avatarUrl != null && !avatarUrl.isEmpty()) {
             if (avatarUrl.startsWith("/")) {
                 avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
@@ -226,21 +229,23 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
         boolean isFarLocation = Boolean.TRUE.equals(member.get("isFarLocation"));
 
         if (isHighRisk) {
-            new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                    .setTitle("Người này có mức uy tín rất thấp")
-                    .setMessage("Người dùng này có mức uy tín rất thấp hoặc nhiều đánh giá không tốt từ các hoạt động trước đó. Bạn có chắc chắn muốn cho người này tham gia không?")
-                    .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) ->
-                            checkFarLocationThenApprove(member, userId, holder, isFarLocation))
-                    .show();
+            AppDialogHelper.showConfirm(
+                    context,
+                    "Người này có mức uy tín rất thấp",
+                    "Người dùng này có mức uy tín rất thấp hoặc nhiều đánh giá không tốt từ các hoạt động trước đó. Bạn có chắc chắn muốn cho người này tham gia không?",
+                    "Vẫn cho tham gia",
+                    (dialog, which) -> checkFarLocationThenApprove(member, userId, holder, isFarLocation),
+                    "Hủy"
+            );
         } else if (isWarning) {
-            new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                    .setTitle("Người này có mức uy tín thấp")
-                    .setMessage("Người dùng này có điểm uy tín hoặc trung bình đánh giá thấp. Bạn có chắc chắn muốn cho người này tham gia hoạt động không?")
-                    .setNegativeButton("Hủy", null)
-                    .setPositiveButton("Vẫn cho tham gia", (dialog, which) ->
-                            checkFarLocationThenApprove(member, userId, holder, isFarLocation))
-                    .show();
+            AppDialogHelper.showConfirm(
+                    context,
+                    "Người này có mức uy tín thấp",
+                    "Người dùng này có điểm uy tín hoặc trung bình đánh giá thấp. Bạn có chắc chắn muốn cho người này tham gia hoạt động không?",
+                    "Vẫn cho tham gia",
+                    (dialog, which) -> checkFarLocationThenApprove(member, userId, holder, isFarLocation),
+                    "Hủy"
+            );
         } else {
             checkFarLocationThenApprove(member, userId, holder, isFarLocation);
         }
@@ -267,12 +272,14 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
             message += "\n\nLý do: " + joinReason;
         }
 
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                .setTitle("Cân nhắc trước khi duyệt")
-                .setMessage(message)
-                .setNegativeButton("Hủy", null)
-                .setPositiveButton("Vẫn duyệt", (dialog, which) -> doApproveMember(userId, holder))
-                .show();
+        AppDialogHelper.showConfirm(
+                context,
+                "Cân nhắc trước khi duyệt",
+                message,
+                "Vẫn duyệt",
+                (dialog, which) -> doApproveMember(userId, holder),
+                "Hủy"
+        );
     }
 
     private void doApproveMember(long userId, ViewHolder holder) {
@@ -308,10 +315,12 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
     }
 
     private void rejectMember(long userId, ViewHolder holder) {
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                .setTitle("Xác nhận từ chối")
-                .setMessage("Bạn có chắc chắn muốn từ chối yêu cầu này?")
-                .setPositiveButton("Từ chối", (dialog, which) -> {
+        AppDialogHelper.showConfirm(
+                context,
+                "Xác nhận từ chối",
+                "Bạn có chắc chắn muốn từ chối yêu cầu này?",
+                "Từ chối",
+                (dialog, which) -> {
                     RetrofitClient.loadToken(context);
                     PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
 
@@ -334,9 +343,9 @@ public class PendingRequestAdapter extends RecyclerView.Adapter<PendingRequestAd
                             Toast.makeText(context, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
                         }
                     });
-                })
-                .setNegativeButton("Huỷ", null)
-                .show();
+                },
+                "Hủy"
+        );
     }
 
     private boolean hasText(String s) {

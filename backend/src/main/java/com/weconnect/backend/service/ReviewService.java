@@ -1,5 +1,6 @@
 package com.weconnect.backend.service;
 
+import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.Post;
 import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.entity.User;
@@ -33,6 +34,7 @@ public class ReviewService {
     private final ReportRepository reportRepository;
     private final SystemViolationLogRepository systemViolationLogRepository;
     private final ReputationSanctionService reputationSanctionService;
+    private final NotificationService notificationService;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
@@ -40,7 +42,8 @@ public class ReviewService {
                          PostMemberRepository postMemberRepository, PostRepository postRepository,
                          ReportRepository reportRepository,
                          SystemViolationLogRepository systemViolationLogRepository,
-                         ReputationSanctionService reputationSanctionService) {
+                         ReputationSanctionService reputationSanctionService,
+                         NotificationService notificationService) {
         this.reviewRepository = reviewRepository;
         this.userRepository = userRepository;
         this.postMemberRepository = postMemberRepository;
@@ -48,14 +51,15 @@ public class ReviewService {
         this.reportRepository = reportRepository;
         this.systemViolationLogRepository = systemViolationLogRepository;
         this.reputationSanctionService = reputationSanctionService;
+        this.notificationService = notificationService;
     }
 
-    // Lấy danh sách review của 1 user
+    // Lấy danh sách review của 1 user (ẩn danh người đánh giá)
     public List<Map<String, Object>> getReviews(Long userId) {
         List<UserReview> reviews = reviewRepository.findByReviewedUserIdOrderByCreatedAtDesc(userId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (UserReview r : reviews) {
-            result.add(buildReviewMap(r));
+            result.add(buildAnonymousReviewMap(r));
         }
         return result;
     }
@@ -109,6 +113,16 @@ public class ReviewService {
         UserReview saved = reviewRepository.save(review);
         recalcAverageRating(reviewedUserId);
         recalculateReputation(reviewedUserId);
+
+        if (rating != null && rating <= 2) {
+            notificationService.createNotification(
+                reviewedUserId,
+                Notification.NotificationType.GENERAL,
+                "Hệ thống nhắc nhở: Bạn vừa bị trừ điểm uy tín, hãy hoạt động tích cực hơn trong các sự kiện tới nhé!",
+                null, null, null
+            );
+        }
+
         return buildReviewMap(saved);
     }
 
@@ -293,6 +307,15 @@ public class ReviewService {
             });
         }
 
+        return map;
+    }
+
+    // Ẩn danh người đánh giá — dùng cho endpoint public
+    private Map<String, Object> buildAnonymousReviewMap(UserReview r) {
+        Map<String, Object> map = buildReviewMap(r);
+        map.put("reviewerId", 0L);
+        map.put("reviewerName", "Ẩn danh");
+        map.put("reviewerAvatarUrl", null);
         return map;
     }
 

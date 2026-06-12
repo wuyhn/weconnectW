@@ -367,6 +367,7 @@ public class PostDetailActivity extends AppCompatActivity {
             intent.putExtra("member_count", post.getMemberCount());
             intent.putExtra("max_members", post.getMaxMembers());
             intent.putExtra("author_user_id", post.getAuthorId());
+            intent.putExtra("author_avatar_url", post.getAvatarUrl());
             startActivity(intent);
         });
 

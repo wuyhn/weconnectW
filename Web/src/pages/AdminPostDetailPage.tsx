@@ -15,13 +15,15 @@ import {
   Image,
   Avatar,
 } from 'antd'
-import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DeleteOutlined, UserOutlined } from '@ant-design/icons'
 import MainLayout from '../components/MainLayout'
 import { postAdminService } from '../services/postAdminService'
 import { userAdminService } from '../services/userAdminService'
 import { Post, User } from '../types'
 import dayjs from 'dayjs'
 import './AdminPostDetailPage.css'
+import { resolveAvatarUrl } from '../utils/avatar'
+import { cleanTagText } from '../utils/text'
 
 export default function AdminPostDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -162,7 +164,12 @@ export default function AdminPostDetailPage() {
                 }}
                 onClick={() => navigate(`/admin/users/${author.id}`)}
               >
-                <Avatar size={48} src={author.avatarUrl} />
+                <Avatar
+                  size={48}
+                  src={resolveAvatarUrl(author.avatarUrl)}
+                  icon={!author.avatarUrl ? <UserOutlined /> : undefined}
+                  style={{ border: 0, boxShadow: 'none', background: '#eef2f7', color: '#6b7280' }}
+                />
                 <div>
                   <div style={{ fontWeight: 500 }}>{author.fullName}</div>
                   <div style={{ fontSize: '12px', color: '#999' }}>{author.email}</div>
@@ -191,7 +198,7 @@ export default function AdminPostDetailPage() {
             <Descriptions.Item label="ID">{post.id}</Descriptions.Item>
             <Descriptions.Item label="Content">{post.content}</Descriptions.Item>
             <Descriptions.Item label="Interest Tag">
-              <Tag>{post.interestTag}</Tag>
+              <Tag>{cleanTagText(post.interestTag)}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label="Location">{post.location}</Descriptions.Item>
             <Descriptions.Item label="Max Members">{post.maxMembers}</Descriptions.Item>

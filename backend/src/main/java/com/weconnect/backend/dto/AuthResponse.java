@@ -14,6 +14,7 @@ public class AuthResponse {
     private String email;
     private String fullName;
     private String token;
+    private String refreshToken;
     private String message;
     private int role;
     private double reputationScore;

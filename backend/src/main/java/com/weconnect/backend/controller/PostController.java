@@ -59,8 +59,9 @@ public class PostController {
                                         @RequestBody PostRequest request) {
         User user = (User) authentication.getPrincipal();
         PostResponse post = postService.createPost(user.getId(), request);
-        // Broadcast tới tất cả client đang kết nối để cập nhật feed realtime
-        messagingTemplate.convertAndSend("/topic/feed", post);
+        // Broadcast tới tất cả client — bỏ joined/pendingApproval vì đây là state per-user
+        PostResponse broadcast = post.toBuilder().joined(false).pendingApproval(false).build();
+        messagingTemplate.convertAndSend("/topic/feed", broadcast);
         return ResponseEntity.ok(ApiResponse.builder()
                 .code(1000).message("Tạo bài đăng thành công!").result(post).build());
     }

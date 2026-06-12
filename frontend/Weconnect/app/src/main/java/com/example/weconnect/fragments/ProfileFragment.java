@@ -44,6 +44,7 @@ import com.example.weconnect.api.ReviewApiService;
 import com.example.weconnect.api.UserApiService;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.utils.InterestTextUtils;
+import com.example.weconnect.utils.ReviewReportBottomSheet;
 import com.example.weconnect.data.FakeSocialRepository;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.Post;
@@ -82,6 +83,12 @@ public class ProfileFragment extends Fragment {
     private TextView tvFriendCount;
     private TextView tvInterestsTitle;
     private TextView tvReviewsTitle;
+    private View cardReputationSummary;
+    private TextView tvSummaryReputation;
+    private TextView tvSummaryAvgRating;
+    private TextView tvSummaryReviewCount;
+    private int summaryReputationVal = 0;
+    private float summaryAvgRatingVal = 0f;
     private ChipGroup chipGroupUserInterests;
     private MaterialButton btnViewArchive;
     private LinearLayout layoutSocialButtons;
@@ -200,6 +207,10 @@ public class ProfileFragment extends Fragment {
         tvFriendCount = view.findViewById(R.id.tvFriendCount);
         tvInterestsTitle = view.findViewById(R.id.tvInterestsTitle);
         tvReviewsTitle = view.findViewById(R.id.tvReviewsTitle);
+        cardReputationSummary = view.findViewById(R.id.cardReputationSummary);
+        tvSummaryReputation = view.findViewById(R.id.tvReputationScore);
+        tvSummaryAvgRating = view.findViewById(R.id.tvAvgRating);
+        tvSummaryReviewCount = view.findViewById(R.id.tvReviewCount);
         chipGroupUserInterests = view.findViewById(R.id.chipGroupUserInterests);
         btnViewArchive = view.findViewById(R.id.btnViewArchive);
         layoutSocialButtons = view.findViewById(R.id.layoutSocialButtons);
@@ -453,12 +464,14 @@ public class ProfileFragment extends Fragment {
         int reputation = (int) Math.round(getDouble(profile.get("reputationScore"), 60));
         tvUserReputation.setText(String.valueOf(reputation));
         RetrofitClient.saveReputationScore(requireContext(), reputation);
+        summaryReputationVal = reputation;
+        summaryAvgRatingVal = (float) getDouble(profile.get("averageRating"), 0.0);
 
         String avatarUrl = getString(profile, "avatarUrl");
         if (!avatarUrl.isEmpty()) {
-            currentAvatarUrl = normalizeImageUrl(avatarUrl);
+            currentAvatarUrl = avatarUrl;
             loadAvatar(avatarUrl);
-            RetrofitClient.saveAvatarUrl(requireContext(), currentAvatarUrl);
+            RetrofitClient.saveAvatarUrl(requireContext(), avatarUrl);
         } else {
             currentAvatarUrl = "";
         }
@@ -610,11 +623,41 @@ public class ProfileFragment extends Fragment {
 
     private void setReviews(List<UserReview> reviews) {
         if (rvUserReviews == null) return;
+        // Chủ profile mới có quyền báo cáo nhận xét về mình
         rvUserReviews.setAdapter(new UserReviewAdapter(
                 reviews,
                 RetrofitClient.getUserId(requireContext()),
-                null));
+                null,
+                review -> {
+                    if (!isAdded()) return;
+                    ReviewReportBottomSheet.show(requireContext(), getChildFragmentManager(), review);
+                }));
         if (tvReviewsTitle != null) tvReviewsTitle.setVisibility(View.VISIBLE);
+        bindReputationSummaryCard(reviews.size());
+    }
+
+    private void bindReputationSummaryCard(int reviewCount) {
+        if (cardReputationSummary == null) return;
+        if (reviewCount == 0 && summaryReputationVal == 0) {
+            cardReputationSummary.setVisibility(View.GONE);
+            return;
+        }
+        cardReputationSummary.setVisibility(View.VISIBLE);
+        if (tvSummaryReputation != null) {
+            tvSummaryReputation.setText(summaryReputationVal + "/100");
+            int color;
+            if (summaryReputationVal >= 70) color = 0xFF4CAF50;
+            else if (summaryReputationVal >= 40) color = 0xFFFF9800;
+            else color = 0xFFF44336;
+            tvSummaryReputation.setTextColor(color);
+        }
+        if (tvSummaryAvgRating != null) {
+            tvSummaryAvgRating.setText(summaryAvgRatingVal > 0
+                    ? String.format("★ %.1f", summaryAvgRatingVal) : "★ --");
+        }
+        if (tvSummaryReviewCount != null) {
+            tvSummaryReviewCount.setText(String.valueOf(reviewCount));
+        }
     }
 
     private UserReview toUserReview(Map<String, Object> map) {
@@ -982,8 +1025,19 @@ public class ProfileFragment extends Fragment {
     }
 
     private String normalizeImageUrl(String url) {
-        if (url != null && url.startsWith("/")) {
+        if (url == null || url.isEmpty()) return url;
+        if (url.startsWith("/")) {
             return RetrofitClient.getBaseUrl() + url.substring(1);
+        }
+        // Nếu là full URL nhưng IP cũ (emulator/thiết bị khác), đổi sang BASE_URL hiện tại
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            try {
+                java.net.URL parsed = new java.net.URL(url);
+                String path = parsed.getPath();
+                if (path != null && path.startsWith("/uploads/")) {
+                    return RetrofitClient.getBaseUrl() + path.substring(1);
+                }
+            } catch (Exception ignored) {}
         }
         return url;
     }

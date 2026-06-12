@@ -17,12 +17,11 @@ import android.widget.Toast;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.example.weconnect.R;
 import com.example.weconnect.api.RetrofitClient;
 import com.example.weconnect.adapters.WardSearchAdapter;
+import com.example.weconnect.utils.AppDialogHelper;
 import com.example.weconnect.utils.ProvinceWardLoader;
 import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.utils.InterestTextUtils;
@@ -349,14 +348,15 @@ public class CreatePostActivity extends AppCompatActivity {
             return;
         }
 
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("Lưu ý về địa điểm hoạt động")
-                .setMessage("Vị trí hiện tại của bạn (" + userCity + ") khác với địa điểm tổ chức hoạt động ("
-                        + selectedCity + "). Bạn có chắc chắn muốn hoạt động này diễn ra tại " + selectedCity + " không?")
-                .setNegativeButton("Sửa lại", null)
-                .setPositiveButton("Xác nhận đăng", (dialog, which) ->
-                        doSubmitPost(activityStartIso, activityEndIso, actEndMillis))
-                .show();
+        AppDialogHelper.showConfirm(
+                this,
+                "Lưu ý về địa điểm hoạt động",
+                "Vị trí hiện tại của bạn (" + userCity + ") khác với địa điểm tổ chức hoạt động ("
+                        + selectedCity + "). Bạn có chắc chắn muốn hoạt động này diễn ra tại " + selectedCity + " không?",
+                "Xác nhận đăng",
+                (dialog, which) -> doSubmitPost(activityStartIso, activityEndIso, actEndMillis),
+                "Sửa lại"
+        );
     }
 
     private void doSubmitPost(String activityStartIso, String activityEndIso, long actEndMillis) {
@@ -386,12 +386,14 @@ public class CreatePostActivity extends AppCompatActivity {
 
     private void handleExit() {
         if (!etPostContent.getText().toString().trim().isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Huỷ bài viết?")
-                    .setMessage("Nội dung sẽ không được lưu.")
-                    .setPositiveButton("Huỷ bỏ", (d, w) -> finish())
-                    .setNegativeButton("Viết tiếp", null)
-                    .show();
+            AppDialogHelper.showConfirm(
+                    this,
+                    "Hủy bài viết?",
+                    "Nội dung sẽ không được lưu.",
+                    "Hủy bỏ",
+                    (d, w) -> finish(),
+                    "Viết tiếp"
+            );
         } else {
             finish();
         }

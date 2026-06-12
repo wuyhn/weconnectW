@@ -1,5 +1,6 @@
 import apiClient from './apiClient'
 import { Post, PaginationParams, PaginatedResponse } from '../types'
+import { matchesSearchQuery } from '../utils/text'
 
 /**
  * Post Admin Service
@@ -24,24 +25,17 @@ export const postAdminService = {
     try {
       const posts = await apiClient.get<Post[]>('/admin/posts')
 
-      // Compute real-time expired status from endTime (source of truth)
-      const now = new Date().getTime()
-      const postsWithStatus = posts.map((p) => ({
-        ...p,
-        // Bài hết hạn = endTime < now, KHÔNG dùng p.archived
-        archived: p.endTime ? new Date(p.endTime).getTime() < now : p.archived,
-      }))
-
-      let filtered = [...postsWithStatus]
+      let filtered = [...posts]
 
       // Apply client-side filters
       if (filter?.search) {
-        const search = filter.search.toLowerCase()
-        filtered = filtered.filter(
-          (p) =>
-            (p.content || '').toLowerCase().includes(search) ||
-            (p.interestTag || '').toLowerCase().includes(search) ||
-            (p.location || '').toLowerCase().includes(search)
+        filtered = filtered.filter((p) =>
+          matchesSearchQuery(
+            [
+              p.content,
+            ],
+            filter.search
+          )
         )
       }
 

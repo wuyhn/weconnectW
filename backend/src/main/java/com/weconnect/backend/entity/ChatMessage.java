@@ -1,5 +1,6 @@
 package com.weconnect.backend.entity;
 
+import com.weconnect.backend.converter.JpaCryptoConverter;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -25,6 +26,7 @@ public class ChatMessage {
     @Column(name = "sender_id", nullable = false)
     private Long senderId;
 
+    @Convert(converter = JpaCryptoConverter.class)
     @Column(columnDefinition = "TEXT")
     private String content;
 

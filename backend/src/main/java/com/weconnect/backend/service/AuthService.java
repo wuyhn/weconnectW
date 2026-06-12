@@ -141,12 +141,14 @@ public class AuthService {
         pendingRepo.deleteByEmail(email);
 
         String token = jwtTokenProvider.generateToken(newUser.getId(), newUser.getEmail(), newUser.getRole());
+        String refreshToken = jwtTokenProvider.generateRefreshToken(newUser.getId(), newUser.getEmail(), newUser.getRole());
 
         return AuthResponse.builder()
                 .id(newUser.getId())
                 .email(newUser.getEmail())
                 .fullName(newUser.getFullName())
                 .token(token)
+                .refreshToken(refreshToken)
                 .role(newUser.getRole())
                 .reputationScore(newUser.getReputationScore())
                 .message("Đăng ký tài khoản thành công!")
@@ -222,15 +224,66 @@ public class AuthService {
         }
 
         String token = jwtTokenProvider.generateToken(user.getId(), user.getEmail(), user.getRole());
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getEmail(), user.getRole());
 
         return AuthResponse.builder()
                 .id(user.getId())
                 .email(user.getEmail())
                 .fullName(user.getFullName())
                 .token(token)
+                .refreshToken(refreshToken)
                 .role(user.getRole())
                 .reputationScore(user.getReputationScore())
                 .message("Đăng nhập thành công!")
+                .build();
+    }
+
+    @Transactional
+    public AuthResponse refreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank() || !jwtTokenProvider.validateRefreshToken(refreshToken)) {
+            throw new RuntimeException("Refresh token khong hop le hoac da het han.");
+        }
+
+        Long userId = jwtTokenProvider.getUserIdFromToken(refreshToken);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Tai khoan khong ton tai."));
+
+        if (User.STATUS_LOCKED_TEMP.equals(user.getStatus())) {
+            LocalDateTime lockUntil = user.getLockUntil();
+            if (lockUntil != null && LocalDateTime.now().isAfter(lockUntil)) {
+                user.setStatus(User.STATUS_ACTIVE);
+                user.setBlocked(false);
+                user.setLockUntil(null);
+                user.setReputationScore(Math.max(user.getReputationScore(), 30));
+                user.setViolationPenaltySum(Math.max(0, user.getViolationPenaltySum() - 30));
+                userRepository.save(user);
+            } else {
+                throw new LockedAccountException(
+                        "Tai khoan dang bi khoa tam thoi. Vui long thu lai sau.",
+                        lockUntil);
+            }
+        }
+
+        if (User.STATUS_BANNED.equals(user.getStatus())) {
+            throw new AccountSanctionException("Tai khoan da bi khoa vinh vien.");
+        }
+
+        if (user.isBlocked()) {
+            throw new RuntimeException("Tai khoan hien dang bi khoa.");
+        }
+
+        String newToken = jwtTokenProvider.generateToken(user.getId(), user.getEmail(), user.getRole());
+        String newRefreshToken = jwtTokenProvider.generateRefreshToken(user.getId(), user.getEmail(), user.getRole());
+
+        return AuthResponse.builder()
+                .id(user.getId())
+                .email(user.getEmail())
+                .fullName(user.getFullName())
+                .token(newToken)
+                .refreshToken(newRefreshToken)
+                .role(user.getRole())
+                .reputationScore(user.getReputationScore())
+                .message("Lam moi token thanh cong!")
                 .build();
     }
 

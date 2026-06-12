@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -24,15 +25,27 @@ public class UserReviewAdapter extends RecyclerView.Adapter<UserReviewAdapter.Us
         void onReviewClick(UserReview review);
     }
 
+    public interface OnReviewReportListener {
+        void onReviewReport(UserReview review);
+    }
+
     private final List<UserReview> reviewList;
     private final long currentUserId;
     private final OnReviewClickListener clickListener;
+    private final OnReviewReportListener reportListener;
 
     public UserReviewAdapter(List<UserReview> reviewList, long currentUserId,
                              OnReviewClickListener clickListener) {
+        this(reviewList, currentUserId, clickListener, null);
+    }
+
+    public UserReviewAdapter(List<UserReview> reviewList, long currentUserId,
+                             OnReviewClickListener clickListener,
+                             OnReviewReportListener reportListener) {
         this.reviewList = reviewList;
         this.currentUserId = currentUserId;
         this.clickListener = clickListener;
+        this.reportListener = reportListener;
     }
 
     @NonNull
@@ -101,22 +114,33 @@ public class UserReviewAdapter extends RecyclerView.Adapter<UserReviewAdapter.Us
         // Comment
         holder.tvReviewerComment.setText(review.getComment());
 
-        // Avatar + name click → open reviewer profile
-        View.OnClickListener profileClick = v -> {
-            long reviewerId = review.getReviewerId();
-            if (reviewerId > 0) {
+        // Avatar + name click → chỉ mở profile khi biết danh tính reviewer
+        long reviewerId = review.getReviewerId();
+        if (reviewerId > 0) {
+            View.OnClickListener profileClick = v -> {
                 Intent intent = new Intent(holder.itemView.getContext(), UserProfileActivity.class);
                 intent.putExtra("user_id", reviewerId);
                 intent.putExtra("view_other", true);
                 holder.itemView.getContext().startActivity(intent);
-            }
-        };
-        holder.ivReviewerAvatar.setOnClickListener(profileClick);
-        holder.tvReviewerName.setOnClickListener(profileClick);
+            };
+            holder.ivReviewerAvatar.setOnClickListener(profileClick);
+            holder.tvReviewerName.setOnClickListener(profileClick);
+        } else {
+            holder.ivReviewerAvatar.setOnClickListener(null);
+            holder.tvReviewerName.setOnClickListener(null);
+        }
 
         // Full item click → detail sheet
         if (clickListener != null) {
             holder.itemView.setOnClickListener(v -> clickListener.onReviewClick(review));
+        }
+
+        // 3-dots report button
+        if (reportListener != null) {
+            holder.btnReviewOptions.setVisibility(View.VISIBLE);
+            holder.btnReviewOptions.setOnClickListener(v -> reportListener.onReviewReport(review));
+        } else {
+            holder.btnReviewOptions.setVisibility(View.GONE);
         }
     }
 
@@ -128,6 +152,7 @@ public class UserReviewAdapter extends RecyclerView.Adapter<UserReviewAdapter.Us
     static class UserReviewViewHolder extends RecyclerView.ViewHolder {
         ImageView ivReviewerAvatar;
         TextView tvReviewerName, tvReviewerRating, tvReviewerComment, tvReviewActivity;
+        ImageButton btnReviewOptions;
 
         public UserReviewViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -136,6 +161,7 @@ public class UserReviewAdapter extends RecyclerView.Adapter<UserReviewAdapter.Us
             tvReviewerRating = itemView.findViewById(R.id.tvReviewerRating);
             tvReviewerComment = itemView.findViewById(R.id.tvReviewerComment);
             tvReviewActivity = itemView.findViewById(R.id.tvReviewActivity);
+            btnReviewOptions = itemView.findViewById(R.id.btnReviewOptions);
         }
     }
 }

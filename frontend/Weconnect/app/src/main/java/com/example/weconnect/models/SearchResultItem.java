@@ -5,6 +5,7 @@ public class SearchResultItem {
     public static final int TYPE_SECTION = 0;
     public static final int TYPE_USER = 1;
     public static final int TYPE_POST = 2;
+    public static final int TYPE_EMPTY = 3;
 
     private int viewType;
     private String title;

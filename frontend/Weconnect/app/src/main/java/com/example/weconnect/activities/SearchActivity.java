@@ -232,6 +232,9 @@ public class SearchActivity extends AppCompatActivity {
         List<SearchResultItem> merged = new ArrayList<>();
         merged.addAll(userResults);
         merged.addAll(postResults);
+        if (merged.isEmpty()) {
+            merged.add(new SearchResultItem(SearchResultItem.TYPE_EMPTY, "", "", 0));
+        }
         searchResultAdapter.submitList(merged);
     }
 

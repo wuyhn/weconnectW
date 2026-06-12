@@ -1,14 +1,14 @@
-import { Layout, Menu, Button, Divider, Space, Avatar, Tooltip } from 'antd'
+import { Button, Layout, Menu, Tooltip } from 'antd'
 import {
-  DashboardOutlined,
-  UserOutlined,
-  FileTextOutlined,
-  StarOutlined,
   AlertOutlined,
+  DashboardOutlined,
+  FileTextOutlined,
   LogoutOutlined,
-  PlusOutlined,
+  StarOutlined,
+  TeamOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import './Sidebar.css'
 
@@ -19,10 +19,10 @@ interface SidebarProps {
   onCollapse?: (collapsed: boolean) => void
 }
 
-export const AppSidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) => {
+export const AppSidebar: React.FC<SidebarProps> = ({ collapsed = false, onCollapse }) => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { logout, user } = useAuthStore()
+  const { logout } = useAuthStore()
 
   const menuItems = [
     {
@@ -52,6 +52,10 @@ export const AppSidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) =>
     },
   ]
 
+  const selectedKey =
+    menuItems.find((item) => location.pathname === item.key || location.pathname.startsWith(`/admin${item.key}`))
+      ?.key || '/dashboard'
+
   const handleLogout = () => {
     logout()
     navigate('/login')
@@ -60,49 +64,32 @@ export const AppSidebar: React.FC<SidebarProps> = ({ collapsed, onCollapse }) =>
   return (
     <Sider
       collapsed={collapsed}
+      collapsedWidth={88}
       width={250}
+      trigger={null}
+      collapsible
+      onCollapse={onCollapse}
       className="app-sider"
-      style={{
-        position: 'fixed',
-        left: 0,
-        top: 0,
-        bottom: 0,
-        overflow: 'auto',
-      }}
     >
-      <div className="sidebar-header">
-        <Avatar size={40} icon={<UserOutlined />} className="sidebar-avatar" />
-        {!collapsed && (
-          <div className="sidebar-user-info">
-            <div className="sidebar-user-name">Bảng điều khiển</div>
-            <div className="sidebar-user-role">{user?.fullName || 'Quản trị viên'}</div>
-          </div>
-        )}
+      <div className="sidebar-brand" onClick={() => navigate('/dashboard')} role="button" tabIndex={0}>
+        <span className="sidebar-brand-icon">
+          <TeamOutlined />
+        </span>
+        {!collapsed && <span className="sidebar-brand-text">WeConnect</span>}
       </div>
-
-      <Divider style={{ margin: '12px 0' }} />
 
       <Menu
         theme="light"
         mode="inline"
-        selectedKeys={[location.pathname]}
+        selectedKeys={[selectedKey]}
         items={menuItems}
-        onClick={(e) => navigate(e.key)}
-        style={{ border: 'none' }}
+        onClick={(event) => navigate(event.key)}
+        className="sidebar-menu"
       />
 
-      <Divider style={{ margin: '12px 0' }} />
-
       <div className="sidebar-footer">
-        <Tooltip title="Đăng xuất" placement="right">
-          <Button
-            type="primary"
-            icon={<LogoutOutlined />}
-            onClick={handleLogout}
-            block
-            size="large"
-            style={{ height: '40px' }}
-          >
+        <Tooltip title={collapsed ? 'Đăng xuất' : ''} placement="right">
+          <Button className="logout-button" icon={<LogoutOutlined />} onClick={handleLogout} block>
             {!collapsed && 'Đăng xuất'}
           </Button>
         </Tooltip>

@@ -30,6 +30,7 @@ import com.google.android.material.tabs.TabLayout;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -53,6 +54,8 @@ public class ChatListActivity extends AppCompatActivity {
     // Cached rooms from API
     private List<ChatRoom> allRooms = new ArrayList<>();
     private List<ChatRoom> messageRequestRooms = new ArrayList<>();
+    // WS unread overrides: roomId → unreadCount từ WS (có thể mới hơn API response đang in-flight)
+    private final Map<Long, Integer> wsUnreadOverrides = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,9 +74,34 @@ public class ChatListActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        wsUnreadOverrides.clear(); // Xóa overrides cũ — loadChatsFromApi() sẽ lấy dữ liệu mới nhất
         applyNavBadge();
         loadChatsFromApi();
-        WebSocketManager.getInstance().subscribeToChatList(payload -> loadChatsFromApi());
+        WebSocketManager.getInstance().subscribeToChatList(payload -> {
+            // WS callback có thể chạy trên background thread — wrap toàn bộ UI update vào runOnUiThread
+            try {
+                org.json.JSONObject json = new org.json.JSONObject(payload);
+                long wsRoomId = json.getLong("roomId");
+                int wsUnreadCount = json.getInt("unreadCount");
+                String wsPreview = json.optString("lastMessagePreview", "");
+                String wsTime = json.optString("lastMessageTime", "");
+                // Lưu override để ngăn API response in-flight ghi đè dữ liệu WS mới hơn
+                wsUnreadOverrides.put(wsRoomId, wsUnreadCount);
+                runOnUiThread(() -> {
+                    adapter.updateRoomBadge(wsRoomId, wsUnreadCount, wsPreview, wsTime);
+                    String roomIdStr = String.valueOf(wsRoomId);
+                    for (ChatRoom r : allRooms) {
+                        if (roomIdStr.equals(r.getId())) {
+                            r.setUnreadCount(wsUnreadCount);
+                            break;
+                        }
+                    }
+                    updateChatNavBadge();
+                });
+            } catch (Exception e) {
+                runOnUiThread(this::loadChatsFromApi);
+            }
+        });
     }
 
     @Override
@@ -118,15 +146,47 @@ public class ChatListActivity extends AppCompatActivity {
 
     private void applyNavBadge() {
         if (bottomNav == null) return;
-        int count = BadgeManager.getCount();
-        if (count > 0) {
-            com.google.android.material.badge.BadgeDrawable badge =
+        // Notification badge
+        int notifCount = BadgeManager.getCount();
+        if (notifCount > 0) {
+            com.google.android.material.badge.BadgeDrawable notifBadge =
                     bottomNav.getOrCreateBadge(R.id.nav_notifications);
-            badge.setVisible(true);
-            badge.setMaxCharacterCount(3);
-            badge.setNumber(count);
+            notifBadge.setVisible(true);
+            notifBadge.setMaxCharacterCount(3);
+            notifBadge.setNumber(notifCount);
         } else {
             bottomNav.removeBadge(R.id.nav_notifications);
+        }
+        // Chat badge — sử dụng giá trị cached từ lần load trước
+        int chatCount = BadgeManager.getChatCount();
+        if (chatCount > 0) {
+            com.google.android.material.badge.BadgeDrawable chatBadge =
+                    bottomNav.getOrCreateBadge(R.id.nav_messages);
+            chatBadge.setVisible(true);
+            chatBadge.setMaxCharacterCount(3);
+            chatBadge.setNumber(chatCount);
+        } else {
+            bottomNav.removeBadge(R.id.nav_messages);
+        }
+    }
+
+    /** Tính lại tổng unread từ allRooms + messageRequestRooms rồi cập nhật badge nav. */
+    private void updateChatNavBadge() {
+        int total = 0;
+        for (ChatRoom r : allRooms) {
+            total += r.getUnreadCount();
+        }
+        total += messageRequestRooms.size();
+        BadgeManager.setChatCount(total);
+        if (bottomNav == null) return;
+        if (total > 0) {
+            com.google.android.material.badge.BadgeDrawable chatBadge =
+                    bottomNav.getOrCreateBadge(R.id.nav_messages);
+            chatBadge.setVisible(true);
+            chatBadge.setMaxCharacterCount(3);
+            chatBadge.setNumber(total);
+        } else {
+            bottomNav.removeBadge(R.id.nav_messages);
         }
     }
 
@@ -214,6 +274,16 @@ public class ChatListActivity extends AppCompatActivity {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     allRooms = convertRooms(response.body().getResult());
+                    // Re-apply WS overrides: WS có thể đã cập nhật unread TRONG KHI API đang in-flight
+                    for (ChatRoom r : allRooms) {
+                        try {
+                            long id = Long.parseLong(r.getId());
+                            Integer wsCount = wsUnreadOverrides.get(id);
+                            if (wsCount != null && wsCount > r.getUnreadCount()) {
+                                r.setUnreadCount(wsCount);
+                            }
+                        } catch (NumberFormatException ignored) {}
+                    }
                     filterAndDisplay();
                     loadMessageRequestsFromApi(chatApi);
                 } else {
@@ -238,17 +308,18 @@ public class ChatListActivity extends AppCompatActivity {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
                     messageRequestRooms = convertRooms(response.body().getResult());
-                    filterAndDisplay();
                 } else {
                     messageRequestRooms = new ArrayList<>();
-                    filterAndDisplay();
                 }
+                filterAndDisplay();
+                updateChatNavBadge();
             }
 
             @Override
             public void onFailure(Call<ApiResponse<List<ChatRoomApiResponse>>> call, Throwable t) {
                 messageRequestRooms = new ArrayList<>();
                 filterAndDisplay();
+                updateChatNavBadge();
             }
         });
     }

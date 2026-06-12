@@ -4,6 +4,7 @@ import com.weconnect.backend.dto.AuthRequest;
 import com.weconnect.backend.dto.AuthResponse;
 import com.weconnect.backend.dto.LockedAccountResponse;
 import com.weconnect.backend.dto.LogoutRequest;
+import com.weconnect.backend.dto.RefreshTokenRequest;
 import com.weconnect.backend.dto.RegisterRequest;
 import com.weconnect.backend.dto.ResendOtpRequest;
 import com.weconnect.backend.dto.ResetPasswordRequest;
@@ -112,6 +113,34 @@ public class AuthController {
         } catch (RuntimeException e) {
             return ResponseEntity.status(401).body(ApiResponse.builder()
                     .code(1002)
+                    .message(e.getMessage())
+                    .build());
+        }
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh(@RequestBody RefreshTokenRequest request) {
+        try {
+            AuthResponse response = authService.refreshToken(request.getRefreshToken());
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000)
+                    .message(response.getMessage())
+                    .result(response)
+                    .build());
+        } catch (LockedAccountException e) {
+            return ResponseEntity.status(423).body(ApiResponse.builder()
+                    .code(1007)
+                    .message(e.getMessage())
+                    .result(LockedAccountResponse.builder().lockUntil(e.getLockUntil()).build())
+                    .build());
+        } catch (AccountSanctionException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1006)
+                    .message(e.getMessage())
+                    .build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(401).body(ApiResponse.builder()
+                    .code(1008)
                     .message(e.getMessage())
                     .build());
         }

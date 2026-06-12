@@ -9,6 +9,7 @@ public class AuthResponse {
     private String email;
     private String fullName;
     private String token;
+    private String refreshToken;
     private String message;
     private double reputationScore;
 
@@ -23,6 +24,9 @@ public class AuthResponse {
 
     public String getToken() { return token; }
     public void setToken(String token) { this.token = token; }
+
+    public String getRefreshToken() { return refreshToken; }
+    public void setRefreshToken(String refreshToken) { this.refreshToken = refreshToken; }
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }

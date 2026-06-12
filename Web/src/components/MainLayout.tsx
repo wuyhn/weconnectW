@@ -1,49 +1,42 @@
-import { Layout, Affix, Button } from 'antd'
-import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
-import { useState } from 'react'
+import { Layout } from 'antd'
+import { useEffect, useState } from 'react'
 import AppSidebar from './AppSidebar'
 import AppTopbar from './AppTopbar'
 import './MainLayout.css'
 
 interface MainLayoutProps {
   children: React.ReactNode
-  onSearch?: (value: string) => void
 }
 
 const { Content } = Layout
 
-export const MainLayout: React.FC<MainLayoutProps> = ({ children, onSearch }) => {
+export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [collapsed, setCollapsed] = useState(false)
 
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1180px)')
+    const syncCollapsed = () => setCollapsed(media.matches)
+
+    syncCollapsed()
+    media.addEventListener('change', syncCollapsed)
+
+    return () => media.removeEventListener('change', syncCollapsed)
+  }, [])
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="admin-layout-shell">
       <AppSidebar collapsed={collapsed} onCollapse={setCollapsed} />
 
       <Layout
+        className="admin-layout-main"
         style={{
-          marginLeft: collapsed ? 80 : 250,
-          transition: 'margin-left 0.2s ease',
+          marginLeft: collapsed ? 88 : 250,
+          width: collapsed ? 'calc(100% - 88px)' : 'calc(100% - 250px)',
         }}
       >
-        <AppTopbar collapsed={collapsed} onSearch={onSearch} />
-
+        <AppTopbar collapsed={collapsed} onToggleSidebar={() => setCollapsed((value) => !value)} />
         <Content className="main-content">{children}</Content>
       </Layout>
-
-      <Affix style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1000 }}>
-        <Button
-          type="primary"
-          size="large"
-          icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-          onClick={() => setCollapsed(!collapsed)}
-          shape="circle"
-          style={{
-            width: 48,
-            height: 48,
-            fontSize: 18,
-          }}
-        />
-      </Affix>
     </Layout>
   )
 }

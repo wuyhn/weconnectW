@@ -9,6 +9,7 @@ public class ChatMessageApiResponse {
     private long roomId;
     private long senderId;
     private String senderName;
+    private String senderAvatarUrl;
     private String content;
     private boolean sentByCurrentUser;
     private String createdAt;
@@ -19,6 +20,7 @@ public class ChatMessageApiResponse {
     public long getRoomId() { return roomId; }
     public long getSenderId() { return senderId; }
     public String getSenderName() { return senderName; }
+    public String getSenderAvatarUrl() { return senderAvatarUrl; }
     public String getContent() { return content; }
     public boolean isSentByCurrentUser() { return sentByCurrentUser; }
     public String getCreatedAt() { return createdAt; }

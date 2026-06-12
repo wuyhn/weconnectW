@@ -1,6 +1,7 @@
 import apiClient from './apiClient'
-import { User, PaginationParams, PaginatedResponse } from '../types'
+import { User, UserStats, PaginationParams, PaginatedResponse } from '../types'
 import { mockUsers } from '../mock/mockData'
+import { cleanTagText, matchesSearchQuery } from '../utils/text'
 
 /**
  * User Admin Service
@@ -33,11 +34,21 @@ export const userAdminService = {
 
       // Apply client-side filters
       if (filter?.search) {
-        const search = filter.search.toLowerCase()
-        filtered = filtered.filter(
-          (u) =>
-            (u.fullName || '').toLowerCase().includes(search) ||
-            (u.email || '').toLowerCase().includes(search)
+        filtered = filtered.filter((u) =>
+          matchesSearchQuery(
+            [
+              u.fullName,
+              u.email,
+              u.id,
+              `user ${u.id}`,
+              u.bio,
+              u.gender,
+              u.role === 1 ? 'admin quan tri vien' : 'user nguoi dung',
+              u.isBlocked ? 'blocked bi khoa' : 'active hoat dong',
+              ...(u.interestTags || []).map((tag) => cleanTagText(tag)),
+            ],
+            filter.search
+          )
         )
       }
 
@@ -113,6 +124,24 @@ export const userAdminService = {
   },
 
   /**
+   * Get user activity stats
+   * GET /admin/users/:id/stats
+   */
+  async getUserStats(id: number): Promise<UserStats> {
+    try {
+      return await apiClient.get<UserStats>(`/admin/users/${id}/stats`)
+    } catch {
+      return {
+        totalPostsCreated: 0,
+        totalActivitiesJoined: 0,
+        totalReviewsReceived: 0,
+        totalReportsReceived: 0,
+        confirmedViolations: 0,
+      }
+    }
+  },
+
+  /**
    * Update user (not yet supported by backend)
    */
   async updateUser(_id: number, _data: Partial<User>): Promise<User> {
@@ -132,6 +161,18 @@ export const userAdminService = {
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         )
         .slice(0, limit)
+    } catch {
+      return []
+    }
+  },
+
+  /**
+   * Get all users raw (including admins) — used for building author maps
+   * GET /admin/users (no client-side role filter)
+   */
+  async getAllUsersRaw(): Promise<User[]> {
+    try {
+      return await apiClient.get<User[]>('/admin/users')
     } catch {
       return []
     }

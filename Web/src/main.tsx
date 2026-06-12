@@ -1,16 +1,16 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { ConfigProvider } from 'antd'
-import zhCN from 'antd/locale/zh_CN'
+import viVN from 'antd/locale/vi_VN'
 import App from './App.tsx'
 import './App.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{
+    <ConfigProvider locale={viVN} theme={{
       token: {
         colorPrimary: '#E85B8A',
-        borderRadius: 8,
+        borderRadius: 10,
         fontSize: 14,
       },
     }}>

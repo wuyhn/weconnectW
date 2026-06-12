@@ -55,55 +55,77 @@ public class AISummaryService {
         }
 
         String prompt = """
-                Bạn là trợ lý ảo phân tích dữ liệu hội thoại của mạng xã hội WeConnect.
-                Nhiệm vụ: đọc lịch sử chat nhóm và tóm tắt khoa học, súc tích.
-                Dữ liệu có cấu trúc [Tên người dùng]: [Nội dung tin nhắn].
+                Bạn là AI core xử lý dữ liệu hội thoại của mạng xã hội WeConnect.
+                Nhiệm vụ: Phân tích lịch sử chat nhóm và trích xuất thông tin lịch trình sang định dạng Text ngắn gọn cho giao diện Mobile.
 
-                YÊU CẦU NGHIÊM NGẶT:
-                1. TUYỆT ĐỐI KHÔNG thay đổi tên người dùng thành số (không viết "Thành viên 1", "Thành viên 22"). Phải giữ nguyên tên hiển thị.
-                2. Chuẩn hóa ngôn ngữ: loại bỏ viết tắt, từ lóng, lỗi chính tả. Dùng tiếng Việt phổ thông, lịch sự.
-                3. Chia kết quả thành 2 mục:
-                   📅 Lịch trình sơ bộ (Thời gian, Địa điểm, Chi phí đã thống nhất hoặc được số đông đề xuất)
-                   ❓ Các điểm chưa rõ (thông tin chưa chốt hoặc có ý kiến trái chiều)
-                4. Tổng dung lượng dưới 70 từ, ngắn gọn để hiển thị vừa màn hình điện thoại.
+                [BỘ LỌC CHÍNH TẢ & NGỮ NGHĨA]
+                - Tự động sửa lỗi chính tả, gõ sai ký tự, thiếu dấu, viết tắt hoặc từ lóng dựa trên ngữ cảnh bóng đá (VD: "gôn" -> "thủ môn", "đá bống" -> "đá bóng", "hùng mjn giám" -> "Hoàng Minh Giám", "ok/okay/co/dc" -> "Đồng ý").
+                - Tuyệt đối giữ nguyên Tên người dùng (Không thay bằng số hay "Thành viên X").
 
-                Chỉ trả lời phần tóm tắt, không thêm lời chào hay giải thích.
+                [QUY TẮC PHÂN LOẠI CHẶT CHẼ]
+                - 📅 Lịch trình sơ bộ: CHỈ ghi thông tin khi có sự xác nhận đồng thuận từ các thành viên liên quan bằng lời nói hoặc hành động (VD: Đã chốt sân, chốt giờ, chốt giá).
+                - ❓ Các điểm chưa rõ: BẮT BUỘC đưa vào nếu thông tin chỉ từ 1 phía đề xuất, đang tranh luận giữa 2 con số/phương án, hoặc có thành viên gặp sự cố cá nhân chưa giải quyết xong.
 
+                [CẤU TRÚC ĐẦU RA BẮT BUỘC - TỐI ĐA 80 TỪ]
+                📅 Lịch trình sơ bộ
+                - Thời gian: [Giờ, Ngày]
+                - Địa điểm: [Tên sân, Địa chỉ]
+                - Chi phí: [Mức giá/Quy định quỹ]
+
+                ❓ Các điểm chưa rõ
+                - [Tên người dùng] + [Vấn đề cụ thể cần làm rõ hoặc xử lý]
+
+                [DỮ LIỆU ĐẦU VÀO]
                 Dưới đây là %d tin nhắn gần nhất:
 
-                %s"""
+                %s
+
+                [YÊU CẦU ĐẦU RA]
+                Chỉ xuất đúng cấu trúc trên. Không thêm lời dẫn, lời chào. Khống chế dưới 80 từ."""
                 .formatted(messages.size(), messagesText);
 
         Map<String, Object> part = Map.of("text", prompt);
         Map<String, Object> content = Map.of("parts", List.of(part));
         Map<String, Object> requestBody = Map.of("contents", List.of(content));
 
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> response = restClient.post()
-                    .uri(GEMINI_API_URL + "?key=" + geminiApiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(requestBody)
-                    .retrieve()
-                    .body(Map.class);
+        int maxRetries = 3;
+        int[] retryDelaysMs = {500, 1000};
+        for (int attempt = 0; attempt <= maxRetries - 1; attempt++) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> response = restClient.post()
+                        .uri(GEMINI_API_URL + "?key=" + geminiApiKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(requestBody)
+                        .retrieve()
+                        .body(Map.class);
 
-            return extractText(response);
-        } catch (org.springframework.web.client.HttpClientErrorException e) {
-            log.error("Gemini API HTTP error: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
-            if (e.getStatusCode().value() == 429) {
-                throw new RuntimeException("Gemini API đã đạt giới hạn request. Vui lòng thử lại sau.");
+                return extractText(response);
+            } catch (org.springframework.web.client.HttpServerErrorException e) {
+                log.warn("Gemini API server error attempt {}/{}: status={}", attempt + 1, maxRetries, e.getStatusCode());
+                boolean isLastAttempt = (attempt == maxRetries - 1);
+                if (isLastAttempt) {
+                    throw new RuntimeException("Dich vu AI dang qua tai, vui long thu lai sau it phut.");
+                }
+                try { Thread.sleep(retryDelaysMs[attempt]); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+            } catch (org.springframework.web.client.HttpClientErrorException e) {
+                log.error("Gemini API HTTP error: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
+                if (e.getStatusCode().value() == 429) {
+                    throw new RuntimeException("Gemini API da dat gioi han request. Vui long thu lai sau.");
+                }
+                if (e.getStatusCode().value() == 400) {
+                    throw new RuntimeException("Gemini API tu choi yeu cau (co the API key khong hop le).");
+                }
+                throw new RuntimeException("Gemini API loi " + e.getStatusCode().value() + ". Vui long thu lai sau.");
+            } catch (RuntimeException e) {
+                log.error("Gemini summarize failed: {}", e.getMessage());
+                throw e;
+            } catch (Exception e) {
+                log.error("Gemini API call failed: {}", e.getMessage());
+                throw new RuntimeException("Khong the tom tat luc nay. Vui long thu lai sau.");
             }
-            if (e.getStatusCode().value() == 400) {
-                throw new RuntimeException("Gemini API từ chối yêu cầu (có thể API key không hợp lệ).");
-            }
-            throw new RuntimeException("Gemini API lỗi " + e.getStatusCode().value() + ". Vui lòng thử lại sau.");
-        } catch (RuntimeException e) {
-            log.error("Gemini summarize failed: {}", e.getMessage());
-            throw e;
-        } catch (Exception e) {
-            log.error("Gemini API call failed: {}", e.getMessage());
-            throw new RuntimeException("Không thể tóm tắt lúc này. Vui lòng thử lại sau.");
         }
+        throw new RuntimeException("Dich vu AI dang qua tai, vui long thu lai sau it phut.");
     }
 
     @SuppressWarnings("unchecked")

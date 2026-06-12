@@ -4,6 +4,7 @@ import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.AuthResponse;
 import com.example.weconnect.models.LoginRequest;
 import com.example.weconnect.models.LogoutRequest;
+import com.example.weconnect.models.RefreshTokenRequest;
 import com.example.weconnect.models.ResendOtpRequest;
 import com.example.weconnect.models.ResetPasswordRequest;
 import com.example.weconnect.models.User;
@@ -30,6 +31,9 @@ public interface AuthApiService {
 
     @POST("api/auth/logout")
     Call<ApiResponse<Void>> logout(@Body LogoutRequest request);
+
+    @POST("api/auth/refresh")
+    Call<ApiResponse<AuthResponse>> refreshToken(@Body RefreshTokenRequest request);
 
     /**
      * Bước 1 quên mật khẩu: gửi email kèm OTP về hộp thư người dùng.

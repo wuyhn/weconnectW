@@ -26,6 +26,7 @@ import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.data.FakePostRepository;
 import com.example.weconnect.models.JoinGroupResponse;
 import com.example.weconnect.models.Post;
+import com.example.weconnect.utils.AppDialogHelper;
 import com.example.weconnect.utils.InterestTextUtils;
 import com.example.weconnect.utils.JoinRequestHelper;
 
@@ -260,12 +261,14 @@ public class PostAdapter extends RecyclerView.Adapter<PostAdapter.PostViewHolder
     }
 
     private void showCancelActivityConfirmation(Post post, int position) {
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
-                .setTitle("Hủy hoạt động?")
-                .setMessage("Khi hủy hoạt động, bài viết và nhóm chat của hoạt động này sẽ không còn khả dụng với tất cả thành viên.")
-                .setPositiveButton("Xác nhận hủy", (dialog, which) -> doCancelActivity(post, position))
-                .setNegativeButton("Hủy", null)
-                .show();
+        AppDialogHelper.showConfirm(
+                context,
+                "Hủy hoạt động?",
+                "Khi hủy hoạt động, bài viết và nhóm chat của hoạt động này sẽ không còn khả dụng với tất cả thành viên.",
+                "Xác nhận hủy",
+                (dialog, which) -> doCancelActivity(post, position),
+                "Hủy"
+        );
     }
 
     private void doCancelActivity(Post post, int position) {

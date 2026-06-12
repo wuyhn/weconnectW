@@ -21,6 +21,7 @@ import { reviewAdminService } from '../services/reviewAdminService'
 import { User, Post, UserReview } from '../types'
 import dayjs from 'dayjs'
 import './SearchResultsPage.css'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 export default function SearchResultsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -123,7 +124,7 @@ export default function SearchResultsPage() {
   const userListItems = users.map((user) => (
     <List.Item key={user.id} className="search-result-list-item">
       <List.Item.Meta
-        avatar={<Avatar size={48} src={user.avatarUrl} />}
+        avatar={<Avatar size={48} src={resolveAvatarUrl(user.avatarUrl)} />}
         title={
           <div onClick={() => handleUserClick(user.id)} className="result-title">
             {user.fullName}

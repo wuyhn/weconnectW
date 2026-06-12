@@ -144,7 +144,7 @@ public final class JoinRequestHelper {
         LinearLayout container = new LinearLayout(context);
         container.setOrientation(LinearLayout.VERTICAL);
         container.setPadding(dpPx(context, 20), dpPx(context, 20), dpPx(context, 20), dpPx(context, 20));
-        container.setBackground(roundedRect(Color.WHITE, dpPx(context, 24)));
+        container.setBackground(AppDialogHelper.dialogBackground(context));
         container.setElevation(dpPx(context, 8));
         scrollView.addView(container, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
@@ -262,13 +262,13 @@ public final class JoinRequestHelper {
         TextView cancelButton = new TextView(context);
         cancelButton.setText("Hủy");
         cancelButton.setTextSize(15);
-        cancelButton.setTextColor(COLOR_TEXT_SECONDARY);
+        cancelButton.setTextColor(AppDialogHelper.COLOR_PRIMARY);
         cancelButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         cancelButton.setGravity(Gravity.CENTER);
         cancelButton.setIncludeFontPadding(false);
         cancelButton.setMinHeight(dpPx(context, 52));
         cancelButton.setPadding(dpPx(context, 16), 0, dpPx(context, 16), 0);
-        cancelButton.setBackground(roundedRect(COLOR_CANCEL_BG, dpPx(context, 14)));
+        cancelButton.setBackground(AppDialogHelper.secondaryButtonBackground(context));
         cancelButton.setClickable(true);
         cancelButton.setFocusable(true);
 
@@ -281,7 +281,7 @@ public final class JoinRequestHelper {
         confirmButton.setIncludeFontPadding(false);
         confirmButton.setMinHeight(dpPx(context, 52));
         confirmButton.setPadding(dpPx(context, 16), 0, dpPx(context, 16), 0);
-        confirmButton.setBackground(roundedRect(COLOR_PRIMARY, dpPx(context, 14)));
+        confirmButton.setBackground(AppDialogHelper.primaryButtonBackground(context));
         confirmButton.setClickable(true);
         confirmButton.setFocusable(true);
 

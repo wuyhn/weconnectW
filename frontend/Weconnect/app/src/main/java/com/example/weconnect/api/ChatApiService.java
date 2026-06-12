@@ -70,9 +70,9 @@ public interface ChatApiService {
     @POST("api/chat/rooms/{id}/leave")
     Call<ApiResponse<Void>> leaveRoom(@Path("id") long id);
 
-    // Yêu cầu AI tóm tắt cuộc trò chuyện
+    // Yêu cầu AI tóm tắt cuộc trò chuyện — kết quả chỉ trả về cho người gọi (không broadcast)
     @POST("api/chat/rooms/{roomId}/summary")
-    Call<ApiResponse<ChatMessageApiResponse>> requestAISummary(@Path("roomId") long roomId);
+    Call<ApiResponse<String>> requestAISummary(@Path("roomId") long roomId);
 
     // Chấp nhận tin nhắn từ người lạ (receiver gọi)
     @POST("api/chat/message-requests/{id}/accept")
@@ -81,4 +81,8 @@ public interface ChatApiService {
     // Từ chối tin nhắn từ người lạ (receiver gọi)
     @POST("api/chat/message-requests/{id}/reject")
     Call<ApiResponse<Void>> rejectMessageRequest(@Path("id") long roomId);
+
+    // Tổng số tin nhắn chưa đọc trên tất cả phòng — dùng cho badge BottomNavigation
+    @GET("api/chat/unread-total")
+    Call<ApiResponse<Map<String, Integer>>> getTotalUnreadCount();
 }

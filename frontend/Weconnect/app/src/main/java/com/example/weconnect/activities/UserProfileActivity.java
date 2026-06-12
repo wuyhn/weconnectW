@@ -40,6 +40,7 @@ import com.example.weconnect.models.PostResponse;
 import com.example.weconnect.models.UserReview;
 import com.example.weconnect.utils.DirectMessageHelper;
 import com.example.weconnect.utils.InterestTextUtils;
+import com.example.weconnect.utils.ReviewReportBottomSheet;
 import com.example.weconnect.utils.UserReportBottomSheet;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.Chip;
@@ -97,6 +98,14 @@ public class UserProfileActivity extends AppCompatActivity {
     private View cardCreatePostProfile;
     private TextView tvCreatePostHint;
     private TextView tvReviewsTitle;
+
+    // Summary card điểm uy tín
+    private View cardReputationSummary;
+    private TextView tvSummaryReputation;
+    private TextView tvSummaryAvgRating;
+    private TextView tvSummaryReviewCount;
+    private int summaryReputationVal = 0;
+    private float summaryAvgRatingVal = 0f;
 
     // Cache: tab data + other-user avatar (preserved across onResume without extra API calls)
     private List<Post> cachedMyPosts = null;
@@ -344,6 +353,10 @@ public class UserProfileActivity extends AppCompatActivity {
         cardCreatePostProfile = findViewById(R.id.cardCreatePostProfile);
         tvCreatePostHint = findViewById(R.id.tvCreatePostHint);
         tvReviewsTitle = findViewById(R.id.tvReviewsTitle);
+        cardReputationSummary = findViewById(R.id.cardReputationSummary);
+        tvSummaryReputation = findViewById(R.id.tvReputationScore);
+        tvSummaryAvgRating = findViewById(R.id.tvAvgRating);
+        tvSummaryReviewCount = findViewById(R.id.tvReviewCount);
         tvRelatedPostsTitle = findViewById(R.id.tvRelatedPostsTitle);
         tvNoRelatedPosts = findViewById(R.id.tvNoRelatedPosts);
         rvRelatedPosts = findViewById(R.id.rvRelatedPosts);
@@ -662,18 +675,19 @@ public class UserProfileActivity extends AppCompatActivity {
                                 : 60;
                         tvUserReputation.setText(String.valueOf(rep));
                         if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
+                        summaryReputationVal = rep;
                     }
+                    Object avgRObj = profile.get("averageRating");
+                    summaryAvgRatingVal = avgRObj != null ? ((Number) avgRObj).floatValue() : 0f;
 
                     // Load avatar with Glide
                     String avatarUrl = profile.get("avatarUrl") != null
                             ? profile.get("avatarUrl").toString() : null;
                     if (avatarUrl != null && !avatarUrl.isEmpty()) {
-                        if (avatarUrl.startsWith("/")) {
-                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                        }
-                        cachedOtherAvatarUrl = avatarUrl;
+                        String displayUrl = resolveAvatarUrl(avatarUrl);
+                        cachedOtherAvatarUrl = displayUrl;
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
-                                .load(avatarUrl)
+                                .load(displayUrl)
                                 .placeholder(R.drawable.ic_user_placeholder)
                                 .error(R.drawable.ic_user_placeholder)
                                 .circleCrop()
@@ -803,18 +817,19 @@ public class UserProfileActivity extends AppCompatActivity {
                         tvUserReputation.setText(String.valueOf(rep));
                         RetrofitClient.saveReputationScore(UserProfileActivity.this, rep);
                         if (tvReputationLabel != null) tvReputationLabel.setText("🏆 Điểm uy tín");
+                        summaryReputationVal = rep;
                     }
+                    Object avgRObj2 = profile.get("averageRating");
+                    summaryAvgRatingVal = avgRObj2 != null ? ((Number) avgRObj2).floatValue() : 0f;
 
                     // Load avatar with Glide + persist URL globally
                     String avatarUrl = profile.get("avatarUrl") != null
                             ? profile.get("avatarUrl").toString() : null;
                     if (avatarUrl != null && !avatarUrl.isEmpty()) {
-                        if (avatarUrl.startsWith("/")) {
-                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                        }
                         RetrofitClient.saveAvatarUrl(UserProfileActivity.this, avatarUrl);
+                        String displayUrl = resolveAvatarUrl(avatarUrl);
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
-                                .load(avatarUrl)
+                                .load(displayUrl)
                                 .placeholder(R.drawable.ic_user_placeholder)
                                 .error(R.drawable.ic_user_placeholder)
                                 .circleCrop()
@@ -847,6 +862,24 @@ public class UserProfileActivity extends AppCompatActivity {
                 // Giữ tên từ SharedPreferences
             }
         });
+    }
+
+    private String resolveAvatarUrl(String url) {
+        if (url == null || url.isEmpty()) return url;
+        if (url.startsWith("/")) {
+            return RetrofitClient.getBaseUrl() + url.substring(1);
+        }
+        // Xử lý full URL với IP cũ (emulator/session khác) → đổi sang BASE_URL hiện tại
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            try {
+                java.net.URL parsed = new java.net.URL(url);
+                String path = parsed.getPath();
+                if (path != null && path.startsWith("/uploads/")) {
+                    return RetrofitClient.getBaseUrl() + path.substring(1);
+                }
+            } catch (Exception ignored) {}
+        }
+        return url;
     }
 
     private boolean asBoolean(Object value) {
@@ -1501,17 +1534,20 @@ public class UserProfileActivity extends AppCompatActivity {
                     UserProfileActivity.this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
             dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
             ImageView imgFull = new ImageView(UserProfileActivity.this);
-            android.graphics.drawable.Drawable drawable = ivUserProfileAvatar.getDrawable();
-            if (drawable != null) {
-                imgFull.setImageDrawable(drawable);
-            } else {
-                imgFull.setImageResource(R.drawable.ic_user_placeholder);
-            }
             imgFull.setScaleType(ImageView.ScaleType.FIT_CENTER);
             imgFull.setBackgroundColor(Color.BLACK);
             imgFull.setOnClickListener(v2 -> dialog.dismiss());
             dialog.setContentView(imgFull);
             dialog.show();
+            if (cachedOtherAvatarUrl != null && !cachedOtherAvatarUrl.isEmpty()) {
+                com.bumptech.glide.Glide.with(UserProfileActivity.this)
+                        .load(cachedOtherAvatarUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .into(imgFull);
+            } else {
+                imgFull.setImageResource(R.drawable.ic_user_placeholder);
+            }
         });
 
         // Load trạng thái bạn bè từ backend
@@ -2836,8 +2872,15 @@ public class UserProfileActivity extends AppCompatActivity {
                         r.setEdited(Boolean.TRUE.equals(map.get("isEdited")));
                         reviews.add(r);
                     }
+                    // Chỉ người xem profile của chính mình mới thấy nút báo cáo
+                    UserReviewAdapter.OnReviewReportListener reportListener =
+                            isViewOther ? null : review ->
+                                    ReviewReportBottomSheet.show(UserProfileActivity.this,
+                                            getSupportFragmentManager(), review);
                     rvUserReviews.setAdapter(new UserReviewAdapter(reviews, currentUserId,
-                            review -> showReviewDetailSheet(review)));
+                            review -> showReviewDetailSheet(review),
+                            reportListener));
+                    bindReputationSummaryCard(reviews.size());
                 } else {
                     rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>(), 0, null));
                 }
@@ -2848,6 +2891,33 @@ public class UserProfileActivity extends AppCompatActivity {
                 rvUserReviews.setAdapter(new UserReviewAdapter(new ArrayList<>(), 0, null));
             }
         });
+    }
+
+    private void bindReputationSummaryCard(int reviewCount) {
+        if (cardReputationSummary == null) return;
+        if (reviewCount == 0 && summaryReputationVal == 0) {
+            cardReputationSummary.setVisibility(View.GONE);
+            return;
+        }
+        cardReputationSummary.setVisibility(View.VISIBLE);
+        if (tvSummaryReputation != null) {
+            tvSummaryReputation.setText(summaryReputationVal + "/100");
+            int color;
+            if (summaryReputationVal >= 70) color = 0xFF4CAF50;
+            else if (summaryReputationVal >= 40) color = 0xFFFF9800;
+            else color = 0xFFF44336;
+            tvSummaryReputation.setTextColor(color);
+        }
+        if (tvSummaryAvgRating != null) {
+            if (summaryAvgRatingVal > 0) {
+                tvSummaryAvgRating.setText(String.format("★ %.1f", summaryAvgRatingVal));
+            } else {
+                tvSummaryAvgRating.setText("★ --");
+            }
+        }
+        if (tvSummaryReviewCount != null) {
+            tvSummaryReviewCount.setText(String.valueOf(reviewCount));
+        }
     }
 
     private void showFriendResponseDialog() {
@@ -3206,12 +3276,21 @@ public class UserProfileActivity extends AppCompatActivity {
             Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
             ImageView imageView = new ImageView(this);
-            imageView.setImageDrawable(ivUserProfileAvatar.getDrawable());
             imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
             imageView.setBackgroundColor(Color.BLACK);
             imageView.setOnClickListener(v2 -> dialog.dismiss());
             dialog.setContentView(imageView);
             dialog.show();
+            String avatarUrl = RetrofitClient.getAvatarUrl(this);
+            if (avatarUrl != null && !avatarUrl.isEmpty()) {
+                com.bumptech.glide.Glide.with(this)
+                        .load(avatarUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .into(imageView);
+            } else {
+                imageView.setImageResource(R.drawable.ic_user_placeholder);
+            }
         });
 
         addIosSep(group1);
@@ -3297,11 +3376,8 @@ public class UserProfileActivity extends AppCompatActivity {
                 public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> response) {
                     ivUserProfileAvatar.setAlpha(1.0f);
                     if (response.isSuccessful() && response.body() != null && response.body().isSuccess()) {
-                        String avatarUrl = response.body().getResult();
-                        if (avatarUrl != null && avatarUrl.startsWith("/")) {
-                            avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-                        }
-                        // Persist URL globally so all screens stay in sync
+                        final String avatarUrl = response.body().getResult();
+                        // Persist relative path so URL stays valid across IP changes
                         RetrofitClient.saveAvatarUrl(UserProfileActivity.this, avatarUrl);
                         // Push new avatarUrl to backend profile
                         updateProfileAvatarOnBackend(avatarUrl);
@@ -3309,7 +3385,7 @@ public class UserProfileActivity extends AppCompatActivity {
                         com.bumptech.glide.Glide.get(UserProfileActivity.this).clearMemory();
                         new Thread(() -> com.bumptech.glide.Glide.get(UserProfileActivity.this).clearDiskCache()).start();
                         // Reload own avatar ImageView immediately, bypassing old cache
-                        final String finalUrl = avatarUrl;
+                        final String finalUrl = resolveAvatarUrl(avatarUrl);
                         com.bumptech.glide.Glide.with(UserProfileActivity.this)
                                 .load(finalUrl)
                                 .placeholder(R.drawable.ic_user_placeholder)

@@ -3,20 +3,34 @@ package com.weconnect.backend.controller;
 import com.weconnect.backend.dto.request.ApiResponse;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.service.ReviewService;
+import com.weconnect.backend.service.ReportService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api")
 public class ReviewController {
 
     private final ReviewService reviewService;
+    private final ReportService reportService;
 
-    public ReviewController(ReviewService reviewService) {
+    // Thư mục lưu ảnh bằng chứng — đồng bộ với WebConfig.java
+    private static final String UPLOAD_DIR = "uploads/";
+
+    public ReviewController(ReviewService reviewService, ReportService reportService) {
         this.reviewService = reviewService;
+        this.reportService = reportService;
     }
 
     // Lấy danh sách review của user
@@ -116,6 +130,70 @@ public class ReviewController {
                 .code(1000).message("Thành công")
                 .result(reviewService.getCommonActivities(currentUser.getId(), userId))
                 .build());
+    }
+
+    // =========================================================================
+    // Người dùng báo cáo nhận xét vu khống về mình (multipart/form-data)
+    // =========================================================================
+    // Nhận:
+    //   reason        : văn bản giải trình chi tiết (bắt buộc)
+    //   evidenceImage : ảnh bằng chứng (tùy chọn, tối đa 1 file)
+    //
+    // Quy trình:
+    //   1. Lưu ảnh vào thư mục uploads/ → lấy URL tương đối /uploads/{tên file}
+    //   2. Gọi reportService.createReport() với targetType=REVIEW, targetId=reviewId
+    // =========================================================================
+    @PostMapping("/reviews/{reviewId}/report")
+    public ResponseEntity<?> reportReview(
+            @PathVariable Long reviewId,
+            @RequestParam("reason") String reason,
+            @RequestParam(value = "evidenceImage", required = false) MultipartFile evidenceImage,
+            Authentication authentication) {
+
+        User user = (User) authentication.getPrincipal();
+
+        // Lưu ảnh bằng chứng nếu có
+        List<String> evidenceUrls = new ArrayList<>();
+        if (evidenceImage != null && !evidenceImage.isEmpty()) {
+            try {
+                // Tạo tên file độc nhất tránh trùng lặp
+                String originalName  = evidenceImage.getOriginalFilename();
+                String ext           = (originalName != null && originalName.contains("."))
+                        ? originalName.substring(originalName.lastIndexOf('.')) : ".jpg";
+                String savedFileName = "report_" + UUID.randomUUID() + ext;
+
+                // Tạo thư mục nếu chưa tồn tại
+                Path uploadPath = Paths.get(UPLOAD_DIR);
+                if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
+
+                // Ghi file vào đĩa
+                Path filePath = uploadPath.resolve(savedFileName);
+                evidenceImage.transferTo(filePath.toFile());
+
+                // URL tương đối để Glide/trình duyệt có thể truy cập qua WebConfig
+                evidenceUrls.add("/uploads/" + savedFileName);
+            } catch (IOException e) {
+                return ResponseEntity.badRequest().body(ApiResponse.builder()
+                        .code(1050)
+                        .message("Không thể lưu ảnh bằng chứng: " + e.getMessage())
+                        .build());
+            }
+        }
+
+        try {
+            String msg = reportService.createReport(
+                    user.getId(),
+                    "REVIEW",        // targetType cố định
+                    reviewId,
+                    reason,
+                    reason,          // description = reason (giải trình chi tiết)
+                    evidenceUrls);
+            return ResponseEntity.ok(ApiResponse.builder()
+                    .code(1000).message(msg).build());
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.builder()
+                    .code(1040).message(e.getMessage()).build());
+        }
     }
 
     // === Admin endpoints ===

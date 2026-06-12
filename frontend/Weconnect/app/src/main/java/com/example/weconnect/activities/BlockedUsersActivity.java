@@ -37,27 +37,44 @@ public class BlockedUsersActivity extends AppCompatActivity {
         setContentView(root);
 
         // Header
-        LinearLayout header = new LinearLayout(this);
+        androidx.constraintlayout.widget.ConstraintLayout header = new androidx.constraintlayout.widget.ConstraintLayout(this);
         header.setId(android.R.id.content + 100);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(48, 48, 48, 32);
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams headerLp =
+                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.MATCH_PARENT,
+                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
+        header.setLayoutParams(headerLp);
 
         ImageView ivBack = new ImageView(this);
-        ivBack.setImageResource(R.drawable.ic_close);
+        ivBack.setId(android.R.id.content + 101);
+        ivBack.setImageResource(R.drawable.ic_back);
         ivBack.setPadding(24, 24, 24, 24);
         ivBack.setOnClickListener(v -> finish());
-        ivBack.setColorFilter(getResources().getColor(R.color.primary_pink, null));
-        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(96, 96);
+        ivBack.setColorFilter(getResources().getColor(R.color.black, null));
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams backLp =
+                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(96, 96);
+        backLp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        backLp.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        backLp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
         ivBack.setLayoutParams(backLp);
         header.addView(ivBack);
 
         TextView title = new TextView(this);
         title.setText("Danh sách chặn");
         title.setTextSize(20);
-        title.setTextColor(getResources().getColor(R.color.primary_pink, null));
+        title.setTextColor(getResources().getColor(R.color.black, null));
         title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setPadding(24, 0, 0, 0);
+        title.setGravity(Gravity.CENTER);
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams titleLp =
+                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
+                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT,
+                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.WRAP_CONTENT);
+        titleLp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        titleLp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        titleLp.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        titleLp.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        title.setLayoutParams(titleLp);
         header.addView(title);
 
         root.addView(header);

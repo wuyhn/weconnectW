@@ -16,7 +16,9 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
     Optional<User> findByFullName(String fullName);
+    Optional<User> findByFullNameAndRole(String fullName, int role);
     List<User> findByFullNameContainingIgnoreCase(String keyword);
+    List<User> findByFullNameContainingIgnoreCaseAndRole(String keyword, int role);
     long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

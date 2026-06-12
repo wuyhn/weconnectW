@@ -12,6 +12,7 @@ public class ChatMessage implements Serializable {
     private final boolean sentByCurrentUser;
     private final boolean systemMessage;
     private final String type;
+    private final String senderAvatarUrl;
 
     public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
         this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, false, null);
@@ -22,6 +23,10 @@ public class ChatMessage implements Serializable {
     }
 
     public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser, boolean systemMessage, String type) {
+        this(id, senderId, senderName, content, timeLabel, sentByCurrentUser, systemMessage, type, null);
+    }
+
+    public ChatMessage(String id, long senderId, String senderName, String content, String timeLabel, boolean sentByCurrentUser, boolean systemMessage, String type, String senderAvatarUrl) {
         this.id = id;
         this.senderId = senderId;
         this.senderName = senderName;
@@ -30,6 +35,7 @@ public class ChatMessage implements Serializable {
         this.sentByCurrentUser = sentByCurrentUser;
         this.systemMessage = systemMessage;
         this.type = type;
+        this.senderAvatarUrl = senderAvatarUrl;
     }
 
     public ChatMessage(String id, String senderName, String content, String timeLabel, boolean sentByCurrentUser) {
@@ -62,6 +68,10 @@ public class ChatMessage implements Serializable {
 
     public String getType() {
         return type;
+    }
+
+    public String getSenderAvatarUrl() {
+        return senderAvatarUrl;
     }
 
     public boolean isSystemMessage() {

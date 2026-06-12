@@ -8,7 +8,11 @@
 }
 
 .user-avatar {
-  border: 3px solid #1890ff;
+  border: 0 !important;
+  outline: 0 !important;
+  background: #eef2f7 !important;
+  color: #6b7280 !important;
+  box-shadow: none !important;
   display: block;
   margin: 0 auto;
 }
@@ -19,6 +23,78 @@
   justify-content: center;
 }
 
+/* Overview stat cards */
+.overview-stat-card {
+  border-radius: 10px;
+  padding: 16px 14px;
+  text-align: center;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  height: 100%;
+  min-height: 110px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.overview-stat-card--blue {
+  background: #e6f4ff;
+  border-color: #91caff;
+}
+.overview-stat-card--green {
+  background: #f6ffed;
+  border-color: #b7eb8f;
+}
+.overview-stat-card--yellow {
+  background: #fffbe6;
+  border-color: #ffe58f;
+}
+.overview-stat-card--red {
+  background: #fff1f0;
+  border-color: #ffa39e;
+}
+.overview-stat-card--gray {
+  background: #fafafa;
+  border-color: #d9d9d9;
+}
+
+.overview-stat-icon {
+  font-size: 20px;
+  margin-bottom: 2px;
+}
+.overview-stat-card--blue .overview-stat-icon { color: #1677ff; }
+.overview-stat-card--green .overview-stat-icon { color: #52c41a; }
+.overview-stat-card--yellow .overview-stat-icon { color: #faad14; }
+.overview-stat-card--red .overview-stat-icon { color: #ff4d4f; }
+.overview-stat-card--gray .overview-stat-icon { color: #8c8c8c; }
+
+.overview-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #1a1a1a;
+}
+.overview-stat-label {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 2px;
+}
+.overview-stat-subtext {
+  font-size: 11px;
+  color: #595959;
+  margin-top: 2px;
+}
+
+.overview-empty-hint {
+  margin-top: 16px;
+  text-align: center;
+  color: #bfbfbf;
+  font-size: 13px;
+  padding: 8px 0 4px;
+}
+
 @media (max-width: 576px) {
   .admin-user-detail-page {
     padding: 12px;
@@ -26,6 +102,10 @@
 
   .user-avatar {
     margin: 0 auto 16px auto;
+  }
+
+  .overview-stat-value {
+    font-size: 22px;
   }
 }
 

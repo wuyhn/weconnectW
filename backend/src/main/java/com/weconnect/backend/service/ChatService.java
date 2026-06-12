@@ -2,6 +2,7 @@ package com.weconnect.backend.service;
 
 import com.weconnect.backend.dto.ChatMessageResponse;
 import com.weconnect.backend.dto.ChatRoomResponse;
+import com.weconnect.backend.entity.AISummary;
 import com.weconnect.backend.entity.ChatMessage;
 import com.weconnect.backend.entity.ChatRoom;
 import com.weconnect.backend.entity.ChatRoomMember;
@@ -10,6 +11,7 @@ import com.weconnect.backend.entity.Notification;
 import com.weconnect.backend.entity.Post;
 import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.entity.User;
+import com.weconnect.backend.repository.AISummaryRepository;
 import com.weconnect.backend.repository.BlockedUserRepository;
 import com.weconnect.backend.repository.ChatMessageRepository;
 import com.weconnect.backend.repository.ChatRoomMemberRepository;
@@ -32,6 +34,7 @@ public class ChatService {
     private final ChatRoomRepository chatRoomRepository;
     private final ChatRoomMemberRepository chatRoomMemberRepository;
     private final ChatMessageRepository chatMessageRepository;
+    private final AISummaryRepository aiSummaryRepository;
     private final UserRepository userRepository;
     private final BlockedUserRepository blockedUserRepository;
     private final PostRepository postRepository;
@@ -45,6 +48,7 @@ public class ChatService {
     public ChatService(ChatRoomRepository chatRoomRepository,
                        ChatRoomMemberRepository chatRoomMemberRepository,
                        ChatMessageRepository chatMessageRepository,
+                       AISummaryRepository aiSummaryRepository,
                        UserRepository userRepository,
                        BlockedUserRepository blockedUserRepository,
                        PostRepository postRepository,
@@ -55,6 +59,7 @@ public class ChatService {
         this.chatRoomRepository = chatRoomRepository;
         this.chatRoomMemberRepository = chatRoomMemberRepository;
         this.chatMessageRepository = chatMessageRepository;
+        this.aiSummaryRepository = aiSummaryRepository;
         this.userRepository = userRepository;
         this.blockedUserRepository = blockedUserRepository;
         this.postRepository = postRepository;
@@ -365,6 +370,7 @@ public class ChatService {
     }
     // Tạo phòng nhóm hoạt động (linked to post)
     // Rule 1: Chỉ tạo khi post hợp lệ, 1 post = tối đa 1 room
+    @org.springframework.transaction.annotation.Transactional
     public ChatRoomResponse createActivityChatRoom(Long postId, Long ownerId, String title) {
         // Validate postId phải hợp lệ
         if (postId == null) {
@@ -396,19 +402,35 @@ public class ChatService {
                 .role(ChatRoomMember.Role.OWNER)
                 .build());
 
+        // Notify owner's chat list ngay lập tức để phòng mới hiện ra mà không cần refresh thủ công
+        messagingTemplate.convertAndSendToUser(
+                ownerId.toString(), "/queue/chat-list",
+                Map.of("roomId", room.getId(), "event", "ROOM_CREATED"));
+
         return toRoomResponse(room);
     }
 
     // Thêm user vào phòng chat hoạt động
+    @org.springframework.transaction.annotation.Transactional
     public void addMemberToActivityRoom(Long postId, Long userId) {
         var roomOpt = chatRoomRepository.findByPostId(postId);
-        if (roomOpt.isEmpty()) return;
+
+        // Phòng chưa tồn tại — tự tạo (post cũ hoặc room creation thất bại trước đó)
+        if (roomOpt.isEmpty()) {
+            Post post = postRepository.findById(postId).orElse(null);
+            if (post == null) return;
+            String chatTitle = (post.getInterestTag() != null && !post.getInterestTag().isEmpty())
+                    ? post.getInterestTag() : "Hoạt động";
+            User owner = userRepository.findById(post.getAuthorId()).orElse(null);
+            if (owner != null) chatTitle = chatTitle + " - " + owner.getFullName();
+            createActivityChatRoom(postId, post.getAuthorId(), chatTitle);
+            roomOpt = chatRoomRepository.findByPostId(postId);
+            if (roomOpt.isEmpty()) return;
+        }
 
         ChatRoom room = roomOpt.get();
         // Kiểm tra xem user đã là member chưa
-        var existingMembers = chatRoomMemberRepository.findByRoomId(room.getId());
-        boolean alreadyMember = existingMembers.stream()
-                .anyMatch(m -> m.getUserId().equals(userId));
+        boolean alreadyMember = chatRoomMemberRepository.existsByRoomIdAndUserId(room.getId(), userId);
         if (alreadyMember) return;
 
         chatRoomMemberRepository.save(ChatRoomMember.builder()
@@ -417,7 +439,7 @@ public class ChatService {
                 .role(ChatRoomMember.Role.MEMBER)
                 .build());
 
-        // Push real-time để MessagesFragment của user vừa được duyệt tự reload chat list
+        // Push real-time để client của user vừa được duyệt tự reload chat list
         messagingTemplate.convertAndSendToUser(
                 userId.toString(), "/queue/chat-list",
                 Map.of("roomId", room.getId(), "event", "JOINED"));
@@ -468,10 +490,26 @@ public class ChatService {
         return toRoomResponse(room, user1Id);
     }
 
-    // Lịch sử tin nhắn
+    // Lịch sử tin nhắn — merge tin nhắn công khai + bản tóm tắt AI riêng của user
     public List<ChatMessageResponse> getMessages(Long roomId, Long currentUserId) {
         List<ChatMessage> messages = chatMessageRepository.findByRoomIdOrderByCreatedAtAsc(roomId);
-        return toMessageResponseList(messages, currentUserId);
+        List<ChatMessageResponse> result = new ArrayList<>(toMessageResponseList(messages, currentUserId));
+
+        // Thêm các bản tóm tắt AI riêng của user này (không ai khác thấy)
+        List<AISummary> privateSummaries =
+                aiSummaryRepository.findByRoomIdAndUserIdOrderByCreatedAtAsc(roomId, currentUserId);
+        for (AISummary s : privateSummaries) {
+            result.add(toSummaryResponse(s));
+        }
+
+        // Sắp xếp lại theo thời gian để summary xuất hiện đúng vị trí trong timeline
+        result.sort((a, b) -> {
+            if (a.getCreatedAt() == null) return -1;
+            if (b.getCreatedAt() == null) return 1;
+            return a.getCreatedAt().compareTo(b.getCreatedAt());
+        });
+
+        return result;
     }
 
     // Tin nhắn mới (polling)
@@ -931,9 +969,13 @@ public class ChatService {
     private ChatMessageResponse toMessageResponse(ChatMessage msg, Long currentUserId) {
         boolean isSystem = "SYSTEM".equals(msg.getType());
         String senderName = "";
+        String senderAvatarUrl = null;
         if (!isSystem && msg.getSenderId() != null && msg.getSenderId() != 0) {
             User sender = userRepository.findById(msg.getSenderId()).orElse(null);
-            if (sender != null) senderName = sender.getFullName();
+            if (sender != null) {
+                senderName = sender.getFullName();
+                senderAvatarUrl = sender.getAvatarUrl();
+            }
         }
 
         return ChatMessageResponse.builder()
@@ -941,6 +983,7 @@ public class ChatService {
                 .roomId(msg.getRoomId())
                 .senderId(isSystem ? 0L : msg.getSenderId())
                 .senderName(senderName)
+                .senderAvatarUrl(senderAvatarUrl)
                 .content(msg.getContent())
                 .type(msg.getType())
                 .sentByCurrentUser(!isSystem && msg.getSenderId() != null && msg.getSenderId().equals(currentUserId))
@@ -972,5 +1015,19 @@ public class ChatService {
             responses.add(toMessageResponse(msg, currentUserId));
         }
         return responses;
+    }
+
+    private ChatMessageResponse toSummaryResponse(AISummary summary) {
+        return ChatMessageResponse.builder()
+                .id(summary.getId())
+                .roomId(summary.getRoomId())
+                .senderId(0L)
+                .senderName("AI")
+                .senderAvatarUrl(null)
+                .content(summary.getContent())
+                .type("SUMMARY")
+                .sentByCurrentUser(false)
+                .createdAt(summary.getCreatedAt())
+                .build();
     }
 }

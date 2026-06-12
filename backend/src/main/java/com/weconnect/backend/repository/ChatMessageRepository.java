@@ -24,6 +24,9 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
     @Query("SELECT m FROM ChatMessage m WHERE m.roomId = :roomId AND (m.type IS NULL OR (m.type != 'SUMMARY' AND m.type != 'SYSTEM')) ORDER BY m.createdAt DESC LIMIT 50")
     List<ChatMessage> findTop50RealMessagesByRoomId(@Param("roomId") Long roomId);
 
+    // Lấy SUMMARY mới nhất trong phòng (dùng để kiểm tra cooldown)
+    java.util.Optional<ChatMessage> findTopByRoomIdAndTypeOrderByCreatedAtDesc(Long roomId, String type);
+
     // Đếm tin nhắn của một user cụ thể trong phòng (dùng để kiểm tra giới hạn 5 tin khi PENDING)
     long countByRoomIdAndSenderId(Long roomId, Long senderId);
 }

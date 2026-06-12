@@ -4,13 +4,32 @@ import android.view.View;
 import android.widget.TextView;
 
 /**
- * Global singleton giữ trạng thái unread notification count.
+ * Global singleton giữ trạng thái unread count cho notification và chat.
  * Dùng để badge hiển thị nhất quán trên tất cả các tab Activity.
  */
 public class BadgeManager {
 
     private static int unreadCount = 0;
+    private static int chatUnreadCount = 0;
 
+    // ── Chat unread ──
+    public static synchronized void setChatCount(int count) {
+        chatUnreadCount = Math.max(0, count);
+    }
+
+    public static synchronized int getChatCount() {
+        return chatUnreadCount;
+    }
+
+    public static synchronized void incrementChat() {
+        chatUnreadCount++;
+    }
+
+    public static synchronized void resetChat() {
+        chatUnreadCount = 0;
+    }
+
+    // ── Notification unread ──
     public static void setCount(int count) {
         unreadCount = Math.max(0, count);
     }

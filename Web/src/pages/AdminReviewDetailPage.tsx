@@ -15,13 +15,15 @@ import {
   Avatar,
   Divider,
 } from 'antd'
-import { ArrowLeftOutlined, DeleteOutlined, StarOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DeleteOutlined, StarOutlined, UserOutlined } from '@ant-design/icons'
 import MainLayout from '../components/MainLayout'
 import { reviewAdminService } from '../services/reviewAdminService'
 import { userAdminService } from '../services/userAdminService'
 import { UserReview, User } from '../types'
 import dayjs from 'dayjs'
 import './AdminReviewDetailPage.css'
+import { resolveAvatarUrl } from '../utils/avatar'
+import { cleanTagText } from '../utils/text'
 
 interface ReviewWithUsers extends UserReview {
   reviewerData?: User
@@ -207,7 +209,12 @@ export default function AdminReviewDetailPage() {
                     }}
                     onClick={() => navigate(`/admin/users/${review.reviewerData?.id}`)}
                   >
-                    <Avatar size={48} src={review.reviewerData.avatarUrl} />
+                    <Avatar
+                      size={48}
+                      src={resolveAvatarUrl(review.reviewerData.avatarUrl)}
+                      icon={!review.reviewerData.avatarUrl ? <UserOutlined /> : undefined}
+                      style={{ border: 0, boxShadow: 'none', background: '#eef2f7', color: '#6b7280' }}
+                    />
                     <div>
                       <div style={{ fontWeight: 500 }}>{review.reviewerData.fullName}</div>
                       <div style={{ fontSize: '12px', color: '#999' }}>{review.reviewerData.email}</div>
@@ -234,7 +241,12 @@ export default function AdminReviewDetailPage() {
                     }}
                     onClick={() => navigate(`/admin/users/${review.reviewedUserData?.id}`)}
                   >
-                    <Avatar size={48} src={review.reviewedUserData.avatarUrl} />
+                    <Avatar
+                      size={48}
+                      src={resolveAvatarUrl(review.reviewedUserData.avatarUrl)}
+                      icon={!review.reviewedUserData.avatarUrl ? <UserOutlined /> : undefined}
+                      style={{ border: 0, boxShadow: 'none', background: '#eef2f7', color: '#6b7280' }}
+                    />
                     <div>
                       <div style={{ fontWeight: 500 }}>{review.reviewedUserData.fullName}</div>
                       <div style={{ fontSize: '12px', color: '#999' }}>{review.reviewedUserData.email}</div>
@@ -252,7 +264,7 @@ export default function AdminReviewDetailPage() {
         <Card title="Review Details" style={{ marginBottom: '24px' }}>
           <Descriptions bordered size="small" layout="vertical">
             <Descriptions.Item label="ID">{review.id}</Descriptions.Item>
-            <Descriptions.Item label="Activity Name">{review.activityName}</Descriptions.Item>
+            <Descriptions.Item label="Activity Name">{cleanTagText(review.activityName)}</Descriptions.Item>
             <Descriptions.Item label="Reputation Label">
               <Tag color={getReputationColor(review.reputationLabel)}>
                 {review.reputationLabel}

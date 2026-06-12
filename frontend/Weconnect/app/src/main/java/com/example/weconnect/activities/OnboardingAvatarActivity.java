@@ -119,9 +119,6 @@ public class OnboardingAvatarActivity extends AppCompatActivity {
                         public void onResponse(Call<ApiResponse<String>> call, Response<ApiResponse<String>> resp) {
                             if (resp.isSuccessful() && resp.body() != null && resp.body().getResult() != null) {
                                 String url = resp.body().getResult();
-                                if (url.startsWith("/")) {
-                                    url = RetrofitClient.getBaseUrl() + url.substring(1);
-                                }
                                 saveAvatarToBackend(url, btn);
                             } else {
                                 restoreConfirmButton(btn);

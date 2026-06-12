@@ -8,6 +8,7 @@ import ReportsPage from '../pages/ReportsPage'
 import AdminUserDetailPage from '../pages/AdminUserDetailPage'
 import AdminPostDetailPage from '../pages/AdminPostDetailPage'
 import AdminReviewDetailPage from '../pages/AdminReviewDetailPage'
+import AdminReportDetailPage from '../pages/AdminReportDetailPage'
 import SearchResultsPage from '../pages/SearchResultsPage'
 
 interface AppRoutesProps {
@@ -34,6 +35,7 @@ export default function AppRoutes({ isAuthenticated }: AppRoutesProps) {
           <Route path="/reviews" element={<ReviewsPage />} />
           <Route path="/admin/reviews/:id" element={<AdminReviewDetailPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/admin/reports/:id" element={<AdminReportDetailPage />} />
           <Route path="/search" element={<SearchResultsPage />} />
         </>
       ) : (

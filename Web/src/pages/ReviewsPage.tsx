@@ -1,349 +1,468 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import {
-  Card,
-  Table,
+  Avatar,
   Button,
+  Card,
+  Drawer,
+  Empty,
   Input,
   Select,
-  Row,
-  Col,
+  Skeleton,
+  Table,
   message,
-  Drawer,
-  Descriptions,
-  Tag,
-  Empty,
-  Rate,
 } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import {
-  SearchOutlined,
+  CalendarOutlined,
+  CloseOutlined,
   EyeOutlined,
+  MessageOutlined,
   ReloadOutlined,
+  SearchOutlined,
+  StarFilled,
+  StarOutlined,
+  TagsOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
-import MainLayout from '../components/MainLayout'
-import LoadingState from '../components/LoadingState'
-import { reviewAdminService } from '../services/reviewAdminService'
-import { UserReview, PaginationParams } from '../types'
 import dayjs from 'dayjs'
+import MainLayout from '../components/MainLayout'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { reviewAdminService, ReviewLabelFilter } from '../services/reviewAdminService'
+import { PaginationParams, UserReview } from '../types'
+import { resolveAvatarUrl } from '../utils/avatar'
+import { cleanTagText } from '../utils/text'
 import './ReviewsPage.css'
 
+const PAGE_SIZE = 7
+
+const normalizeDate = (value: unknown): dayjs.Dayjs | null => {
+  if (Array.isArray(value)) {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = value as number[]
+    if (!year || !month || !day) return null
+    const parsed = dayjs(new Date(year, month - 1, day, hour, minute, second))
+    return parsed.isValid() ? parsed : null
+  }
+
+  if (!value) return null
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+
+    const viDate = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s*[·,-]?\s*(\d{1,2}):(\d{2}))?/)
+    if (viDate) {
+      const [, day, month, year, hour = '0', minute = '0'] = viDate
+      const parsed = dayjs(new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)))
+      return parsed.isValid() ? parsed : null
+    }
+  }
+
+  const parsed = dayjs(value as string | number | Date)
+  return parsed.isValid() ? parsed : null
+}
+
+const formatDate = (value: unknown) => {
+  const parsed = normalizeDate(value)
+  return parsed ? parsed.format('DD/MM/YYYY') : '—'
+}
+
+const formatActivityDate = (review: UserReview) => {
+  const start = normalizeDate(review.activityStartTime)
+  const end = normalizeDate(review.activityEndTime)
+
+  if (start && end && !start.isSame(end, 'day')) {
+    return `${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`
+  }
+
+  if (start) return start.format('DD/MM/YYYY')
+
+  if (review.activityDateDisplay && !review.activityDateDisplay.toLowerCase().includes('invalid')) {
+    return review.activityDateDisplay
+  }
+
+  return '—'
+}
+
+const clampRating = (value?: number) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 0
+  return Math.max(0, Math.min(5, value))
+}
+
+const getRatingValue = (review: UserReview) => {
+  const rating = clampRating(review.rating)
+  if (rating > 0) return rating
+
+  const label = (review.reputationLabel || '').toLowerCase()
+  if (label.includes('excellent') || label.includes('đáng') || label.includes('dang')) return 5
+  if (label.includes('good') || label.includes('nhiệt') || label.includes('nhiet') || label.includes('tích cực')) return 4
+  if (label.includes('average') || label.includes('bình') || label.includes('binh') || label.includes('trung')) return 3
+  if (label.includes('poor') || label.includes('không') || label.includes('khong') || label.includes('cải thiện')) return 2
+  return 0
+}
+
+const getLabelMeta = (review: UserReview): { key: ReviewLabelFilter; text: string } => {
+  const rating = getRatingValue(review)
+  if (rating >= 4) return { key: 'positive', text: 'Tích cực' }
+  if (rating === 3) return { key: 'medium', text: 'Trung bình' }
+  if (rating > 0) return { key: 'improve', text: 'Cần cải thiện' }
+  return { key: 'medium', text: 'Trung bình' }
+}
+
+const UserCell = ({
+  name,
+  id,
+  avatarUrl,
+}: {
+  name?: string
+  id: number
+  avatarUrl?: string
+}) => (
+  <div className="reviews-user-cell">
+    <Avatar
+      size={38}
+      src={resolveAvatarUrl(avatarUrl)}
+      icon={!avatarUrl ? <UserOutlined /> : undefined}
+      className="reviews-avatar"
+    />
+    <div className="reviews-user-meta">
+      <span className="reviews-user-name" title={name || 'Người dùng'}>
+        {name || 'Người dùng'}
+      </span>
+      <span className="reviews-user-id">ID #{id}</span>
+    </div>
+  </div>
+)
+
+const RatingStars = ({ rating }: { rating: number }) => {
+  const rounded = Math.round(rating)
+  return (
+    <div className="reviews-rating">
+      <strong>{rating ? rating.toFixed(1) : '—'}</strong>
+      <div className="reviews-stars" aria-label={`${rating} sao`}>
+        {[1, 2, 3, 4, 5].map((star) =>
+          star <= rounded ? (
+            <StarFilled className="star-filled" key={star} />
+          ) : (
+            <StarOutlined className="star-empty" key={star} />
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
+const ReviewSkeletonRows = () => (
+  <div className="reviews-skeleton">
+    {Array.from({ length: PAGE_SIZE }).map((_, index) => (
+      <div className="reviews-skeleton-row" key={index}>
+        <Skeleton.Avatar active size={40} shape="circle" />
+        <Skeleton.Input active size="small" block />
+        <Skeleton.Input active size="small" block />
+        <Skeleton.Button active size="small" />
+      </div>
+    ))}
+  </div>
+)
+
 export default function ReviewsPage() {
-  const [searchParams] = useSearchParams()
   const [reviews, setReviews] = useState<UserReview[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [reputationFilter, setReputationFilter] = useState<string | null>(null)
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 })
+  const [labelFilter, setLabelFilter] = useState<ReviewLabelFilter | 'all'>('all')
+  const [ratingFilter, setRatingFilter] = useState<number | null>(null)
+  const [pagination, setPagination] = useState({ current: 1, pageSize: PAGE_SIZE, total: 0 })
   const [selectedReview, setSelectedReview] = useState<UserReview | null>(null)
   const [drawerVisible, setDrawerVisible] = useState(false)
-  const [reputationLabels, setReputationLabels] = useState<string[]>([])
+  const debouncedSearch = useDebouncedValue(search, 300)
+  const searchPending = search !== debouncedSearch
 
   useEffect(() => {
-    const labels = reviewAdminService.getReputationLabels()
-    setReputationLabels(labels)
-    loadReviews(1)
-  }, [])
+    loadReviews(1, debouncedSearch)
+  }, [debouncedSearch, labelFilter, ratingFilter])
 
-  useEffect(() => {
-    loadReviews(1)
-  }, [search, reputationFilter])
+  const resetFilters = () => {
+    setSearch('')
+    setLabelFilter('all')
+    setRatingFilter(null)
+  }
 
-  useEffect(() => {
-    // Handle query params from dashboard
-    const fromDashboard = searchParams.get('from') === 'dashboard'
-    const sortParam = searchParams.get('sort')
-    if (fromDashboard) {
-      // Show indication that we're coming from dashboard (optional)
-      // Could set a banner or highlight
-    }
-    // Sort parameter can be used if needed: createdAt_desc
-  }, [searchParams])
-
-  const loadReviews = async (page: number) => {
+  const loadReviews = async (page: number, searchValue = debouncedSearch) => {
     try {
       setLoading(true)
-      const params: PaginationParams = { page, pageSize: 10 }
+      setError(null)
+      const params: PaginationParams = { page, pageSize: PAGE_SIZE }
       const result = await reviewAdminService.getReviews(params, {
-        search,
-        reputationLabel: reputationFilter,
+        search: searchValue,
+        label: labelFilter === 'all' ? null : labelFilter,
+        rating: ratingFilter,
       })
+
       setReviews(result.data)
-      setPagination({ current: page, pageSize: 10, total: result.total })
-    } catch (error) {
-      message.error('Failed to load reviews')
+      setPagination({ current: page, pageSize: PAGE_SIZE, total: result.total })
+    } catch {
+      const messageText = 'Không thể tải danh sách đánh giá'
+      setError(messageText)
+      message.error(messageText)
     } finally {
       setLoading(false)
     }
   }
 
-  const getReputationColor = (label: string) => {
-    const colorMap: Record<string, string> = {
-      'Đáng tin cậy': '#52c41a',
-      'Nhiệt tình': '#1890ff',
-      'Bình thường': '#faad14',
-      'Không tốt': '#ff4d4f',
-      Excellent: '#52c41a',
-      Good: '#1890ff',
-      Average: '#faad14',
-      Poor: '#ff4d4f',
-    }
-    return colorMap[label] || '#262626'
+  const refreshReviews = () => {
+    loadReviews(1, search)
   }
 
-  const getReputationRating = (label: string) => {
-    const ratingMap: Record<string, number> = {
-      'Đáng tin cậy': 5,
-      'Nhiệt tình': 4,
-      'Bình thường': 3,
-      'Không tốt': 2,
-      Excellent: 5,
-      Good: 4,
-      Average: 3,
-      Poor: 2,
-    }
-    return ratingMap[label] || 3
-  }
-
-  const columns = [
+  const columns: ColumnsType<UserReview> = [
     {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 80,
-      sorter: (a: UserReview, b: UserReview) => a.id - b.id,
-    },
-    {
-      title: 'Activity Name',
-      dataIndex: 'activityName',
-      key: 'activityName',
-      width: 180,
-      render: (text: string) => (
-        <div
-          style={{
-            whiteSpace: 'normal',
-            wordBreak: 'break-word',
-            lineHeight: '1.5',
-          }}
-        >
-          {text}
+      title: 'Hoạt động',
+      key: 'activity',
+      width: 178,
+      render: (_, record) => (
+        <div className="reviews-activity-cell">
+          <span className="reviews-activity-tag" title={cleanTagText(record.interestTag || record.activityName || 'Hoạt động')}>
+            {cleanTagText(record.interestTag || record.activityName || 'Hoạt động')}
+          </span>
+          <span className="reviews-activity-date">
+            <CalendarOutlined />
+            {formatActivityDate(record)}
+          </span>
         </div>
       ),
     },
     {
-      title: 'Reputation Label',
-      dataIndex: 'reputationLabel',
-      key: 'reputationLabel',
-      width: 120,
-      render: (label: string) => (
-        <Tag
-          color={getReputationColor(label)}
-          style={{
-            color: 'white',
-            fontWeight: 600,
-          }}
-        >
-          {label}
-        </Tag>
-      ),
-      sorter: (a: UserReview, b: UserReview) =>
-        getReputationRating(b.reputationLabel) - getReputationRating(a.reputationLabel),
-    },
-    {
-      title: 'Comment',
-      dataIndex: 'comment',
-      key: 'comment',
-      width: 280,
-      render: (text: string) => (
-        <div
-          style={{
-            whiteSpace: 'normal',
-            wordBreak: 'break-word',
-            lineHeight: '1.5',
-          }}
-        >
-          {text}
-        </div>
+      title: 'Người đánh giá',
+      key: 'reviewer',
+      width: 210,
+      render: (_, record) => (
+        <UserCell name={record.reviewerName} id={record.reviewerId} avatarUrl={record.reviewerAvatarUrl} />
       ),
     },
     {
-      title: 'Reviewer',
-      key: 'reviewerName',
-      width: 130,
-      render: (_: any, record: UserReview) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{record.reviewerName || 'Unknown'}</div>
-          <div style={{ fontSize: '12px', color: '#8c8c8c' }}>ID: {record.reviewerId}</div>
-        </div>
+      title: 'Người được đánh giá',
+      key: 'reviewedUser',
+      width: 220,
+      render: (_, record) => (
+        <UserCell
+          name={record.reviewedUserName}
+          id={record.reviewedUserId}
+          avatarUrl={record.reviewedUserAvatarUrl}
+        />
       ),
     },
     {
-      title: 'Reviewed User',
-      key: 'reviewedUserName',
-      width: 130,
-      render: (_: any, record: UserReview) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{record.reviewedUserName || 'Unknown'}</div>
-          <div style={{ fontSize: '12px', color: '#8c8c8c' }}>ID: {record.reviewedUserId}</div>
-        </div>
-      ),
+      title: 'Rating',
+      key: 'rating',
+      width: 150,
+      sorter: (a, b) => getRatingValue(a) - getRatingValue(b),
+      render: (_, record) => <RatingStars rating={getRatingValue(record)} />,
     },
     {
-      title: 'Created',
+      title: 'Nhãn',
+      key: 'label',
+      width: 138,
+      render: (_, record) => {
+        const label = getLabelMeta(record)
+        return <span className={`reviews-label-badge label-${label.key}`}>{label.text}</span>
+      },
+    },
+    {
+      title: 'Ngày tạo',
       dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 130,
-      render: (date: string) => dayjs(date).format('MMM DD, YYYY'),
-      sorter: (a: UserReview, b: UserReview) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      width: 112,
+      render: (date: string) => <span className="reviews-muted">{formatDate(date)}</span>,
+      sorter: (a, b) => (normalizeDate(b.createdAt)?.valueOf() || 0) - (normalizeDate(a.createdAt)?.valueOf() || 0),
     },
     {
-      title: 'Actions',
+      title: 'Thao tác',
       key: 'actions',
-      width: 100,
-      fixed: 'right' as const,
-      render: (_: any, record: UserReview) => (
-        <Button
-          type="primary"
-          size="small"
-          icon={<EyeOutlined />}
-          onClick={() => {
-            setSelectedReview(record)
-            setDrawerVisible(true)
-          }}
-        >
-          View
+      width: 148,
+      align: 'right',
+      render: (_, record) => (
+        <Button className="reviews-view-button" icon={<EyeOutlined />} onClick={() => {
+          setSelectedReview(record)
+          setDrawerVisible(true)
+        }}>
+          Xem chi tiết
         </Button>
       ),
     },
   ]
 
-  if (loading && reviews.length === 0) {
-    return <LoadingState fullPage message="Loading reviews..." />
-  }
-
   return (
     <MainLayout>
       <div className="reviews-page">
-        <Card className="reviews-card">
-          {/* Header */}
-          <Row justify="space-between" align="middle" style={{ marginBottom: '24px' }}>
-            <Col>
-              <h2 style={{ margin: 0 }}>Review Management</h2>
-            </Col>
-            <Col>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => loadReviews(1)}
-                loading={loading}
-              >
-                Refresh
-              </Button>
-            </Col>
-          </Row>
+        <Card className="reviews-admin-card">
+          <div className="reviews-page-head">
+            <div className="reviews-title-wrap">
+              <span className="reviews-title-icon">
+                <StarFilled />
+              </span>
+              <div>
+                <h2>Danh sách đánh giá</h2>
+                <p>Quản lý và theo dõi các đánh giá của người dùng trên hệ thống.</p>
+              </div>
+            </div>
+            <span className="reviews-total-badge">Tổng {pagination.total} đánh giá</span>
+          </div>
 
-          {/* Filters and Search */}
-          <Row gutter={[16, 16]} style={{ marginBottom: '24px' }} className="filters-row">
-            <Col xs={24} sm={24} md={14}>
-              <Input
-                placeholder="Search by activity name or comment"
-                prefix={<SearchOutlined />}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                allowClear
-              />
-            </Col>
-            <Col xs={24} sm={24} md={10}>
-              <Select
-                placeholder="Filter by reputation label"
-                value={reputationFilter}
-                onChange={setReputationFilter}
-                style={{ width: '100%' }}
-                allowClear
-                options={reputationLabels.map((label) => ({
-                  label: (
-                    <span>
-                      <Tag
-                        color={getReputationColor(label)}
-                        style={{ color: 'white', marginRight: '8px' }}
-                      >
-                        {label}
-                      </Tag>
-                    </span>
+          <div className="reviews-toolbar">
+            <Input
+              className="reviews-search"
+              placeholder="Tìm theo hoạt động, người đánh giá hoặc người được đánh giá"
+              prefix={<SearchOutlined />}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              allowClear
+            />
+            <Select
+              className="reviews-filter"
+              value={labelFilter}
+              onChange={(value) => setLabelFilter(value)}
+              options={[
+                { label: 'Tất cả nhãn', value: 'all' },
+                { label: 'Tích cực', value: 'positive' },
+                { label: 'Trung bình', value: 'medium' },
+                { label: 'Cần cải thiện', value: 'improve' },
+              ]}
+            />
+            <Select
+              className="reviews-filter reviews-rating-filter"
+              placeholder="Số sao"
+              value={ratingFilter}
+              onChange={(value) => setRatingFilter(value ?? null)}
+              allowClear
+              options={[
+                { label: '5 sao', value: 5 },
+                { label: '4 sao', value: 4 },
+                { label: '3 sao', value: 3 },
+                { label: '2 sao', value: 2 },
+                { label: '1 sao', value: 1 },
+              ]}
+            />
+            <Button icon={<ReloadOutlined />} onClick={refreshReviews} loading={loading} className="reviews-refresh">
+              Làm mới
+            </Button>
+          </div>
+
+          {error ? (
+            <div className="reviews-state">
+              <Empty description={error} image={Empty.PRESENTED_IMAGE_SIMPLE}>
+                <Button type="primary" icon={<ReloadOutlined />} onClick={refreshReviews}>
+                  Thử lại
+                </Button>
+              </Empty>
+            </div>
+          ) : loading && reviews.length === 0 ? (
+            <ReviewSkeletonRows />
+          ) : (
+            <div className="reviews-table-shell">
+              <Table
+                columns={columns}
+                dataSource={reviews.map((review) => ({ ...review, key: review.id }))}
+                loading={loading || searchPending}
+                pagination={{
+                  current: pagination.current,
+                  pageSize: pagination.pageSize,
+                  total: pagination.total,
+                  showSizeChanger: false,
+                  showTotal: (total, range) => `Hiển thị ${range[0]}-${range[1]} trong ${total} đánh giá`,
+                  onChange: (page) => loadReviews(page, debouncedSearch),
+                }}
+                scroll={{ x: 'max-content' }}
+                locale={{
+                  emptyText: (
+                    <Empty description="Không tìm thấy kết quả phù hợp." image={Empty.PRESENTED_IMAGE_SIMPLE}>
+                      <Button onClick={resetFilters}>Xóa bộ lọc</Button>
+                    </Empty>
                   ),
-                  value: label,
-                }))}
+                }}
+                rowKey="id"
               />
-            </Col>
-          </Row>
-
-          {/* Table */}
-          <Table
-            columns={columns}
-            dataSource={reviews.map((r) => ({ ...r, key: r.id }))}
-            loading={loading}
-            pagination={{
-              current: pagination.current,
-              pageSize: pagination.pageSize,
-              total: pagination.total,
-              showSizeChanger: false,
-              showTotal: (total) => `Total ${total} reviews`,
-              onChange: (page) => loadReviews(page),
-            }}
-            scroll={{ x: 1300 }}
-            locale={{
-              emptyText: (
-                <Empty description="No reviews found" style={{ marginTop: '48px' }} />
-              ),
-            }}
-          />
+            </div>
+          )}
         </Card>
 
-        {/* Review Detail Drawer */}
         <Drawer
-          title="Review Details"
+          className="review-detail-drawer"
+          title={
+            <div className="review-detail-drawer-title">
+              <span>Chi tiết đánh giá</span>
+              <small>Thông tin hoạt động, người đánh giá và nội dung nhận xét</small>
+            </div>
+          }
+          closeIcon={<CloseOutlined />}
           placement="right"
           onClose={() => {
             setDrawerVisible(false)
             setSelectedReview(null)
           }}
           open={drawerVisible}
-          width={500}
+          width={520}
         >
           {selectedReview && (
-            <div className="review-detail">
-              <Descriptions bordered size="small" layout="vertical">
-                <Descriptions.Item label="ID">{selectedReview.id}</Descriptions.Item>
-                <Descriptions.Item label="Reviewer ID">{selectedReview.reviewerId}</Descriptions.Item>
-                <Descriptions.Item label="Reviewed User ID">
-                  {selectedReview.reviewedUserId}
-                </Descriptions.Item>
-                <Descriptions.Item label="Activity Name">
-                  {selectedReview.activityName}
-                </Descriptions.Item>
-                <Descriptions.Item label="Reputation Label">
-                  <Tag
-                    color={getReputationColor(selectedReview.reputationLabel)}
-                    style={{ color: 'white' }}
-                  >
-                    {selectedReview.reputationLabel}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Rating">
-                  <Rate
-                    disabled
-                    value={getReputationRating(selectedReview.reputationLabel)}
-                    style={{ color: '#faad14' }}
+            <div className="review-detail-modern">
+              <section className="review-detail-hero">
+                <div className="review-detail-rating-main">
+                  <RatingStars rating={getRatingValue(selectedReview)} />
+                  <span className={`reviews-label-badge label-${getLabelMeta(selectedReview).key}`}>
+                    {getLabelMeta(selectedReview).text}
+                  </span>
+                </div>
+                <p>{selectedReview.comment || 'Chưa có bình luận'}</p>
+              </section>
+
+              <section className="review-detail-section">
+                <h4>Hoạt động</h4>
+                <div className="review-detail-info-grid">
+                  <div className="review-detail-info-item">
+                    <TagsOutlined />
+                    <span>Tag hoạt động</span>
+                    <strong>{cleanTagText(selectedReview.interestTag || selectedReview.activityName || 'Hoạt động')}</strong>
+                  </div>
+                  <div className="review-detail-info-item">
+                    <CalendarOutlined />
+                    <span>Ngày diễn ra</span>
+                    <strong>{formatActivityDate(selectedReview)}</strong>
+                  </div>
+                  <div className="review-detail-info-item review-detail-info-wide">
+                    <MessageOutlined />
+                    <span>Nội dung hoạt động</span>
+                    <strong>{cleanTagText(selectedReview.activityName) || '—'}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="review-detail-section">
+                <h4>Người liên quan</h4>
+                <div className="review-detail-people">
+                  <UserCell
+                    name={selectedReview.reviewerName}
+                    id={selectedReview.reviewerId}
+                    avatarUrl={selectedReview.reviewerAvatarUrl}
                   />
-                </Descriptions.Item>
-                <Descriptions.Item label="Comment">
-                  <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                    {selectedReview.comment}
-                  </p>
-                </Descriptions.Item>
-                <Descriptions.Item label="Created">
-                  {dayjs(selectedReview.createdAt).format('MMMM DD, YYYY HH:mm')}
-                </Descriptions.Item>
-              </Descriptions>
+                  <UserCell
+                    name={selectedReview.reviewedUserName}
+                    id={selectedReview.reviewedUserId}
+                    avatarUrl={selectedReview.reviewedUserAvatarUrl}
+                  />
+                </div>
+              </section>
+
+              <section className="review-detail-section">
+                <h4>Thông tin hệ thống</h4>
+                <div className="review-detail-field-list">
+                  <div className="review-detail-field">
+                    <span>Mã đánh giá</span>
+                    <strong>#{selectedReview.id}</strong>
+                  </div>
+                  <div className="review-detail-field">
+                    <span>Ngày tạo</span>
+                    <strong>{formatDate(selectedReview.createdAt)}</strong>
+                  </div>
+                </div>
+              </section>
             </div>
           )}
         </Drawer>

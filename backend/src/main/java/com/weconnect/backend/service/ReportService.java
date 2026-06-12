@@ -10,13 +10,18 @@ import com.weconnect.backend.entity.PostMember;
 import com.weconnect.backend.entity.Report;
 import com.weconnect.backend.entity.User;
 import com.weconnect.backend.enums.ViolationCode;
+import com.weconnect.backend.entity.SystemViolationLog;
+import com.weconnect.backend.entity.UserReview;
 import com.weconnect.backend.repository.ChatMessageRepository;
 import com.weconnect.backend.repository.ChatRoomMemberRepository;
 import com.weconnect.backend.repository.ChatRoomRepository;
+import com.weconnect.backend.repository.NotificationRepository;
 import com.weconnect.backend.repository.PostMemberRepository;
 import com.weconnect.backend.repository.PostRepository;
 import com.weconnect.backend.repository.ReportRepository;
+import com.weconnect.backend.repository.SystemViolationLogRepository;
 import com.weconnect.backend.repository.UserRepository;
+import com.weconnect.backend.repository.UserReviewRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +60,9 @@ public class ReportService {
     private final ChatRoomMemberRepository chatRoomMemberRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final UserReviewRepository userReviewRepository;
+    private final SystemViolationLogRepository systemViolationLogRepository;
+    private final NotificationRepository notificationRepository;
 
     public ReportService(ReportRepository reportRepository,
                          UserRepository userRepository,
@@ -66,7 +74,10 @@ public class ReportService {
                          ChatRoomRepository chatRoomRepository,
                          ChatRoomMemberRepository chatRoomMemberRepository,
                          ChatMessageRepository chatMessageRepository,
-                         SimpMessagingTemplate messagingTemplate) {
+                         SimpMessagingTemplate messagingTemplate,
+                         UserReviewRepository userReviewRepository,
+                         SystemViolationLogRepository systemViolationLogRepository,
+                         NotificationRepository notificationRepository) {
         this.reportRepository = reportRepository;
         this.userRepository = userRepository;
         this.postRepository = postRepository;
@@ -78,6 +89,9 @@ public class ReportService {
         this.chatRoomMemberRepository = chatRoomMemberRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.messagingTemplate = messagingTemplate;
+        this.userReviewRepository = userReviewRepository;
+        this.systemViolationLogRepository = systemViolationLogRepository;
+        this.notificationRepository = notificationRepository;
     }
 
     // User tạo report từ app
@@ -91,7 +105,7 @@ public class ReportService {
         try {
             type = Report.TargetType.valueOf(targetType.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException("targetType phải là USER hoặc POST.");
+            throw new RuntimeException("targetType phải là USER, POST hoặc REVIEW.");
         }
 
         if (type == Report.TargetType.USER) {
@@ -100,9 +114,12 @@ public class ReportService {
             }
             userRepository.findById(targetId)
                     .orElseThrow(() -> new RuntimeException("Người dùng bị báo cáo không tồn tại."));
-        } else {
+        } else if (type == Report.TargetType.POST) {
             postRepository.findById(targetId)
                     .orElseThrow(() -> new RuntimeException("Bài viết bị báo cáo không tồn tại."));
+        } else {
+            userReviewRepository.findById(targetId)
+                    .orElseThrow(() -> new RuntimeException("Đánh giá bị báo cáo không tồn tại."));
         }
 
         String imagesJson = urlsToJson(imageUrls);
@@ -113,6 +130,7 @@ public class ReportService {
                 .targetId(targetId)
                 .reason(reason)
                 .description(description)
+                .detailReason(description)
                 .evidenceImages(imagesJson)
                 .status(Report.Status.PENDING)
                 .build();
@@ -185,14 +203,86 @@ public class ReportService {
                 penaltyPoint, code.name());
 
         // ================================================================
-        // BƯỚC 3: Xác định userId bị xử phạt
+        // BƯỚC 3: Xác định userId bị xử phạt theo loại báo cáo
         // ================================================================
         Long affectedUserId;
         Long hiddenPostId = null;
+        Long maliciousReviewerId = null; // Chỉ dùng cho case REVIEW
+        Report.TargetType targetType = report.getTargetType();
+        boolean isReviewCase = (targetType == Report.TargetType.REVIEW);
 
-        if (code.isUserReport()) {
+        if (targetType == Report.TargetType.USER) {
             // Báo cáo USER → targetId chính là userId của người bị báo cáo
             affectedUserId = report.getTargetId();
+
+        } else if (targetType == Report.TargetType.REVIEW) {
+            // ============================================================
+            // LUỒNG BÁO CÁO NHẬN XÉT VU KHỐNG
+            // ============================================================
+            // Khi Admin phê duyệt:
+            //   1. Xóa nhận xét xấu khỏi bảng user_reviews
+            //   2. Ghi SystemViolationLog phạt kẻ viết nhận xét vu khống
+            //   3. Tái tính điểm kẻ vi phạm → áp chế tài nếu score ≤ 0
+            //   4. affectedUserId = nạn nhân → Step 4 hoàn điểm tự động (review đã xóa)
+            // ============================================================
+            UserReview review = userReviewRepository.findById(report.getTargetId())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Nhận xét bị báo cáo không còn tồn tại hoặc đã bị gỡ trước đó."));
+
+            maliciousReviewerId = review.getReviewerId();
+            Long victimId        = review.getReviewedUserId();
+
+            // Lưu ID kẻ vi phạm vào report để sau này kẻ vi phạm có thể xem chi tiết bị phạt
+            report.setViolatorUserId(maliciousReviewerId);
+            reportRepository.save(report);
+
+            // Bước 3a: Xóa nhận xét vu khống khỏi DB
+            userReviewRepository.deleteById(review.getId());
+            log.info("[VIOLATION-APPROVE] ✔ Đã xóa nhận xét reviewId={} của userId={}",
+                    review.getId(), maliciousReviewerId);
+
+            // Bước 3b: Ghi phạt cho kẻ viết nhận xét vu khống vào SystemViolationLog
+            // (violationPenalty = SUM từ bảng này được cộng vào công thức tính điểm)
+            systemViolationLogRepository.save(SystemViolationLog.builder()
+                    .userId(maliciousReviewerId)
+                    .violationType("FAKE_REVIEW")
+                    .penaltyPoint(penaltyPoint)
+                    .build());
+            log.info("[VIOLATION-APPROVE] ✔ Đã lưu SystemViolationLog phạt {} điểm cho maliciousReviewer userId={}",
+                    penaltyPoint, maliciousReviewerId);
+
+            // Bước 3c: Tái tính điểm uy tín cho kẻ vi phạm (tự động kích hoạt chế tài nếu cần)
+            reviewService.recalculateReputation(maliciousReviewerId);
+
+            // Bước 3d: Gửi thông báo phạt cho kẻ viết nhận xét vu khống
+            User maliciousUser = userRepository.findById(maliciousReviewerId).orElse(null);
+            if (maliciousUser != null) {
+                double badActorScore = maliciousUser.getReputationScore();
+                String penaltyMsg = "Nhận xét của bạn đã bị xác định là sai sự thật và bị gỡ bỏ bởi Admin. "
+                        + "Tài khoản bị trừ " + penaltyPoint + " điểm uy tín. "
+                        + "Điểm uy tín hiện tại: " + Math.round(badActorScore) + " điểm.";
+                try {
+                    notificationService.createNotificationForReport(
+                            maliciousReviewerId,
+                            Notification.NotificationType.REPORT_PENALTY,
+                            penaltyMsg, "Admin", reportId);
+                } catch (Exception ex) {
+                    log.error("[VIOLATION-APPROVE] Gửi REPORT_PENALTY cho maliciousReviewer {} thất bại: {}",
+                            maliciousReviewerId, ex.getMessage());
+                }
+                sendFcmToUserSafely(maliciousUser,
+                        "🚫 Nhận xét bị gỡ bỏ do vi phạm",
+                        penaltyMsg, "REVIEW_VIOLATION", reportId);
+                // Kích hoạt chế tài dây chuyền nếu kẻ vi phạm vừa bị khóa
+                if (badActorScore <= 0) {
+                    log.info("[VIOLATION-APPROVE] maliciousReviewer userId={} bị khóa — kích hoạt handleHostSanctionEvent",
+                            maliciousReviewerId);
+                    self.handleHostSanctionEvent(maliciousReviewerId);
+                }
+            }
+
+            // affectedUserId = nạn nhân → Step 4 sẽ hoàn điểm tự động vì review đã bị xóa
+            affectedUserId = victimId;
 
         } else {
             // Báo cáo POST → phải tra bài viết để lấy authorId
@@ -214,17 +304,14 @@ public class ReportService {
         // ================================================================
         // BƯỚC 4: Tái tính toàn bộ điểm uy tín theo công thức đầy đủ
         // ================================================================
-        // ReviewService.recalculateReputation() thực hiện tính lại từ đầu:
-        //   ratingScore   = 60.0 (nếu chưa có review) hoặc (avgRating / 5) * 100
-        //   reportPenalty = SUM(penaltyPoint) của tất cả báo cáo VALID nhắm vào user
-        //                   (bao gồm cả penaltyPoint vừa được lưu ở Bước 1+2 phía trên)
-        //   violationPenalty = user.violationPenaltySum (phạt tự động wrong-tag, AI...)
-        //   reputationScore  = clamp(ratingScore - reportPenalty - violationPenalty, 0, 100)
+        // Với REVIEW case: affectedUserId = nạn nhân.
+        //   Review đã bị xóa ở Bước 3 → recalculate sẽ không còn tính khoản âm từ review đó
+        //   → điểm uy tín nạn nhân tự động được hoàn lại mà không cần tính thủ công.
+        // Với USER/POST case: giống logic cũ.
         try {
             reviewService.recalculateReputation(affectedUserId);
             log.info("[VIOLATION-APPROVE] ✔ recalculateReputation hoàn tất cho userId={}", affectedUserId);
         } catch (Exception e) {
-            // Điểm uy tín là dữ liệu cốt lõi — lỗi ở đây phải rollback toàn bộ transaction
             log.error("[VIOLATION-APPROVE] ✘ recalculateReputation thất bại userId={}: {}",
                     affectedUserId, e.getMessage(), e);
             throw e;
@@ -239,44 +326,60 @@ public class ReportService {
         log.info("[VIOLATION-APPROVE] userId={} | điểm uy tín mới = {}", affectedUserId, newReputationScore);
 
         // ================================================================
-        // BƯỚC 5: Gửi thông báo cảnh báo (khi score > 0)
-        // Lock/ban đã được ReputationSanctionService xử lý bên trong recalculateReputation().
+        // BƯỚC 5: Gửi thông báo — phân nhánh theo loại báo cáo
         // ================================================================
-        if (newReputationScore > 0) {
-            // Score còn dương: chỉ cảnh báo, không khóa tài khoản
-            String warnMsg = "Tài khoản của bạn bị trừ " + penaltyPoint
-                    + " điểm uy tín do vi phạm [" + violationCode + "]. "
-                    + "Điểm uy tín hiện tại: " + Math.round(newReputationScore) + " điểm. "
-                    + "Hãy tuân thủ quy chuẩn cộng đồng để tránh bị khóa tài khoản.";
+        if (isReviewCase) {
+            // REVIEW CASE: Nạn nhân nhận thông báo tích cực (điểm được hoàn lại)
+            // Không gửi cảnh báo "bị trừ điểm" vì nạn nhân là người bị hại, không phải vi phạm
+            String restoreMsg = "Khiếu nại của bạn về nhận xét sai sự thật đã được Admin xét duyệt. "
+                    + "Nhận xét đó đã bị gỡ bỏ và điểm uy tín của bạn được hoàn lại. "
+                    + "Điểm uy tín hiện tại: " + Math.round(newReputationScore) + " điểm.";
             try {
                 notificationService.createNotificationForReport(
                         affectedUserId,
-                        Notification.NotificationType.ADMIN_WARNING,
-                        warnMsg,
-                        "Admin",
-                        reportId);
+                        Notification.NotificationType.REPORT_CONFIRMED,
+                        restoreMsg, "Admin", reportId);
             } catch (Exception e) {
-                log.error("[VIOLATION-APPROVE] Gửi ADMIN_WARNING thất bại userId={}: {}",
+                log.error("[VIOLATION-APPROVE] Gửi REPORT_CONFIRMED cho victim {} thất bại: {}",
                         affectedUserId, e.getMessage());
             }
             sendFcmToUserSafely(affectedUser,
-                    "⚠️ Cảnh báo vi phạm từ WeConnect",
-                    "Tài khoản của bạn vừa bị trừ " + penaltyPoint
-                            + " điểm uy tín. Điểm còn lại: " + Math.round(newReputationScore)
-                            + " điểm. Vui lòng tuân thủ tiêu chuẩn cộng đồng.",
-                    "VIOLATION_WARNING",
-                    reportId);
-        }
-        // Nếu score <= 0: ReputationSanctionService đã gửi notification lock/ban.
-        // Ngoài ra nếu Host vừa bị khóa → kích hoạt chế tài dây chuyền toàn bộ bài đăng của họ.
-        // Gọi qua self (không phải this) để Spring proxy xử lý @Async đúng cách.
-        if (newReputationScore <= 0) {
-            log.info("[VIOLATION-APPROVE] Tài khoản userId={} vừa bị khóa — kích hoạt handleHostSanctionEvent", affectedUserId);
-            self.handleHostSanctionEvent(affectedUserId);
-        }
+                    "✅ Nhận xét vu khống đã được gỡ bỏ",
+                    restoreMsg, "REVIEW_RESTORED", reportId);
 
-        // Gửi thông báo xác nhận cho người đã gửi báo cáo (cảm ơn đã cộng đồng văn minh)
-        sendReporterConfirmNotification(report.getReporterId(), affectedUserId, reportId);
+        } else {
+            // USER / POST CASE: Logic thông báo phạt như cũ
+            if (newReputationScore > 0) {
+                // Score còn dương: cảnh báo, không khóa tài khoản
+                String warnMsg = "Tài khoản của bạn bị trừ " + penaltyPoint
+                        + " điểm uy tín do vi phạm [" + violationCode + "]. "
+                        + "Điểm uy tín hiện tại: " + Math.round(newReputationScore) + " điểm. "
+                        + "Hãy tuân thủ quy chuẩn cộng đồng để tránh bị khóa tài khoản.";
+                try {
+                    notificationService.createNotificationForReport(
+                            affectedUserId,
+                            Notification.NotificationType.ADMIN_WARNING,
+                            warnMsg, "Admin", reportId);
+                } catch (Exception e) {
+                    log.error("[VIOLATION-APPROVE] Gửi ADMIN_WARNING thất bại userId={}: {}",
+                            affectedUserId, e.getMessage());
+                }
+                sendFcmToUserSafely(affectedUser,
+                        "⚠️ Cảnh báo vi phạm từ WeConnect",
+                        "Tài khoản của bạn vừa bị trừ " + penaltyPoint
+                                + " điểm uy tín. Điểm còn lại: " + Math.round(newReputationScore)
+                                + " điểm. Vui lòng tuân thủ tiêu chuẩn cộng đồng.",
+                        "VIOLATION_WARNING", reportId);
+            }
+            // Nếu score <= 0: ReputationSanctionService đã gửi notification lock/ban.
+            if (newReputationScore <= 0) {
+                log.info("[VIOLATION-APPROVE] Tài khoản userId={} vừa bị khóa — kích hoạt handleHostSanctionEvent",
+                        affectedUserId);
+                self.handleHostSanctionEvent(affectedUserId);
+            }
+            // Cảm ơn người đã gửi báo cáo (chỉ cho USER/POST — REVIEW tự xử lý ở trên)
+            sendReporterConfirmNotification(report.getReporterId(), affectedUserId, reportId);
+        }
 
         // Tổng hợp kết quả trả về cho Controller / Frontend Admin
         Map<String, Object> result = new HashMap<>();
@@ -288,6 +391,8 @@ public class ReportService {
         result.put("newReputationScore", newReputationScore);
         result.put("userStatus", affectedUser.getStatus());
         result.put("userViolationCount", affectedUser.getViolationCount());
+        // Dành riêng cho case REVIEW: ID của kẻ viết nhận xét vu khống đã bị phạt
+        result.put("maliciousReviewerId", maliciousReviewerId);
 
         log.info("[VIOLATION-APPROVE] ■ DONE — reportId={}, userId={}, score={}, status={}",
                 reportId, affectedUserId, newReputationScore, affectedUser.getStatus());
@@ -312,8 +417,9 @@ public class ReportService {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(
                     "Mã vi phạm '" + violationCodeStr + "' không hợp lệ. "
-                            + "Báo cáo USER hợp lệ: SPAM, INAPPROPRIATE, FRAUD, HARASSMENT, U_OTHER. "
-                            + "Báo cáo POST hợp lệ: SPAM_POST, MISLEADING, VULGAR, VIOLATION, BULLYING, P_OTHER.");
+                            + "Báo cáo USER: SPAM, INAPPROPRIATE, FRAUD, HARASSMENT, U_OTHER. "
+                            + "Báo cáo POST: SPAM_POST, MISLEADING, VULGAR, VIOLATION, BULLYING, P_OTHER. "
+                            + "Báo cáo REVIEW: FAKE_REVIEW, REVIEW_SPAM, R_OTHER.");
         }
     }
 
@@ -951,6 +1057,17 @@ public class ReportService {
                     map.put("targetName", content != null && content.length() > 50
                             ? content.substring(0, 50) + "..." : content);
                 }
+            } else if (r.getTargetType() == Report.TargetType.REVIEW) {
+                UserReview reviewObj = userReviewRepository.findById(r.getTargetId()).orElse(null);
+                if (reviewObj != null) {
+                    String snippet = reviewObj.getComment() != null
+                            ? (reviewObj.getComment().length() > 40
+                                ? reviewObj.getComment().substring(0, 40) + "..." : reviewObj.getComment())
+                            : "(không có nội dung)";
+                    map.put("targetName", "Nhận xét: \"" + snippet + "\"");
+                } else {
+                    map.put("targetName", "Nhận xét (đã xóa)");
+                }
             } else {
                 User targetUser = userRepository.findById(r.getTargetId()).orElse(null);
                 map.put("targetName", targetUser != null ? targetUser.getFullName() : "Unknown");
@@ -1037,10 +1154,32 @@ public class ReportService {
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy báo cáo."));
 
+        // REVIEW: kẻ viết nhận xét vu khống xem thông tin bị phạt của mình.
+        // Review đã bị xóa sau khi admin phê duyệt → không thể dùng resolveTargetUserId().
+        // Case 1 (report mới): violatorUserId được gán khi approve.
+        // Case 2 (report cũ trước khi có violatorUserId): fallback kiểm tra bảng notifications.
+        if (report.getTargetType() == Report.TargetType.REVIEW) {
+            boolean isViolator = (report.getViolatorUserId() != null && userId.equals(report.getViolatorUserId()))
+                    || notificationRepository.existsByUserIdAndRelatedReportIdAndType(
+                            userId, reportId, Notification.NotificationType.REPORT_PENALTY);
+            if (isViolator) {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", report.getId());
+                map.put("targetType", "REVIEW");
+                map.put("reason", report.getReason());
+                map.put("status", report.getStatus().name());
+                map.put("penaltyPoint", report.getPenaltyPoint());
+                map.put("adminAction", report.getAdminAction());
+                map.put("reviewedAt", report.getReviewedAt());
+                User violator = userRepository.findById(userId).orElse(null);
+                map.put("currentReputationScore", violator != null ? violator.getReputationScore() : null);
+                return map;
+            }
+        }
+
         Long targetUserId = resolveTargetUserId(report);
-        // targetUserId null chỉ xảy ra khi POST target mà bài viết đã bị xóa
         if (targetUserId == null) {
-            throw new RuntimeException("Bài viết liên quan đến báo cáo này đã bị xóa.");
+            throw new RuntimeException("Nội dung liên quan đến báo cáo này đã bị xóa hoặc không còn tồn tại.");
         }
         if (!userId.equals(targetUserId)) {
             throw new RuntimeException("Bạn không có quyền xem báo cáo này.");
@@ -1148,6 +1287,11 @@ public class ReportService {
         if (report.getTargetType() == Report.TargetType.USER) {
             return report.getTargetId();
         }
+        if (report.getTargetType() == Report.TargetType.REVIEW) {
+            return userReviewRepository.findById(report.getTargetId())
+                    .map(UserReview::getReviewedUserId)
+                    .orElse(null);
+        }
         return postRepository.findById(report.getTargetId())
                 .map(Post::getAuthorId)
                 .orElse(null);
@@ -1166,6 +1310,7 @@ public class ReportService {
         map.put("targetId", r.getTargetId());
         map.put("reason", r.getReason());
         map.put("description", r.getDescription());
+        map.put("detailReason", r.getDetailReason());
         map.put("status", r.getStatus().name());
         map.put("penaltyPoint", r.getPenaltyPoint());
         map.put("suggestedPenalty", suggestPenaltyPoint(r.getReason(), r.getTargetType()));
@@ -1218,6 +1363,37 @@ public class ReportService {
                 targetInfo.put("createdAt", targetUser.getCreatedAt());
                 map.put("targetName", targetUser.getFullName());
                 map.put("targetAvatarUrl", targetUser.getAvatarUrl());
+                map.put("targetInfo", targetInfo);
+            }
+        } else if (r.getTargetType() == Report.TargetType.REVIEW) {
+            UserReview review = userReviewRepository.findById(r.getTargetId()).orElse(null);
+            if (review != null) {
+                Map<String, Object> targetInfo = new HashMap<>();
+                targetInfo.put("rating", review.getRating());
+                targetInfo.put("comment", review.getComment());
+                targetInfo.put("activityName", review.getActivityName());
+                targetInfo.put("reputationLabel", review.getReputationLabel());
+
+                // Nạn nhân (người bị nhận xét xấu)
+                targetInfo.put("reviewedUserId", review.getReviewedUserId());
+                User reviewedUser = userRepository.findById(review.getReviewedUserId()).orElse(null);
+                String reviewedName = reviewedUser != null ? reviewedUser.getFullName() : "Unknown";
+                targetInfo.put("reviewedUserName", reviewedName);
+                targetInfo.put("reviewedUserAvatarUrl", reviewedUser != null ? reviewedUser.getAvatarUrl() : null);
+                targetInfo.put("reviewedUserReputationScore", reviewedUser != null ? reviewedUser.getReputationScore() : null);
+
+                // Kẻ viết nhận xét vu khống
+                targetInfo.put("reviewerId", review.getReviewerId());
+                User reviewer = userRepository.findById(review.getReviewerId()).orElse(null);
+                targetInfo.put("reviewerName", reviewer != null ? reviewer.getFullName() : "Unknown");
+                targetInfo.put("reviewerAvatarUrl", reviewer != null ? reviewer.getAvatarUrl() : null);
+                targetInfo.put("reviewerReputationScore", reviewer != null ? reviewer.getReputationScore() : null);
+                targetInfo.put("reviewerViolationCount", reviewer != null ? reviewer.getViolationCount() : null);
+
+                String snippet = review.getComment() != null
+                        ? (review.getComment().length() > 60 ? review.getComment().substring(0, 60) + "..." : review.getComment())
+                        : "";
+                map.put("targetName", "Nhận xét của " + (reviewer != null ? reviewer.getFullName() : "Unknown") + " về " + reviewedName + ": \"" + snippet + "\"");
                 map.put("targetInfo", targetInfo);
             }
         }

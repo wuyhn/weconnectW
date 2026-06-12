@@ -106,7 +106,7 @@ public class LoginActivity extends AppCompatActivity {
                     AuthResponse authResult = response.body().getResult();
 
                     // Lưu JWT token và thông tin user
-                    RetrofitClient.saveToken(LoginActivity.this, authResult.getToken());
+                    RetrofitClient.saveTokens(LoginActivity.this, authResult.getToken(), authResult.getRefreshToken());
                     RetrofitClient.saveUserId(LoginActivity.this, authResult.getId());
                     RetrofitClient.saveUserName(LoginActivity.this, authResult.getFullName());
                     RetrofitClient.saveReputationScore(LoginActivity.this, authResult.getReputationScore());

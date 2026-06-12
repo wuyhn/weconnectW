@@ -22,6 +22,8 @@ import java.util.Map;
 @RequestMapping("/api/users")
 public class UserController {
 
+    private static final int APP_USER_ROLE = 0;
+
     private final UserService userService;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
@@ -212,7 +214,7 @@ public class UserController {
     @GetMapping("/search")
     public ResponseEntity<?> searchByName(@RequestParam String name, Authentication authentication) {
         User currentUser = (User) authentication.getPrincipal();
-        var user = userRepository.findByFullName(name).orElse(null);
+        var user = userRepository.findByFullNameAndRole(name, APP_USER_ROLE).orElse(null);
         if (user == null) {
             return ResponseEntity.status(404).body(ApiResponse.builder()
                     .code(1003).message("Không tìm thấy người dùng").build());
@@ -237,7 +239,7 @@ public class UserController {
     public ResponseEntity<?> searchUsersPartial(@RequestParam String q,
                                                   Authentication authentication) {
         User currentUser = (User) authentication.getPrincipal();
-        List<User> users = userRepository.findByFullNameContainingIgnoreCase(q);
+        List<User> users = userRepository.findByFullNameContainingIgnoreCaseAndRole(q, APP_USER_ROLE);
         List<Map<String, Object>> result = users.stream()
                 .filter(u -> !u.getId().equals(currentUser.getId()))
                 .filter(u -> !userService.isBlockedBy(u.getId(), currentUser.getId()))

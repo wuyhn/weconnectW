@@ -268,7 +268,18 @@ public class PendingListActivity extends AppCompatActivity
             showEmpty();
             return;
         }
-        // Server đã trả về enriched data (userName, avatarUrl, reputation, location, joinReason...)
+        // Populate avatar cache để PendingRequestAdapter dùng URL đã normalize
+        for (Map<String, Object> member : pendingMembers) {
+            Object userIdObj = member.get("userId");
+            Object avatarObj = member.get("avatarUrl");
+            if (userIdObj instanceof Number && avatarObj instanceof String) {
+                long uid = ((Number) userIdObj).longValue();
+                String url = (String) avatarObj;
+                if (uid > 0 && !url.isEmpty()) {
+                    RetrofitClient.cacheAvatarForUser(uid, url);
+                }
+            }
+        }
         displayPendingList();
     }
 

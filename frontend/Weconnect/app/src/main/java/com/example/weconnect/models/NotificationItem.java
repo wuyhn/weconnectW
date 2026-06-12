@@ -17,6 +17,7 @@ public class NotificationItem {
         REPORT_PENALTY,
         POST_EXPIRED,
         ACTIVITY_CANCELLED,
+        CHAT_SUMMARY,
         GENERAL
     }
 
@@ -28,6 +29,7 @@ public class NotificationItem {
     private Long relatedPostId;
     private Long relatedUserId;
     private Long relatedReportId;
+    private Long relatedRoomId;
 
     @SerializedName("read")
     private boolean isRead;
@@ -50,6 +52,7 @@ public class NotificationItem {
     public Long getRelatedPostId() { return relatedPostId; }
     public Long getRelatedUserId() { return relatedUserId; }
     public Long getRelatedReportId() { return relatedReportId; }
+    public Long getRelatedRoomId() { return relatedRoomId; }
     public boolean isRead() { return isRead; }
     public boolean isActioned() { return isActioned; }
     public String getActionResult() { return actionResult; }

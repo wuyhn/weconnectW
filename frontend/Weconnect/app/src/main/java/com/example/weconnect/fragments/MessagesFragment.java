@@ -89,7 +89,22 @@ public class MessagesFragment extends Fragment {
     public void onResume() {
         super.onResume();
         if (hasLoadedOnce && !isHidden()) {
-            WebSocketManager.getInstance().subscribeToChatList(payload -> loadChatsFromApi());
+            WebSocketManager.getInstance().subscribeToChatList(payload -> {
+                loadChatsFromApi();
+                // Cập nhật badge nav giống MainActivity — tránh bị ghi đè mất badge update
+                try {
+                    org.json.JSONObject json = new org.json.JSONObject(payload);
+                    int wsUnread = json.getInt("unreadCount");
+                    if (wsUnread > 0 && getActivity() instanceof com.example.weconnect.activities.MainActivity) {
+                        com.example.weconnect.util.BadgeManager.setChatCount(
+                                com.example.weconnect.util.BadgeManager.getChatCount() + 1);
+                        ((com.example.weconnect.activities.MainActivity) getActivity())
+                                .updateBottomNavigationBadge(
+                                        R.id.nav_messages,
+                                        com.example.weconnect.util.BadgeManager.getChatCount());
+                    }
+                } catch (Exception ignored) {}
+            });
             // Reload để bắt các thay đổi xảy ra khi fragment không hiển thị
             // (ví dụ: được duyệt vào nhóm hoạt động trong lúc ở tab khác)
             loadChatsFromApi();

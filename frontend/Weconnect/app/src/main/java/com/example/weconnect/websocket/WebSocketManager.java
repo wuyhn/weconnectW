@@ -33,12 +33,14 @@ public class WebSocketManager {
     private Disposable roomEventsSubscription;
     private Disposable notificationSubscription;
     private Disposable accountStatusSubscription;
+    private Disposable aiSummarySubscription;
     private Consumer<String> chatListCallback;
     private Consumer<String> feedCallback;
     private Consumer<String> avatarUpdateCallback;
     private Consumer<String> roomEventsCallback;
     private Consumer<String> notificationCallback;
     private Consumer<String> accountStatusCallback;
+    private Consumer<ChatMessageApiResponse> aiSummaryCallback;
     private boolean connected = false;
     // Callback được gọi ngay khi STOMP connection OPENED thành công.
     // MainActivity đặt callback này để tự động đăng ký subscription dù connect() là async.
@@ -367,6 +369,45 @@ public class WebSocketManager {
     }
 
     /**
+     * Subscribe nhận bản tóm tắt AI riêng tư (chỉ gửi tới user đã yêu cầu).
+     * Backend dùng convertAndSendToUser(userId, "/queue/ai-summary", payload).
+     */
+    public void subscribeToAiSummary(Consumer<ChatMessageApiResponse> onSummary) {
+        if (stompClient == null) return;
+        aiSummaryCallback = onSummary;
+
+        if (aiSummarySubscription != null && !aiSummarySubscription.isDisposed()) {
+            aiSummarySubscription.dispose();
+        }
+
+        Gson gson = new Gson();
+        aiSummarySubscription = stompClient.topic("/user/queue/ai-summary")
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(frame -> {
+                    if (aiSummaryCallback != null) {
+                        try {
+                            ChatMessageApiResponse msg = gson.fromJson(
+                                    frame.getPayload(), ChatMessageApiResponse.class);
+                            aiSummaryCallback.accept(msg);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Failed to parse AI summary: " + e.getMessage());
+                        }
+                    }
+                }, error -> Log.e(TAG, "AiSummary subscription error: " + error.getMessage()));
+
+        if (compositeDisposable != null) compositeDisposable.add(aiSummarySubscription);
+    }
+
+    public void unsubscribeFromAiSummary() {
+        aiSummaryCallback = null;
+        if (aiSummarySubscription != null && !aiSummarySubscription.isDisposed()) {
+            aiSummarySubscription.dispose();
+            aiSummarySubscription = null;
+        }
+    }
+
+    /**
      * Đặt callback được gọi ngay khi WebSocket OPENED thành công.
      * Dùng ở MainActivity để subscribe các topic ngay sau khi kết nối mở,
      * tránh race condition khi subscribeToRealtimeEvents() chạy trước OPENED event.
@@ -390,6 +431,7 @@ public class WebSocketManager {
         roomEventsCallback = null;
         notificationCallback = null;
         accountStatusCallback = null;
+        aiSummaryCallback = null;
         onConnectedCallback = null;
         roomSubscriptions.clear();
         if (compositeDisposable != null && !compositeDisposable.isDisposed()) {

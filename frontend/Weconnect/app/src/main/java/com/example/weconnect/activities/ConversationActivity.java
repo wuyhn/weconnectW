@@ -20,10 +20,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.activities.PostDetailActivity;
 import com.example.weconnect.activities.UserProfileActivity;
 import com.example.weconnect.adapters.MessageAdapter;
 import com.example.weconnect.api.ChatApiService;
@@ -36,6 +38,10 @@ import com.example.weconnect.models.ApiResponse;
 import com.example.weconnect.models.ChatMessage;
 import com.example.weconnect.models.ChatMessageApiResponse;
 import com.example.weconnect.models.ChatRoom;
+import com.example.weconnect.models.Post;
+import com.example.weconnect.models.PostResponse;
+import com.example.weconnect.utils.AppDialogHelper;
+import com.example.weconnect.utils.InterestTextUtils;
 import com.example.weconnect.utils.UserActionBottomSheet;
 import com.example.weconnect.utils.UserReportBottomSheet;
 import com.example.weconnect.websocket.WebSocketManager;
@@ -56,8 +62,13 @@ import retrofit2.Response;
 
 public class ConversationActivity extends AppCompatActivity {
 
+    // ID phòng đang mở — FCMService đọc để tránh hiển thị notification trùng lặp
+    public static volatile long currentOpenRoomId = -1;
+
     private ImageView ivBackConversation;
     private ImageView ivConversationAvatar;
+    private View cardAvatar;
+    private LinearLayout layoutConvInfo;
     private ImageView ivChatSettings;
     private ImageView ivAiSummary;
     private TextView tvConversationTitle;
@@ -142,8 +153,11 @@ public class ConversationActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Đánh dấu phòng đang mở để FCMService không hiển thị notification trùng lặp
+        currentOpenRoomId = backendRoomId;
         // Reconnect nếu WebSocket bị mất kết nối
-        if (!WebSocketManager.getInstance().isConnected()) {
+        boolean wasDisconnected = !WebSocketManager.getInstance().isConnected();
+        if (wasDisconnected) {
             String token = RetrofitClient.getAuthToken();
             if (token != null) {
                 WebSocketManager.getInstance().connect(RetrofitClient.getBaseUrl(), token);
@@ -151,6 +165,7 @@ public class ConversationActivity extends AppCompatActivity {
         }
         if (backendRoomId > 0) {
             WebSocketManager.getInstance().subscribeToRoom(backendRoomId, this::onNewMessage);
+            WebSocketManager.getInstance().subscribeToAiSummary(this::onNewMessage);
         }
         // Lắng nghe sự kiện bị kick khỏi phòng (KICKED event từ server)
         WebSocketManager.getInstance().subscribeToRoomEvents(this::handleRoomEvent);
@@ -159,18 +174,27 @@ public class ConversationActivity extends AppCompatActivity {
             refreshDirectBlockStatus();
             loadDirectFriendStatus();
         }
+        // Reload tin nhắn nếu WS vừa reconnect (có thể miss tin khi offline)
+        // hoặc list đang rỗng do load lần đầu thất bại (server tạm thời không khả dụng)
+        if (backendRoomId > 0 && (wasDisconnected || (adapter != null && adapter.getMessages().isEmpty()))) {
+            loadMessagesFromApi();
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        currentOpenRoomId = -1; // không còn xem phòng nào
         WebSocketManager.getInstance().unsubscribeFromRoom(backendRoomId);
         WebSocketManager.getInstance().unsubscribeFromRoomEvents();
+        WebSocketManager.getInstance().unsubscribeFromAiSummary();
     }
 
     private void initViews() {
         ivBackConversation = findViewById(R.id.ivBackConversation);
         ivConversationAvatar = findViewById(R.id.ivConversationAvatar);
+        cardAvatar = findViewById(R.id.cardAvatar);
+        layoutConvInfo = findViewById(R.id.layoutConvInfo);
         ivChatSettings = findViewById(R.id.ivChatSettings);
         ivAiSummary = findViewById(R.id.ivAiSummary);
         tvConversationTitle = findViewById(R.id.tvConversationTitle);
@@ -281,13 +305,14 @@ public class ConversationActivity extends AppCompatActivity {
     private void showFriendResponseDialog() {
         if (otherUserId <= 0) return;
         String name = otherUserName != null && !otherUserName.isEmpty() ? otherUserName : "Người này";
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+        androidx.appcompat.app.AlertDialog dialog = new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                 .setTitle("Lời mời kết bạn")
                 .setMessage(name + " đã gửi lời mời kết bạn cho bạn.")
                 .setPositiveButton("Xác nhận", (d, w) -> acceptFriendRequestFromConversation())
                 .setNegativeButton("Từ chối", (d, w) -> declineFriendRequestFromConversation())
                 .setNeutralButton("Huỷ", null)
-                .show();
+                .create();
+        AppDialogHelper.showStyled(dialog);
     }
 
     private void acceptFriendRequestFromConversation() {
@@ -610,7 +635,7 @@ public class ConversationActivity extends AppCompatActivity {
                 tvConversationStatus.setVisibility(View.GONE);
             } else if (!blocked && room != null) {
                 // Khôi phục header thật khi không còn bị chặn
-                tvConversationTitle.setText(room.getTitle());
+                tvConversationTitle.setText(getCleanRoomTitle());
                 if (room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
                     com.bumptech.glide.Glide.with(this)
                             .load(room.getAvatarUrl())
@@ -729,7 +754,7 @@ public class ConversationActivity extends AppCompatActivity {
         LinearLayout group1 = buildIosGroup();
 
         TextView tvTitle = new TextView(this);
-        tvTitle.setText(room.getTitle());
+        tvTitle.setText(getCleanRoomTitle());
         tvTitle.setTextSize(13);
         tvTitle.setTextColor(0xFF8E8E93);
         tvTitle.setGravity(Gravity.CENTER);
@@ -741,6 +766,21 @@ public class ConversationActivity extends AppCompatActivity {
             sheet.dismiss();
             showMemberManagementDialog();
         });
+
+        if (ChatRoom.TYPE_ACTIVITY.equals(room.getType())) {
+            addIosSep(group1);
+            addIosRow(group1, "AI tom tat", 0xFF1C1C1E, v -> {
+                sheet.dismiss();
+                requestAISummary();
+            });
+            if (backendPostId > 0) {
+                addIosSep(group1);
+                addIosRow(group1, "Xem chi tiết bài viết", 0xFF1C1C1E, v -> {
+                    sheet.dismiss();
+                    openPostDetail();
+                });
+            }
+        }
 
         if (isOwner) {
             addIosSep(group1);
@@ -790,6 +830,30 @@ public class ConversationActivity extends AppCompatActivity {
         sheet.setContentView(root);
         makeSheetTransparent(root);
         sheet.show();
+    }
+
+    private void openPostDetail() {
+        if (backendPostId <= 0) return;
+        RetrofitClient.loadToken(this);
+        PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
+        postApi.getPost(backendPostId).enqueue(new Callback<ApiResponse<PostResponse>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<PostResponse>> call, Response<ApiResponse<PostResponse>> response) {
+                if (response.isSuccessful() && response.body() != null && response.body().getResult() != null) {
+                    Post post = response.body().getResult().toPost();
+                    Intent intent = new Intent(ConversationActivity.this, PostDetailActivity.class);
+                    intent.putExtra("post", post);
+                    startActivity(intent);
+                } else {
+                    Toast.makeText(ConversationActivity.this, "Không thể tải bài viết", Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<PostResponse>> call, Throwable t) {
+                Toast.makeText(ConversationActivity.this, "Lỗi kết nối", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void deleteRoom() {
@@ -1066,6 +1130,7 @@ public class ConversationActivity extends AppCompatActivity {
                 // Huỷ WebSocket subscription để tránh nhận thêm events
                 WebSocketManager.getInstance().unsubscribeFromRoom(backendRoomId);
                 WebSocketManager.getInstance().unsubscribeFromRoomEvents();
+                WebSocketManager.getInstance().unsubscribeFromAiSummary();
 
                 // Hiển thị thông báo và điều hướng về danh sách chat
                 new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
@@ -1097,6 +1162,7 @@ public class ConversationActivity extends AppCompatActivity {
 
                 WebSocketManager.getInstance().unsubscribeFromRoom(backendRoomId);
                 WebSocketManager.getInstance().unsubscribeFromRoomEvents();
+                WebSocketManager.getInstance().unsubscribeFromAiSummary();
 
                 new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
                         .setTitle("Hoạt động đã bị hủy")
@@ -1399,6 +1465,7 @@ public class ConversationActivity extends AppCompatActivity {
                     }
                     loadMessagesFromApi();
                     WebSocketManager.getInstance().subscribeToRoom(backendRoomId, ConversationActivity.this::onNewMessage);
+                    WebSocketManager.getInstance().subscribeToAiSummary(ConversationActivity.this::onNewMessage);
                 } else {
                     // Lấy message lỗi từ server để phân biệt "không còn thành viên" vs "không tìm thấy"
                     String errorMsg = "Hoạt động không khả dụng.";
@@ -1537,17 +1604,22 @@ public class ConversationActivity extends AppCompatActivity {
     private void displayRoom() {
         if (room == null) return;
 
-        if (room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
+        boolean hideHeaderAvatar = shouldHideHeaderAvatar();
+        applyHeaderAvatarVisibility(hideHeaderAvatar);
+
+        if (!hideHeaderAvatar && room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
             com.bumptech.glide.Glide.with(this)
                     .load(room.getAvatarUrl())
                     .placeholder(R.drawable.ic_user_placeholder)
                     .error(R.drawable.ic_user_placeholder)
                     .circleCrop()
                     .into(ivConversationAvatar);
-        } else {
+        } else if (!hideHeaderAvatar) {
             ivConversationAvatar.setImageResource(room.getAvatarResId());
+        } else {
+            com.bumptech.glide.Glide.with(this).clear(ivConversationAvatar);
         }
-        tvConversationTitle.setText(room.getTitle());
+        tvConversationTitle.setText(getCleanRoomTitle());
         tvConversationType.setText(room.getTypeLabel());
 
         if (isDirectRoom()) {
@@ -1604,6 +1676,43 @@ public class ConversationActivity extends AppCompatActivity {
 
         applyNonFriendInfoArea();
         applyStrangerRequestStatus();
+    }
+
+    private boolean shouldHideHeaderAvatar() {
+        return room != null && ChatRoom.TYPE_ACTIVITY.equals(room.getType());
+    }
+
+    private String getCleanRoomTitle() {
+        if (room == null) return "";
+        String title = room.getTitle();
+        if (ChatRoom.TYPE_ACTIVITY.equals(room.getType())) {
+            return InterestTextUtils.stripLeadingIcon(title);
+        }
+        return title != null ? title : "";
+    }
+
+    private void applyHeaderAvatarVisibility(boolean hideHeaderAvatar) {
+        if (cardAvatar != null) {
+            cardAvatar.setVisibility(hideHeaderAvatar ? View.GONE : View.VISIBLE);
+        }
+        if (ivConversationAvatar != null) {
+            ivConversationAvatar.setVisibility(hideHeaderAvatar ? View.GONE : View.VISIBLE);
+            if (hideHeaderAvatar) {
+                com.bumptech.glide.Glide.with(this).clear(ivConversationAvatar);
+                ivConversationAvatar.setImageDrawable(null);
+                ivConversationAvatar.setClickable(false);
+                ivConversationAvatar.setFocusable(false);
+                ivConversationAvatar.setOnClickListener(null);
+            }
+        }
+        if (layoutConvInfo != null
+                && layoutConvInfo.getLayoutParams() instanceof ConstraintLayout.LayoutParams) {
+            ConstraintLayout.LayoutParams params =
+                    (ConstraintLayout.LayoutParams) layoutConvInfo.getLayoutParams();
+            params.startToEnd = hideHeaderAvatar ? R.id.ivBackConversation : R.id.cardAvatar;
+            params.leftMargin = dpPx(12);
+            layoutConvInfo.setLayoutParams(params);
+        }
     }
 
     private void applyNonFriendInfoArea() {
@@ -1726,8 +1835,9 @@ public class ConversationActivity extends AppCompatActivity {
         root.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
         android.graphics.drawable.GradientDrawable bgShape =
                 new android.graphics.drawable.GradientDrawable();
-        bgShape.setColor(0xFF2C2C2E);
+        bgShape.setColor(Color.WHITE);
         bgShape.setCornerRadius(dpPx(20));
+        bgShape.setStroke(dpPx(1), AppDialogHelper.COLOR_DIALOG_BORDER);
         root.setBackground(bgShape);
         root.setPadding(dpPx(24), dpPx(28), dpPx(24), dpPx(24));
 
@@ -1746,7 +1856,7 @@ public class ConversationActivity extends AppCompatActivity {
         TextView tvTitle = new TextView(this);
         tvTitle.setText("Gửi yêu cầu trò chuyện cho " + receiverName);
         tvTitle.setTextSize(17);
-        tvTitle.setTextColor(0xFFFFFFFF);
+        tvTitle.setTextColor(0xFF2D2D2D);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvTitle.setGravity(android.view.Gravity.CENTER);
         tvTitle.setLineSpacing(0, 1.2f);
@@ -1761,7 +1871,7 @@ public class ConversationActivity extends AppCompatActivity {
         tvBody.setText("Bạn chỉ có thể gửi tối đa " + STRANGER_MSG_LIMIT
                 + " tin nhắn trực tiếp cho đến khi người dùng trả lời.");
         tvBody.setTextSize(14);
-        tvBody.setTextColor(0xFF8E8E93);
+        tvBody.setTextColor(0xFF757575);
         tvBody.setGravity(android.view.Gravity.CENTER);
         tvBody.setLineSpacing(0, 1.4f);
         LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
@@ -1779,7 +1889,7 @@ public class ConversationActivity extends AppCompatActivity {
         btnOk.setText("OK, đã hiểu");
         btnOk.setTextColor(0xFFFFFFFF);
         btnOk.setTextSize(15);
-        btnOk.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF0A84FF));
+        btnOk.setBackgroundTintList(android.content.res.ColorStateList.valueOf(AppDialogHelper.COLOR_PRIMARY));
         btnOk.setCornerRadius(dpPx(14));
         btnOk.setOnClickListener(v -> dialog.dismiss());
         root.addView(btnOk);
@@ -1821,7 +1931,7 @@ public class ConversationActivity extends AppCompatActivity {
         // Root container tối màu
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF1C1C1E);
+        root.setBackground(AppDialogHelper.dialogBackground(this));
         root.setPadding(dpPx(20), dpPx(12), dpPx(20), dpPx(36));
 
         // Handle bar
@@ -1830,7 +1940,7 @@ public class ConversationActivity extends AppCompatActivity {
         hlp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
         hlp.bottomMargin = dpPx(24);
         handle.setLayoutParams(hlp);
-        handle.setBackgroundColor(0xFF3A3A3C);
+        handle.setBackgroundColor(AppDialogHelper.COLOR_DIALOG_BORDER);
         root.addView(handle);
 
         // Header row: avatar + tên + subtitle
@@ -1852,7 +1962,7 @@ public class ConversationActivity extends AppCompatActivity {
         android.graphics.drawable.GradientDrawable circleBg =
                 new android.graphics.drawable.GradientDrawable();
         circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        circleBg.setColor(0xFF3A3A3C);
+        circleBg.setColor(AppDialogHelper.COLOR_PRIMARY_SOFT);
         ivAvatar.setBackground(circleBg);
         ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
         if (room != null && room.getAvatarUrl() != null && !room.getAvatarUrl().isEmpty()) {
@@ -1869,13 +1979,13 @@ public class ConversationActivity extends AppCompatActivity {
         TextView tvName = new TextView(this);
         tvName.setText(senderName);
         tvName.setTextSize(16);
-        tvName.setTextColor(0xFFFFFFFF);
+        tvName.setTextColor(0xFF2D2D2D);
         tvName.setTypeface(null, android.graphics.Typeface.BOLD);
         nameCol.addView(tvName);
         TextView tvSub = new TextView(this);
         tvSub.setText("đã gửi cho bạn một tin nhắn đang chờ.");
         tvSub.setTextSize(13);
-        tvSub.setTextColor(0xFF8E8E93);
+        tvSub.setTextColor(0xFF757575);
         nameCol.addView(tvSub);
         headerRow.addView(nameCol);
         root.addView(headerRow);
@@ -1886,7 +1996,7 @@ public class ConversationActivity extends AppCompatActivity {
                 LinearLayout.LayoutParams.MATCH_PARENT, dpPx(1));
         divLp.bottomMargin = dpPx(20);
         div.setLayoutParams(divLp);
-        div.setBackgroundColor(0xFF2C2C2E);
+        div.setBackgroundColor(AppDialogHelper.COLOR_PRIMARY_SOFT);
         root.addView(div);
 
         // Mô tả
@@ -1895,7 +2005,7 @@ public class ConversationActivity extends AppCompatActivity {
                 + " tin nhắn cho đến khi bạn chấp nhận. Hãy xóa để xóa cuộc trò chuyện này. "
                 + "Bạn có thể báo cáo tài khoản này nếu bạn nhận được tin nhắn không phù hợp.");
         tvDesc.setTextSize(13);
-        tvDesc.setTextColor(0xFF8E8E93);
+        tvDesc.setTextColor(0xFF757575);
         tvDesc.setLineSpacing(0, 1.5f);
         LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1914,7 +2024,7 @@ public class ConversationActivity extends AppCompatActivity {
         btnAccept.setTextSize(16);
         btnAccept.setTextColor(0xFFFFFFFF);
         btnAccept.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnAccept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF0A84FF));
+        btnAccept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(AppDialogHelper.COLOR_PRIMARY));
         btnAccept.setCornerRadius(dpPx(14));
         btnAccept.setOnClickListener(v -> {
             btnAccept.setEnabled(false);
@@ -1937,9 +2047,9 @@ public class ConversationActivity extends AppCompatActivity {
         btnReport.setLayoutParams(reportLp);
         btnReport.setText("Báo cáo");
         btnReport.setTextSize(14);
-        btnReport.setTextColor(0xFFFF9F0A);
-        btnReport.setStrokeColor(android.content.res.ColorStateList.valueOf(0xFF3A3A3C));
-        btnReport.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF2C2C2E));
+        btnReport.setTextColor(AppDialogHelper.COLOR_PRIMARY);
+        btnReport.setStrokeColor(android.content.res.ColorStateList.valueOf(AppDialogHelper.COLOR_DIALOG_BORDER));
+        btnReport.setBackgroundTintList(android.content.res.ColorStateList.valueOf(AppDialogHelper.COLOR_PRIMARY_SOFT));
         btnReport.setCornerRadius(dpPx(14));
         btnReport.setOnClickListener(v -> {
             sheet.dismiss();
@@ -1956,8 +2066,8 @@ public class ConversationActivity extends AppCompatActivity {
         btnDelete.setText("Xóa");
         btnDelete.setTextSize(14);
         btnDelete.setTextColor(0xFFFF453A);
-        btnDelete.setStrokeColor(android.content.res.ColorStateList.valueOf(0xFF3A3A3C));
-        btnDelete.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF2C2C2E));
+        btnDelete.setStrokeColor(android.content.res.ColorStateList.valueOf(AppDialogHelper.COLOR_DIALOG_BORDER));
+        btnDelete.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
         btnDelete.setCornerRadius(dpPx(14));
         btnDelete.setOnClickListener(v -> {
             btnDelete.setEnabled(false);
@@ -1967,7 +2077,10 @@ public class ConversationActivity extends AppCompatActivity {
 
         root.addView(secondRow);
         sheet.setContentView(root);
-        if (sheet.getWindow() != null) sheet.getWindow().setDimAmount(0.6f);
+        if (sheet.getWindow() != null) {
+            sheet.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            sheet.getWindow().setDimAmount(0.45f);
+        }
         sheet.show();
     }
 
@@ -2480,10 +2593,10 @@ public class ConversationActivity extends AppCompatActivity {
         Toast.makeText(this, "AI đang tóm tắt...", Toast.LENGTH_SHORT).show();
 
         RetrofitClient.loadToken(this);
-        chatApi.requestAISummary(backendRoomId).enqueue(new Callback<ApiResponse<ChatMessageApiResponse>>() {
+        chatApi.requestAISummary(backendRoomId).enqueue(new Callback<ApiResponse<String>>() {
             @Override
-            public void onResponse(Call<ApiResponse<ChatMessageApiResponse>> call,
-                                   Response<ApiResponse<ChatMessageApiResponse>> response) {
+            public void onResponse(Call<ApiResponse<String>> call,
+                                   Response<ApiResponse<String>> response) {
                 ivAiSummary.setEnabled(true);
                 if (!response.isSuccessful()) {
                     String errorMsg = "Không thể tóm tắt lúc này.";
@@ -2499,22 +2612,18 @@ public class ConversationActivity extends AppCompatActivity {
                     Toast.makeText(ConversationActivity.this, errorMsg, Toast.LENGTH_LONG).show();
                     return;
                 }
-                if (response.body() == null) {
-                    Toast.makeText(ConversationActivity.this,
-                            "Không có phản hồi từ máy chủ.", Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (!response.body().isSuccess()) {
-                    String msg = response.body().getMessage();
+                if (response.body() == null || !response.body().isSuccess()) {
+                    String msg = response.body() != null ? response.body().getMessage() : null;
                     if (msg == null || msg.isBlank()) msg = "Không thể tóm tắt lúc này.";
                     Toast.makeText(ConversationActivity.this, msg, Toast.LENGTH_LONG).show();
                     return;
                 }
-                // Tin nhắn summary sẽ tới qua WebSocket — không cần xử lý thêm
+                // Tóm tắt được broadcast qua WebSocket tới tất cả thành viên (kể cả người yêu cầu).
+                // onNewMessage() sẽ nhận và hiển thị — không append local ở đây để tránh duplicate.
             }
 
             @Override
-            public void onFailure(Call<ApiResponse<ChatMessageApiResponse>> call, Throwable t) {
+            public void onFailure(Call<ApiResponse<String>> call, Throwable t) {
                 ivAiSummary.setEnabled(true);
                 Toast.makeText(ConversationActivity.this,
                         "Lỗi kết nối. Vui lòng thử lại.", Toast.LENGTH_SHORT).show();
@@ -2568,6 +2677,10 @@ public class ConversationActivity extends AppCompatActivity {
             if (raw.contains("T") && raw.length() >= 16) time = raw.substring(11, 16);
             else time = raw;
         }
+        // Cache avatar URL của sender khi nhận tin mới qua WebSocket
+        if (msg.getSenderId() > 0 && msg.getSenderAvatarUrl() != null && !msg.getSenderAvatarUrl().isEmpty()) {
+            RetrofitClient.cacheAvatarForUser(msg.getSenderId(), msg.getSenderAvatarUrl());
+        }
         ChatMessage chatMsg = new ChatMessage(
                 String.valueOf(msg.getId()),
                 msg.getSenderId(),
@@ -2576,7 +2689,8 @@ public class ConversationActivity extends AppCompatActivity {
                 time,
                 sentByMe,
                 isSystem,
-                msg.getType()
+                msg.getType(),
+                msg.getSenderAvatarUrl()
         );
 
         // Kiểm tra trùng lặp (tránh duplicate khi load history và WS cùng lúc)
@@ -2623,10 +2737,17 @@ public class ConversationActivity extends AppCompatActivity {
                         }
                         boolean sentByMe = msgData.isSentByCurrentUser();
                         boolean isSystem = msgData.isSystemMessage();
-                        messages.add(new ChatMessage(id, msgData.getSenderId(), sender, msgContent, time, sentByMe, isSystem, msgData.getType()));
+                        // Cache avatar URL cho mỗi sender để MessageAdapter không bị null khi app restart
+                        if (msgData.getSenderId() > 0 && msgData.getSenderAvatarUrl() != null
+                                && !msgData.getSenderAvatarUrl().isEmpty()) {
+                            RetrofitClient.cacheAvatarForUser(msgData.getSenderId(), msgData.getSenderAvatarUrl());
+                        }
+                        messages.add(new ChatMessage(id, msgData.getSenderId(), sender, msgContent, time, sentByMe, isSystem, msgData.getType(), msgData.getSenderAvatarUrl()));
                     }
                     adapter.submitList(messages);
-                    if (!messages.isEmpty()) {
+                    if (getIntent().getBooleanExtra("scroll_to_summary", false)) {
+                        scrollToLastSummary(messages);
+                    } else if (!messages.isEmpty()) {
                         rvMessages.scrollToPosition(adapter.getItemCount() - 1);
                     }
                     markCurrentRoomAsRead();
@@ -2642,6 +2763,19 @@ public class ConversationActivity extends AppCompatActivity {
                 // Silent fail for message loading
             }
         });
+    }
+
+    private void scrollToLastSummary(List<ChatMessage> messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).isSummaryMessage()) {
+                final int pos = i;
+                rvMessages.post(() -> rvMessages.scrollToPosition(pos));
+                return;
+            }
+        }
+        if (!messages.isEmpty()) {
+            rvMessages.scrollToPosition(adapter.getItemCount() - 1);
+        }
     }
 
     private void markCurrentRoomAsRead() {

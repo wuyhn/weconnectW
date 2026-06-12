@@ -55,7 +55,20 @@ public enum ViolationCode {
     BULLYING        (Report.TargetType.POST, 20),
 
     /** Lý do Khác (Admin tự chọn điểm phạt qua Wheel Picker, khoảng [0, 50]) */
-    P_OTHER         (Report.TargetType.POST, -1);
+    P_OTHER         (Report.TargetType.POST, -1),
+
+    // ==========================================================
+    //  NHÓM BÁO CÁO NHẬN XÉT (targetType = REVIEW)
+    // ==========================================================
+
+    /** Đánh giá sai sự thật / Vu khống người dùng — phạt 25 điểm */
+    FAKE_REVIEW     (Report.TargetType.REVIEW, 25),
+
+    /** Spam nhận xét / Lạm dụng tính năng đánh giá — phạt 10 điểm */
+    REVIEW_SPAM     (Report.TargetType.REVIEW, 10),
+
+    /** Lý do Khác (Admin tự chọn điểm phạt, khoảng [0, 50]) */
+    R_OTHER         (Report.TargetType.REVIEW, -1);
 
     // ----------------------------------------------------------
 
@@ -68,30 +81,29 @@ public enum ViolationCode {
     }
 
     /**
-     * @return true nếu đây là mã "Khác" (U_OTHER / P_OTHER),
+     * @return true nếu đây là mã "Khác" (U_OTHER / P_OTHER / R_OTHER),
      *         điểm phạt không cố định mà do Admin tự nhập.
      */
     public boolean isCustomPenalty() {
         return fixedPenaltyPoint == -1;
     }
 
-    /**
-     * @return true nếu báo cáo nhắm vào người dùng (targetType = USER).
-     */
+    /** @return true nếu báo cáo nhắm vào người dùng (targetType = USER). */
     public boolean isUserReport() {
         return targetType == Report.TargetType.USER;
     }
 
-    /**
-     * @return true nếu báo cáo nhắm vào bài viết (targetType = POST).
-     */
+    /** @return true nếu báo cáo nhắm vào bài viết (targetType = POST). */
     public boolean isPostReport() {
         return targetType == Report.TargetType.POST;
     }
 
-    /**
-     * @return điểm phạt cố định theo Ma trận. Trả về -1 nếu là mã "Khác".
-     */
+    /** @return true nếu báo cáo nhắm vào nhận xét (targetType = REVIEW). */
+    public boolean isReviewReport() {
+        return targetType == Report.TargetType.REVIEW;
+    }
+
+    /** @return điểm phạt cố định theo Ma trận. Trả về -1 nếu là mã "Khác". */
     public int getFixedPenaltyPoint() {
         return fixedPenaltyPoint;
     }

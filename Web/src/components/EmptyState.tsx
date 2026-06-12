@@ -1,4 +1,4 @@
-import { Empty, Button, Space } from 'antd'
+import { Empty, Button } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import './EmptyState.css'
 

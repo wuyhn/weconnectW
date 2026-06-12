@@ -61,12 +61,8 @@ public class ParticipantAdapter extends RecyclerView.Adapter<ParticipantAdapter.
         Participant p = participants.get(position);
         holder.tvName.setText(p.name);
 
-        // Load avatar from server URL with Glide, fallback to resource
-        if (p.avatarUrl != null && !p.avatarUrl.isEmpty()) {
-            String url = p.avatarUrl;
-            if (url.startsWith("/")) {
-                url = RetrofitClient.getBaseUrl() + url.substring(1);
-            }
+        String url = resolveAvatarUrl(p);
+        if (url != null) {
             com.bumptech.glide.Glide.with(context)
                     .load(url)
                     .placeholder(R.drawable.ic_user_placeholder)
@@ -102,6 +98,28 @@ public class ParticipantAdapter extends RecyclerView.Adapter<ParticipantAdapter.
     @Override
     public int getItemCount() {
         return participants.size();
+    }
+
+    private String resolveAvatarUrl(Participant participant) {
+        String url = participant.avatarUrl;
+        if ((url == null || url.trim().isEmpty()) && participant.userId > 0) {
+            url = RetrofitClient.getCachedAvatarForUser(participant.userId);
+        }
+        if (url == null) return null;
+
+        url = url.trim().replace("\\", "/");
+        if (url.isEmpty() || "null".equalsIgnoreCase(url)) return null;
+        if (url.startsWith("http://") || url.startsWith("https://")
+                || url.startsWith("content://") || url.startsWith("file://")) {
+            return url;
+        }
+        if (url.startsWith("/")) {
+            return RetrofitClient.getBaseUrl() + url.substring(1);
+        }
+        if (url.startsWith("uploads/")) {
+            return RetrofitClient.getBaseUrl() + url;
+        }
+        return url;
     }
 
     static class ViewHolder extends RecyclerView.ViewHolder {

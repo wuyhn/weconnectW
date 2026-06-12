@@ -131,6 +131,7 @@ public class MainActivity extends AppCompatActivity {
         setupBottomNavigation();
         setupRecyclerView();
         loadUnreadNotificationCount();
+        loadUnreadChatCount();
         createNotificationChannel();
         requestNotificationPermission();
         fetchAndRegisterFcmToken();
@@ -221,6 +222,7 @@ public class MainActivity extends AppCompatActivity {
         // Luôn reload: bài đăng, badge, avatar (nhẹ, cần cập nhật khi quay lại)
         loadPostsFromApi();
         loadUnreadNotificationCount();
+        loadUnreadChatCount();
         loadStatusHeaderAvatar();
 
         // Resubscribe WebSocket (chỉ khi connected)
@@ -479,6 +481,8 @@ public class MainActivity extends AppCompatActivity {
                 findViewById(R.id.swipeRefreshLayout);
         swipeRefreshLayout.setColorSchemeColors(0xFFFF4D6D);
         swipeRefreshLayout.setOnRefreshListener(() -> {
+            fetchCurrentUserProfile();
+            loadStatusHeaderAvatar();
             loadPostsFromApi();
             swipeRefreshLayout.postDelayed(() -> swipeRefreshLayout.setRefreshing(false), 1000);
         });
@@ -553,6 +557,8 @@ public class MainActivity extends AppCompatActivity {
                     .commit();
         }
         activeTabFragment = null;
+        loadStatusHeaderAvatar();
+        fetchCurrentUserProfile();
     }
 
     private void showFragmentTab(String tab) {
@@ -606,17 +612,52 @@ public class MainActivity extends AppCompatActivity {
         updateBadge(count);
     }
 
-    private void applyBottomNavigationBadge(int count) {
+    /**
+     * Cập nhật badge số lượng trên BottomNavigationView cho bất kỳ mục nào.
+     * count <= 0 → ẩn badge; count > 0 → hiển thị số (tối đa 3 ký tự).
+     * Có thể gọi từ bất kỳ đâu khi giữ reference đến MainActivity.
+     */
+    public void updateBottomNavigationBadge(int itemId, int count) {
         if (bottomNavigationView == null) return;
-        if (count <= 0) {
-            bottomNavigationView.removeBadge(R.id.nav_notifications);
-            return;
-        }
+        runOnUiThread(() -> {
+            if (count <= 0) {
+                bottomNavigationView.removeBadge(itemId);
+            } else {
+                BadgeDrawable badge = bottomNavigationView.getOrCreateBadge(itemId);
+                badge.setVisible(true);
+                badge.setMaxCharacterCount(3);
+                badge.setNumber(count);
+            }
+        });
+    }
 
-        BadgeDrawable badge = bottomNavigationView.getOrCreateBadge(R.id.nav_notifications);
-        badge.setVisible(true);
-        badge.setMaxCharacterCount(3);
-        badge.setNumber(count);
+    private void applyBottomNavigationBadge(int count) {
+        updateBottomNavigationBadge(R.id.nav_notifications, count);
+    }
+
+    private void loadUnreadChatCount() {
+        RetrofitClient.loadToken(this);
+        if (RetrofitClient.getAuthToken() == null || bottomNavigationView == null) return;
+
+        com.example.weconnect.api.ChatApiService chatApi =
+                RetrofitClient.getClient().create(com.example.weconnect.api.ChatApiService.class);
+        chatApi.getTotalUnreadCount().enqueue(new Callback<ApiResponse<java.util.Map<String, Integer>>>() {
+            @Override
+            public void onResponse(Call<ApiResponse<java.util.Map<String, Integer>>> call,
+                                   Response<ApiResponse<java.util.Map<String, Integer>>> response) {
+                if (response.isSuccessful() && response.body() != null
+                        && response.body().getResult() != null) {
+                    // Gson deserializes JSON numbers as Double in generic maps — use Number cast
+                    Object countObj = response.body().getResult().get("total");
+                    int total = countObj instanceof Number ? ((Number) countObj).intValue() : 0;
+                    BadgeManager.setChatCount(total);
+                    updateBottomNavigationBadge(R.id.nav_messages, total);
+                }
+            }
+
+            @Override
+            public void onFailure(Call<ApiResponse<java.util.Map<String, Integer>>> call, Throwable t) {}
+        });
     }
 
     private void setupRecyclerView() {
@@ -640,6 +681,14 @@ public class MainActivity extends AppCompatActivity {
                     if (postResponses != null) {
                         for (PostResponse pr : postResponses) {
                             allPosts.add(pr.toPost());
+                            // Populate avatar cache ngay khi load posts — tránh trường hợp fresh login
+                            // cache trống, WS chưa fire, adapter không có avatar cho người khác.
+                            // cacheAvatarForUser gọi toRelativePath() để normalize URL (xử lý cả
+                            // full URL cũ với IP stale lẫn relative path mới).
+                            if (pr.getAuthorId() != null && pr.getAuthorAvatarUrl() != null
+                                    && !pr.getAuthorAvatarUrl().isEmpty()) {
+                                RetrofitClient.cacheAvatarForUser(pr.getAuthorId(), pr.getAuthorAvatarUrl());
+                            }
                         }
                     }
                     postList.clear();
@@ -893,9 +942,7 @@ public class MainActivity extends AppCompatActivity {
         if (ivStatusAvatar == null) return;
         String avatarUrl = RetrofitClient.getAvatarUrl(this);
         if (avatarUrl != null && !avatarUrl.isEmpty()) {
-            if (avatarUrl.startsWith("/")) {
-                avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-            }
+            avatarUrl = normalizeAvatarUrl(avatarUrl);
             com.bumptech.glide.Glide.with(this)
                     .load(avatarUrl)
                     .placeholder(R.drawable.ic_user_placeholder)
@@ -907,6 +954,29 @@ public class MainActivity extends AppCompatActivity {
         } else {
             ivStatusAvatar.setImageResource(R.drawable.ic_user_placeholder);
         }
+    }
+
+    private String normalizeAvatarUrl(String url) {
+        if (url == null || url.isEmpty()) return url;
+        String normalized = url.trim().replace("\\", "/");
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")
+                || normalized.startsWith("content://") || normalized.startsWith("file://")) {
+            try {
+                java.net.URL parsed = new java.net.URL(normalized);
+                String path = parsed.getPath();
+                if (path != null && path.startsWith("/uploads/")) {
+                    return RetrofitClient.getBaseUrl() + path.substring(1);
+                }
+            } catch (Exception ignored) {}
+            return normalized;
+        }
+        if (normalized.startsWith("/")) {
+            return RetrofitClient.getBaseUrl() + normalized.substring(1);
+        }
+        if (normalized.startsWith("uploads/")) {
+            return RetrofitClient.getBaseUrl() + normalized;
+        }
+        return normalized;
     }
 
     private void subscribeToRealtimeEvents() {
@@ -1015,6 +1085,9 @@ public class MainActivity extends AppCompatActivity {
                 if (postAdapter != null) postAdapter.notifyDataSetChanged();
             } catch (Exception ignored) {}
         });
+
+        // Nhận tin nhắn mới ở bất kỳ phòng nào → fetch lại tổng unread từ API để chính xác
+        ws.subscribeToChatList(payload -> runOnUiThread(this::loadUnreadChatCount));
 
         // Nhận sự kiện ACTIVITY_CANCELLED → reload home feed để ẩn nút chat trên postcard
         ws.subscribeToRoomEvents(json -> {

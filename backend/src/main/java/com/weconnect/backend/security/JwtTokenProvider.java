@@ -18,18 +18,30 @@ public class JwtTokenProvider {
     @Value("${jwt.expiration}")
     private long jwtExpiration;
 
+    @Value("${jwt.refresh-expiration}")
+    private long jwtRefreshExpiration;
+
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateToken(Long userId, String email, int role) {
+        return generateToken(userId, email, role, jwtExpiration, "access");
+    }
+
+    public String generateRefreshToken(Long userId, String email, int role) {
+        return generateToken(userId, email, role, jwtRefreshExpiration, "refresh");
+    }
+
+    private String generateToken(Long userId, String email, int role, long expirationMs, String type) {
         Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + jwtExpiration);
+        Date expiryDate = new Date(now.getTime() + expirationMs);
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("email", email)
                 .claim("role", role)
+                .claim("type", type)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(getSigningKey())
@@ -57,12 +69,22 @@ public class JwtTokenProvider {
     }
 
     public boolean validateToken(String token) {
+        return validateTokenType(token, "access");
+    }
+
+    public boolean validateRefreshToken(String token) {
+        return validateTokenType(token, "refresh");
+    }
+
+    private boolean validateTokenType(String token, String expectedType) {
         try {
-            Jwts.parser()
+            Claims claims = Jwts.parser()
                     .verifyWith(getSigningKey())
                     .build()
-                    .parseSignedClaims(token);
-            return true;
+                    .parseSignedClaims(token)
+                    .getPayload();
+            String type = claims.get("type", String.class);
+            return expectedType.equals(type) || ("access".equals(expectedType) && type == null);
         } catch (JwtException | IllegalArgumentException e) {
             return false;
         }

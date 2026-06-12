@@ -100,6 +100,12 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         return messages;
     }
 
+    public void appendMessage(ChatMessage msg) {
+        messages.add(msg);
+        int adapterPos = messages.size() - 1 + (showFriendCard ? 1 : 0);
+        notifyItemInserted(adapterPos);
+    }
+
     public int countMessagesBySender(long senderId) {
         int count = 0;
         for (ChatMessage msg : messages) {
@@ -248,14 +254,18 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
             } else {
                 String avatarUrl = senderId > 0
                         ? RetrofitClient.getCachedAvatarForUser(senderId) : null;
+                if (avatarUrl == null || avatarUrl.isEmpty()) {
+                    avatarUrl = message.getSenderAvatarUrl();
+                }
+                if (senderId > 0 && avatarUrl != null && !avatarUrl.isEmpty()) {
+                    RetrofitClient.cacheAvatarForUser(senderId, avatarUrl);
+                }
                 if (avatarUrl != null && !avatarUrl.isEmpty()) {
                     if (avatarUrl.startsWith("/")) avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
                     com.bumptech.glide.Glide.with(context)
                             .load(avatarUrl)
                             .placeholder(R.drawable.ic_user_placeholder)
                             .error(R.drawable.ic_user_placeholder)
-                            .skipMemoryCache(true)
-                            .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE)
                             .circleCrop()
                             .into(messageHolder.ivMessageAvatar);
                 } else {
@@ -269,6 +279,9 @@ public class MessageAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder
         if (!isSelf && userClickListener != null && senderId > 0 && !blockClick) {
             View.OnClickListener userClick = v -> {
                 String av = RetrofitClient.getCachedAvatarForUser(senderId);
+                if (av == null || av.isEmpty()) {
+                    av = message.getSenderAvatarUrl();
+                }
                 userClickListener.onUserClick(senderId, message.getSenderName(), av);
             };
             if (messageHolder.ivMessageAvatar != null)

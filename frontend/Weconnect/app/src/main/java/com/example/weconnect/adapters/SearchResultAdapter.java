@@ -69,6 +69,9 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         } else if (viewType == SearchResultItem.TYPE_USER) {
             View view = layoutInflater.inflate(R.layout.item_search_user, parent, false);
             return new UserViewHolder(view);
+        } else if (viewType == SearchResultItem.TYPE_EMPTY) {
+            View view = layoutInflater.inflate(R.layout.item_search_empty, parent, false);
+            return new EmptyViewHolder(view);
         } else {
             View view = layoutInflater.inflate(R.layout.item_search_post, parent, false);
             return new PostViewHolder(view);
@@ -219,6 +222,12 @@ public class SearchResultAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
     @Override
     public int getItemCount() {
         return items.size();
+    }
+
+    static class EmptyViewHolder extends RecyclerView.ViewHolder {
+        public EmptyViewHolder(@NonNull View itemView) {
+            super(itemView);
+        }
     }
 
     static class SectionViewHolder extends RecyclerView.ViewHolder {

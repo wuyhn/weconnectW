@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 @Builder
 public class Report {
 
-    public enum TargetType { USER, POST }
+    public enum TargetType { USER, POST, REVIEW }
     public enum Status { PENDING, VALID, REJECTED }
 
     @Id
@@ -38,6 +38,9 @@ public class Report {
 
     @Column(columnDefinition = "TEXT")
     private String description;
+
+    @Column(name = "detail_reason", columnDefinition = "TEXT")
+    private String detailReason;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'PENDING'")
@@ -66,6 +69,11 @@ public class Report {
 
     @Column(name = "evidence_images", columnDefinition = "TEXT")
     private String evidenceImages;
+
+    // ID của kẻ vi phạm (viết nhận xét vu khống) — chỉ dùng cho targetType = REVIEW
+    // Được gán khi Admin phê duyệt báo cáo nhận xét, để cho phép kẻ vi phạm xem chi tiết bị phạt
+    @Column(name = "violator_user_id")
+    private Long violatorUserId;
 
     @PrePersist
     protected void onCreate() {

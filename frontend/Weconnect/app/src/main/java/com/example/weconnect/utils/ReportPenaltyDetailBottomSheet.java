@@ -213,6 +213,9 @@ public class ReportPenaltyDetailBottomSheet {
 
     private static void bindData(Context context, LinearLayout contentLayout,
                                   Map<String, Object> data) {
+        String targetType = data.get("targetType") != null ? data.get("targetType").toString() : "";
+        boolean isReviewPenalty = "REVIEW".equals(targetType);
+
         // Warning banner
         LinearLayout banner = new LinearLayout(context);
         banner.setOrientation(LinearLayout.HORIZONTAL);
@@ -238,14 +241,16 @@ public class ReportPenaltyDetailBottomSheet {
         bannerText.setOrientation(LinearLayout.VERTICAL);
 
         TextView bannerTitle = new TextView(context);
-        bannerTitle.setText("Báo cáo đã được xác nhận");
+        bannerTitle.setText(isReviewPenalty ? "Nhận xét bị gỡ bỏ do vi phạm" : "Báo cáo đã được xác nhận");
         bannerTitle.setTextSize(15);
         bannerTitle.setTextColor(COLOR_WARN_TEXT);
         bannerTitle.setTypeface(null, Typeface.BOLD);
         bannerText.addView(bannerTitle, matchW());
 
         TextView bannerSub = new TextView(context);
-        bannerSub.setText("Hoạt động của bạn đã bị xác nhận là vi phạm quy định cộng đồng.");
+        bannerSub.setText(isReviewPenalty
+                ? "Nhận xét của bạn đã bị xác định là sai sự thật và bị gỡ bỏ bởi Admin."
+                : "Hoạt động của bạn đã bị xác nhận là vi phạm quy định cộng đồng.");
         bannerSub.setTextSize(13);
         bannerSub.setTextColor(COLOR_WARN_SUB);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
@@ -288,8 +293,9 @@ public class ReportPenaltyDetailBottomSheet {
         addRow(context, infoCard, "TRẠNG THÁI XỬ LÝ", statusDisplay, statusColor, false);
 
         // Loại báo cáo
-        String targetType  = data.get("targetType") != null ? data.get("targetType").toString() : "";
-        String typeDisplay = "USER".equals(targetType) ? "Báo cáo người dùng" : "Báo cáo bài viết";
+        String typeDisplay = "USER".equals(targetType) ? "Báo cáo người dùng"
+                : "REVIEW".equals(targetType) ? "Báo cáo nhận xét vu khống"
+                : "Báo cáo bài viết";
         addRow(context, infoCard, "LOẠI BÁO CÁO", typeDisplay, COLOR_TEXT, true);
 
         // Lý do vi phạm

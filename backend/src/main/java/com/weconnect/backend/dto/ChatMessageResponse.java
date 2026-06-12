@@ -16,6 +16,7 @@ public class ChatMessageResponse {
     private Long roomId;
     private Long senderId;
     private String senderName;
+    private String senderAvatarUrl;
     private String content;
     private String type;
     private boolean sentByCurrentUser;

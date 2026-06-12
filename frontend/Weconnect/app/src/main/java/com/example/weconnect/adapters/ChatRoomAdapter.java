@@ -13,6 +13,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.example.weconnect.R;
+import com.example.weconnect.models.ChatMessage;
 import com.example.weconnect.models.ChatRoom;
 
 import java.util.ArrayList;
@@ -76,27 +77,24 @@ public class ChatRoomAdapter extends RecyclerView.Adapter<ChatRoomAdapter.ChatRo
             holder.tvTypeBadge.setVisibility(View.GONE);
         }
 
-        // ── Unread count badge (chỉ dùng cho message_requests) ──
+        // ── Unread count badge (đỏ, có số — dùng cho TẤT CẢ loại phòng) ──
         if (isMessageRequest && room.getRequestCount() > 0) {
+            // Mục "Tin nhắn từ người lạ": hiển thị số yêu cầu đang chờ
             holder.tvUnreadBadge.setVisibility(View.VISIBLE);
             holder.tvUnreadBadge.setText(room.getRequestCount() > 99 ? "99+" : String.valueOf(room.getRequestCount()));
+        } else if (!isMessageRequest && hasUnread) {
+            // Phòng chat thường: hiển thị số tin chưa đọc
+            holder.tvUnreadBadge.setVisibility(View.VISIBLE);
+            holder.tvUnreadBadge.setText(room.getUnreadCount() > 99 ? "99+" : String.valueOf(room.getUnreadCount()));
         } else {
             holder.tvUnreadBadge.setText("");
             holder.tvUnreadBadge.setVisibility(View.GONE);
         }
 
-        // ── Unread dot ──
-        if (!isMessageRequest) {
-            if (hasUnread) {
-                holder.viewAccentDot.setBackgroundResource(R.drawable.bg_chat_accent_dot);
-                holder.viewAccentDot.setVisibility(View.VISIBLE);
-            } else if (isGroup && !room.isActive()) {
-                // Group đã kết thúc: chấm xám
-                holder.viewAccentDot.setBackgroundResource(R.drawable.bg_chat_accent_dot_inactive);
-                holder.viewAccentDot.setVisibility(View.VISIBLE);
-            } else {
-                holder.viewAccentDot.setVisibility(View.GONE);
-            }
+        // ── Unread dot (chỉ giữ cho group đã kết thúc — inactive indicator) ──
+        if (!isMessageRequest && isGroup && !room.isActive()) {
+            holder.viewAccentDot.setBackgroundResource(R.drawable.bg_chat_accent_dot_inactive);
+            holder.viewAccentDot.setVisibility(View.VISIBLE);
         } else {
             holder.viewAccentDot.setVisibility(View.GONE);
         }
@@ -194,6 +192,33 @@ public class ChatRoomAdapter extends RecyclerView.Adapter<ChatRoomAdapter.ChatRo
     @Override
     public int getItemCount() {
         return rooms.size();
+    }
+
+    /**
+     * Cập nhật badge + preview của một phòng mà không reload toàn bộ danh sách.
+     * Được gọi khi nhận WebSocket event "chat-list" với payload chứa roomId + unreadCount.
+     */
+    public void updateRoomBadge(long roomId, int unreadCount, String preview, String time) {
+        String roomIdStr = String.valueOf(roomId);
+        for (int i = 0; i < rooms.size(); i++) {
+            ChatRoom room = rooms.get(i);
+            if (roomIdStr.equals(room.getId())) {
+                room.setUnreadCount(unreadCount);
+                // Cập nhật preview: sửa trực tiếp trong messages list
+                if (preview != null && !preview.isEmpty()) {
+                    ChatMessage previewMsg = new ChatMessage(
+                            "0", "", preview, time != null ? time : "", false);
+                    List<ChatMessage> msgs = room.getMessages();
+                    if (!msgs.isEmpty()) {
+                        msgs.set(msgs.size() - 1, previewMsg);
+                    } else {
+                        msgs.add(previewMsg);
+                    }
+                }
+                notifyItemChanged(i);
+                return;
+            }
+        }
     }
 
     static class ChatRoomViewHolder extends RecyclerView.ViewHolder {

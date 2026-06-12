@@ -87,7 +87,15 @@ public class NotificationsActivity extends AppCompatActivity {
                                    Response<ApiResponse<List<NotificationItem>>> response) {
                 if (response.isSuccessful() && response.body() != null
                         && response.body().getResult() != null) {
-                    displayNotifications(response.body().getResult());
+                    List<NotificationItem> items = response.body().getResult();
+                    for (NotificationItem notif : items) {
+                        if (notif.getRelatedUserId() != null && notif.getRelatedUserId() > 0
+                                && notif.getSenderAvatarUrl() != null
+                                && !notif.getSenderAvatarUrl().isEmpty()) {
+                            RetrofitClient.cacheAvatarForUser(notif.getRelatedUserId(), notif.getSenderAvatarUrl());
+                        }
+                    }
+                    displayNotifications(items);
                 } else {
                     showEmptyNotifications();
                 }

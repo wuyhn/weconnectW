@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.example.weconnect.R;
 import com.example.weconnect.activities.ConversationActivity;
+import com.example.weconnect.util.BadgeManager;
 import com.example.weconnect.activities.ForceLogoutActivity;
 import com.example.weconnect.activities.MainActivity;
 import com.example.weconnect.activities.PendingListActivity;
@@ -73,6 +74,25 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
         String relatedUserId = data.get("relatedUserId");
         String relatedUsername = data.get("relatedUsername");
 
+        if ("NEW_CHAT_MESSAGE".equals(type)) {
+            // Tin nhắn mới trong phòng chat — chỉ hiển thị notification khi app không ở foreground
+            // của đúng phòng đó. ConversationActivity.currentOpenRoomId là -1 khi không mở.
+            String msgRoomId = data.get("roomId");
+            String preview = data.get("lastMessagePreview");
+            if (msgRoomId != null) {
+                long roomId = -1;
+                try { roomId = Long.parseLong(msgRoomId); } catch (Exception ignored) {}
+                if (roomId != ConversationActivity.currentOpenRoomId) {
+                    // Tăng badge cache ngay khi FCM đến — WS có thể không kết nối khi app ở background.
+                    // onResume() sẽ sync lại tổng chính xác từ API.
+                    BadgeManager.incrementChat();
+                    String notifBody = (preview != null && !preview.isEmpty()) ? preview : "Tin nhắn mới";
+                    showNotificationWithChatDeeplink("Tin nhắn mới", notifBody, msgRoomId);
+                }
+            }
+            return;
+        }
+
         if (("REPORT_PENALTY".equals(type) || "REPORT_CONFIRMED".equals(type) || "ADMIN_WARNING".equals(type))
                 && relatedReportId != null) {
             showNotificationWithReportDeeplink(title, body, relatedReportId);
@@ -130,6 +150,7 @@ public class WeConnectMessagingService extends FirebaseMessagingService {
 
         Intent intent = new Intent(this, ConversationActivity.class);
         intent.putExtra("room_id", roomId);
+        intent.putExtra("scroll_to_summary", true);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
         int requestCode = (int) (System.currentTimeMillis() & 0xffff);

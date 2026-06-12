@@ -21,6 +21,7 @@ public class UserService {
 
     private static final java.util.logging.Logger logger =
             java.util.logging.Logger.getLogger(UserService.class.getName());
+    private static final int APP_USER_ROLE = 0;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -300,6 +301,7 @@ public class UserService {
         List<Map<String, Object>> suggestions = new ArrayList<>();
 
         for (User u : allUsers) {
+            if (u.getRole() != APP_USER_ROLE) continue;
             // Loại trừ chính mình
             if (u.getId().equals(currentUserId)) continue;
             // Loại trừ user đang xem

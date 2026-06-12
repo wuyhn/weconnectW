@@ -16,6 +16,9 @@
     <!-- shapeAppearance đặt ở widget style, không phải theme overlay -->
     <style name="MaterialAlertDialog.App" parent="MaterialAlertDialog.MaterialComponents">
         <item name="shapeAppearance">@style/ShapeAppearance.App.Dialog</item>
+        <item name="backgroundTint">@color/card_surface</item>
+        <item name="strokeColor">@color/secondary_pink</item>
+        <item name="strokeWidth">1dp</item>
     </style>
 
     <style name="ShapeAppearance.App.Dialog" parent="">

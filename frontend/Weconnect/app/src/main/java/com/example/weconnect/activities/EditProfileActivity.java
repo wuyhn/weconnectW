@@ -190,11 +190,27 @@ public class EditProfileActivity extends AppCompatActivity {
         displayAvatar(currentAvatarUrl);
     }
 
+    private String resolveAvatarUrl(String url) {
+        if (url == null || url.isEmpty()) return url;
+        if (url.startsWith("/")) {
+            return RetrofitClient.getBaseUrl() + url.substring(1);
+        }
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            try {
+                java.net.URL parsed = new java.net.URL(url);
+                String path = parsed.getPath();
+                if (path != null && path.startsWith("/uploads/")) {
+                    return RetrofitClient.getBaseUrl() + path.substring(1);
+                }
+            } catch (Exception ignored) {}
+        }
+        return url;
+    }
+
     private void displayAvatar(String url) {
         if (ivEditProfileAvatar == null) return;
         if (url != null && !url.isEmpty()) {
-            String displayUrl = url.startsWith("/")
-                    ? RetrofitClient.getBaseUrl() + url.substring(1) : url;
+            String displayUrl = resolveAvatarUrl(url);
             Glide.with(this)
                     .load(displayUrl)
                     .placeholder(R.drawable.ic_user_placeholder)
@@ -565,11 +581,7 @@ public class EditProfileActivity extends AppCompatActivity {
                                                Response<ApiResponse<String>> response) {
                             if (response.isSuccessful() && response.body() != null
                                     && response.body().getResult() != null) {
-                                String url = response.body().getResult();
-                                if (url.startsWith("/")) {
-                                    url = RetrofitClient.getBaseUrl() + url.substring(1);
-                                }
-                                final String avatarUrl = url;
+                                final String avatarUrl = response.body().getResult();
 
                                 Map<String, Object> body = new HashMap<>();
                                 body.put("avatarUrl", avatarUrl);

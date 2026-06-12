@@ -59,50 +59,33 @@ public class PostService {
         this.userReviewRepository = userReviewRepository;
     }
 
-    // Lấy danh sách bài đăng active, sắp xếp theo 3 tầng ưu tiên sở thích:
-    //   Tầng 1: tag trùng sở thích cứng (interestTags — 5 tags user tự chọn)
-    //   Tầng 2: tag trùng sở thích ẩn học từ hành vi (behavioralTags — tối đa 5 tags)
-    //   Tầng 3: bài không liên quan
-    // Trong mỗi tầng, bài viết sắp theo createdAt DESC (query đã đảm bảo sẵn)
+    // Feed 2-nhom uu tien (CASE WHEN trong ORDER BY o PostRepository.findFeedRanked):
+    //   Nhom 1 (dau feed): bai cua minh (moi tag) + bai nguoi khac khop interestTags hoac behavioralTags
+    //   Nhom 2 (cuoi feed): bai nguoi khac khong khop ca hai bo tag
+    //   Trong tung nhom: sap theo createdAt DESC
     public List<PostResponse> getActivePosts(Long currentUserId) {
-        List<Post> allPosts = postRepository.findByArchivedFalseAndEndTimeAfterOrderByCreatedAtDesc(LocalDateTime.now());
-        allPosts = filterBlockedPosts(allPosts, currentUserId);
-
         User user = currentUserId != null ? userRepository.findById(currentUserId).orElse(null) : null;
-        if (user == null) return toResponseList(allPosts, currentUserId);
 
-        Set<String> hardTags = parseTagSet(user.getInterestTags());       // sở thích cứng
-        Set<String> hiddenTags = parseTagSet(user.getBehavioralTags());   // sở thích ẩn
-
-        // Không có sở thích nào → trả về theo thứ tự thời gian như cũ
-        if (hardTags.isEmpty() && hiddenTags.isEmpty()) {
-            return toResponseList(allPosts, currentUserId);
+        if (user == null) {
+            List<Post> all = postRepository.findByArchivedFalseAndEndTimeAfterOrderByCreatedAtDesc(LocalDateTime.now());
+            return toResponseList(all, null);
         }
 
-        // Tầng 1: trùng sở thích cứng
-        List<Post> tier1 = allPosts.stream()
-                .filter(p -> p.getInterestTag() != null && hardTags.contains(p.getInterestTag().trim()))
-                .collect(Collectors.toList());
+        // Gop interestTags (5 tag tu chon) + behavioralTags (tag hoc ngam tu hanh vi)
+        // -> bai nguoi khac khop bat ky set nao deu vao Nhom 1 (uu tien cao)
+        Set<String> preferredTags = new java.util.HashSet<>(parseTagSet(user.getInterestTags()));
+        preferredTags.addAll(parseTagSet(user.getBehavioralTags()));
 
-        // Tầng 2: trùng sở thích ẩn (loại trừ bài đã vào tầng 1)
-        List<Post> tier2 = allPosts.stream()
-                .filter(p -> p.getInterestTag() != null
-                        && !hardTags.contains(p.getInterestTag().trim())
-                        && hiddenTags.contains(p.getInterestTag().trim()))
-                .collect(Collectors.toList());
+        // JPA khong cho phep IN voi collection rong (sinh "IN ()" -> SQL loi).
+        // Sentinel " " khong bao gio khop tag thuc -> an toan khi user chua co tag nao.
+        Set<String> tagsParam = preferredTags.isEmpty()
+                ? Collections.singleton(" ")
+                : preferredTags;
 
-        // Tầng 3: còn lại — không khớp bất kỳ sở thích nào
-        List<Post> tier3 = allPosts.stream()
-                .filter(p -> p.getInterestTag() == null
-                        || (!hardTags.contains(p.getInterestTag().trim())
-                            && !hiddenTags.contains(p.getInterestTag().trim())))
-                .collect(Collectors.toList());
+        List<Post> posts = postRepository.findFeedRanked(currentUserId, tagsParam, LocalDateTime.now());
+        posts = filterBlockedPosts(posts, currentUserId);
 
-        List<Post> sorted = new ArrayList<>(tier1);
-        sorted.addAll(tier2);
-        sorted.addAll(tier3);
-
-        return toResponseList(sorted, currentUserId);
+        return toResponseList(posts, currentUserId);
     }
 
     // Helper: parse chuỗi CSV tags thành Set<String> (case-sensitive, trimmed) để tra cứu O(1)
@@ -495,9 +478,26 @@ public class PostService {
 
     // Lấy danh sách thành viên (enriched with user info)
     public List<java.util.Map<String, Object>> getMembers(Long postId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Khong tim thay bai viet"));
         List<PostMember> members = postMemberRepository.findByPostId(postId);
         List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+
+        User author = userRepository.findById(post.getAuthorId()).orElse(null);
+        if (author != null) {
+            java.util.Map<String, Object> authorMap = new java.util.HashMap<>();
+            authorMap.put("userId", author.getId());
+            authorMap.put("status", PostMember.Status.APPROVED.name());
+            authorMap.put("fullName", author.getFullName());
+            authorMap.put("username", author.getEmail());
+            authorMap.put("avatarUrl", author.getAvatarUrl() != null ? author.getAvatarUrl() : "");
+            authorMap.put("isAuthor", true);
+            result.add(authorMap);
+        }
         for (PostMember pm : members) {
+            if (post.getAuthorId() != null && post.getAuthorId().equals(pm.getUserId())) {
+                continue;
+            }
             java.util.Map<String, Object> map = new java.util.HashMap<>();
             map.put("userId", pm.getUserId());
             map.put("status", pm.getStatus().name());
@@ -511,6 +511,7 @@ public class PostService {
                 map.put("username", "");
                 map.put("avatarUrl", "");
             }
+            map.put("isAuthor", false);
             result.add(map);
         }
         return result;

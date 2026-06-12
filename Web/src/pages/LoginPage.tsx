@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Form, Input, Button, Card, Row, Col, message, Typography, Divider, Space } from 'antd'
+import { Form, Input, Button, Card, Row, Col, message, Typography, Divider } from 'antd'
 import { UserOutlined, LockOutlined, LikeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
@@ -25,11 +25,11 @@ export default function LoginPage() {
         id: result.user.id || 0,
         email: result.user.email || '',
         fullName: result.user.fullName || '',
-        role: result.user.role || 1,
+        role: (result.user.role === 1 ? 1 : 0) as 0 | 1,
         isBlocked: false,
         createdAt: new Date().toISOString(),
       }
-      login(user, result.token)
+      login(user, result.token, result.refreshToken)
       message.success('Login successful!')
       navigate('/dashboard')
     } catch (error: any) {
@@ -38,14 +38,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
-  }
-
-  // Demo credentials
-  const fillDemoCredentials = () => {
-    form.setFieldsValue({
-      email: 'admin@example.com',
-      password: 'password123',
-    })
   }
 
   return (

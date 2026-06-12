@@ -144,7 +144,7 @@ public class OtpVerificationActivity extends AppCompatActivity {
                         if (resp.isSuccessful() && resp.body() != null && resp.body().isSuccess()) {
                             AuthResponse auth = resp.body().getResult();
                             if (auth != null) {
-                                RetrofitClient.saveToken(OtpVerificationActivity.this, auth.getToken());
+                                RetrofitClient.saveTokens(OtpVerificationActivity.this, auth.getToken(), auth.getRefreshToken());
                                 RetrofitClient.saveUserId(OtpVerificationActivity.this, auth.getId());
                                 RetrofitClient.saveUserName(OtpVerificationActivity.this, auth.getFullName());
                                 RetrofitClient.saveReputationScore(OtpVerificationActivity.this, auth.getReputationScore());

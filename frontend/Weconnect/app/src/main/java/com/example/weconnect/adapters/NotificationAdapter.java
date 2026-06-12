@@ -49,16 +49,19 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
     public static class JoinRequestGroup {
         public final Long relatedPostId;
         public final String postTitle;
-        public final int requestCount;
+        public final int pendingCount;    // chưa xử lý
+        public final int acceptedCount;   // đã chấp nhận
         public final int unreadCount;
         public final String latestCreatedAt;
         public boolean hasUnread;
 
-        public JoinRequestGroup(Long relatedPostId, String postTitle, int requestCount,
+        public JoinRequestGroup(Long relatedPostId, String postTitle,
+                                int pendingCount, int acceptedCount,
                                 int unreadCount, String latestCreatedAt) {
             this.relatedPostId = relatedPostId;
             this.postTitle = postTitle;
-            this.requestCount = requestCount;
+            this.pendingCount = pendingCount;
+            this.acceptedCount = acceptedCount;
             this.unreadCount = unreadCount;
             this.latestCreatedAt = latestCreatedAt;
             this.hasUnread = unreadCount > 0;
@@ -119,15 +122,24 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 : "Yêu cầu tham gia";
         holder.tvMessage.setText(titleText);
 
-        String subtitleText = group.requestCount == 1
-                ? "1 yêu cầu đang chờ duyệt"
-                : group.requestCount + " yêu cầu đang chờ duyệt";
+        String subtitleText;
+        if (group.pendingCount > 0 && group.acceptedCount > 0) {
+            subtitleText = group.pendingCount + " chờ duyệt • " + group.acceptedCount + " đã chấp nhận";
+        } else if (group.pendingCount > 0) {
+            subtitleText = group.pendingCount == 1 ? "1 yêu cầu đang chờ duyệt"
+                    : group.pendingCount + " yêu cầu đang chờ duyệt";
+        } else if (group.acceptedCount > 0) {
+            subtitleText = group.acceptedCount == 1 ? "1 người đã được chấp nhận"
+                    : group.acceptedCount + " người đã được chấp nhận";
+        } else {
+            subtitleText = "Không có yêu cầu";
+        }
         holder.tvSubtitle.setText(subtitleText);
         holder.tvSubtitle.setVisibility(View.VISIBLE);
 
         holder.tvTime.setText(formatCreatedAt(group.latestCreatedAt));
 
-        holder.ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+        holder.ivAvatar.setImageResource(R.drawable.ic_notification);
 
         holder.layoutActions.setVisibility(View.GONE);
         holder.tvActioned.setVisibility(View.GONE);
@@ -171,25 +183,35 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         holder.tvSubtitle.setVisibility(View.GONE);
         holder.tvTime.setText(formatCreatedAt(item.getCreatedAt()));
 
-        // Load avatar — if sender is current user, use fresh cached URL instead of stale stored URL
-        String avatarUrl = item.getSenderAvatarUrl();
-        long myId = RetrofitClient.getUserId(context);
-        if (myId > 0 && item.getRelatedUserId() != null && item.getRelatedUserId() == myId) {
-            String cached = RetrofitClient.getAvatarUrl(context);
-            if (cached != null && !cached.isEmpty()) avatarUrl = cached;
-        }
-        if (avatarUrl != null && !avatarUrl.isEmpty()) {
-            if (avatarUrl.startsWith("/")) {
-                avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
-            }
-            com.bumptech.glide.Glide.with(context)
-                    .load(avatarUrl)
-                    .placeholder(R.drawable.ic_user_placeholder)
-                    .error(R.drawable.ic_user_placeholder)
-                    .circleCrop()
-                    .into(holder.ivAvatar);
+        // Thông báo hệ thống (admin/báo cáo/bài viết hết hạn) → icon chuông, không load avatar người dùng
+        if (isSystemNotificationType(item.getType())) {
+            holder.ivAvatar.setImageResource(R.drawable.ic_notification);
         } else {
-            holder.ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+            // Load avatar — ưu tiên global cache (normalized) → own cache → raw API field
+            String avatarUrl = item.getSenderAvatarUrl();
+            long myId = RetrofitClient.getUserId(context);
+            if (item.getRelatedUserId() != null && item.getRelatedUserId() > 0) {
+                String globalCached = RetrofitClient.getCachedAvatarForUser(item.getRelatedUserId());
+                if (globalCached != null && !globalCached.isEmpty()) {
+                    avatarUrl = globalCached;
+                } else if (myId > 0 && item.getRelatedUserId() == myId) {
+                    String myCached = RetrofitClient.getAvatarUrl(context);
+                    if (myCached != null && !myCached.isEmpty()) avatarUrl = myCached;
+                }
+            }
+            if (avatarUrl != null && !avatarUrl.isEmpty()) {
+                if (avatarUrl.startsWith("/")) {
+                    avatarUrl = RetrofitClient.getBaseUrl() + avatarUrl.substring(1);
+                }
+                com.bumptech.glide.Glide.with(context)
+                        .load(avatarUrl)
+                        .placeholder(R.drawable.ic_user_placeholder)
+                        .error(R.drawable.ic_user_placeholder)
+                        .circleCrop()
+                        .into(holder.ivAvatar);
+            } else {
+                holder.ivAvatar.setImageResource(R.drawable.ic_user_placeholder);
+            }
         }
 
         // Determine if actionable
@@ -298,6 +320,13 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 android.content.Intent intent = new android.content.Intent(context,
                         com.example.weconnect.activities.ReportPenaltyDetailActivity.class);
                 intent.putExtra("report_id", item.getRelatedReportId().longValue());
+                context.startActivity(intent);
+            } else if (item.getType() == NotificationItem.NotificationType.CHAT_SUMMARY
+                    && item.getRelatedRoomId() != null) {
+                Intent intent = new Intent(context,
+                        com.example.weconnect.activities.ConversationActivity.class);
+                intent.putExtra("room_id", item.getRelatedRoomId().longValue());
+                intent.putExtra("scroll_to_summary", true);
                 context.startActivity(intent);
             } else if (item.getRelatedPostId() != null) {
                 navigateToPostDetail(item);
@@ -431,6 +460,16 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
         });
     }
 
+    private static boolean isSystemNotificationType(NotificationItem.NotificationType type) {
+        if (type == null) return false;
+        return type == NotificationItem.NotificationType.POST_EXPIRED
+                || type == NotificationItem.NotificationType.ACTIVITY_CANCELLED
+                || type == NotificationItem.NotificationType.REPORT_CONFIRMED
+                || type == NotificationItem.NotificationType.REPORT_PENALTY
+                || type == NotificationItem.NotificationType.ADMIN_WARNING
+                || type == NotificationItem.NotificationType.ADMIN_ACTION;
+    }
+
     private String formatCreatedAt(String createdAt) {
         if (createdAt == null) return "";
         try {
@@ -471,22 +510,20 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
 
     /**
      * Group real notifications by date.
-     * JOIN_REQUEST notifications (unactioned) are grouped by postId into JoinRequestGroup items.
+     * JOIN_REQUEST notifications (all, including actioned) are grouped by postId into JoinRequestGroup items.
      * Each group is sorted by its latest request time and appears as a single item.
      */
     public static List<Object> groupByDate(List<NotificationItem> notifications) {
-        // 1. Separate unactioned JOIN_REQUEST (group by postId) from other notifications
+        // 1. Separate ALL JOIN_REQUEST with relatedPostId (group by postId) from other notifications
         Map<Long, List<NotificationItem>> joinReqByPost = new LinkedHashMap<>();
         List<NotificationItem> others = new ArrayList<>();
 
         for (NotificationItem item : notifications) {
             if (item.getType() == NotificationItem.NotificationType.JOIN_REQUEST
-                    && !item.isActioned()
                     && item.getRelatedPostId() != null) {
                 joinReqByPost.computeIfAbsent(item.getRelatedPostId(), k -> new ArrayList<>())
                         .add(item);
             } else {
-                // Actioned JOIN_REQUEST hoặc không có relatedPostId → giữ lại trong lịch sử
                 others.add(item);
             }
         }
@@ -503,6 +540,8 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                     .orElse(null);
 
             int unreadCount = (int) reqs.stream().filter(n -> !n.isRead()).count();
+            int pendingCount = (int) reqs.stream().filter(n -> !n.isActioned()).count();
+            int acceptedCount = (int) reqs.stream().filter(n -> n.isActioned()).count();
 
             // postTitle from the postTitle field (enriched by backend), fallback: parse from message
             String postTitle = null;
@@ -516,8 +555,8 @@ public class NotificationAdapter extends RecyclerView.Adapter<RecyclerView.ViewH
                 postTitle = extractPostTitle(reqs.get(0).getMessage());
             }
 
-            groups.add(new JoinRequestGroup(entry.getKey(), postTitle, reqs.size(),
-                    unreadCount, latestCreatedAt));
+            groups.add(new JoinRequestGroup(entry.getKey(), postTitle,
+                    pendingCount, acceptedCount, unreadCount, latestCreatedAt));
         }
 
         // 3. Merge groups + others into a sortable list, then build date-grouped result

@@ -13,25 +13,64 @@ import {
   Row,
   Col,
   Popconfirm,
-  Statistic,
 } from 'antd'
-import { ArrowLeftOutlined, DeleteOutlined } from '@ant-design/icons'
+import {
+  ArrowLeftOutlined,
+  DeleteOutlined,
+  FileTextOutlined,
+  LockOutlined,
+  TeamOutlined,
+  StarOutlined,
+  UnlockOutlined,
+  UserOutlined,
+  WarningOutlined,
+} from '@ant-design/icons'
 import MainLayout from '../components/MainLayout'
 import StatusBadge from '../components/StatusBadge'
 import { userAdminService } from '../services/userAdminService'
-import { postAdminService } from '../services/postAdminService'
-import { reviewAdminService } from '../services/reviewAdminService'
-import { User } from '../types'
+import { User, UserStats } from '../types'
 import dayjs from 'dayjs'
 import './AdminUserDetailPage.css'
+import { resolveAvatarUrl } from '../utils/avatar'
+import { cleanTagText } from '../utils/text'
+
+const normalizeDate = (value: unknown): dayjs.Dayjs | null => {
+  if (Array.isArray(value)) {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = value as number[]
+    if (!year || !month || !day) return null
+    const parsed = dayjs(new Date(year, month - 1, day, hour, minute, second))
+    return parsed.isValid() ? parsed : null
+  }
+
+  if (!value) return null
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+
+    const viDate = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+    if (viDate) {
+      const [, day, month, year] = viDate
+      const parsed = dayjs(new Date(Number(year), Number(month) - 1, Number(day)))
+      return parsed.isValid() ? parsed : null
+    }
+  }
+
+  const parsed = dayjs(value as string | number | Date)
+  return parsed.isValid() ? parsed : null
+}
+
+const formatDate = (value: unknown, pattern = 'MMMM DD, YYYY') => {
+  const parsed = normalizeDate(value)
+  return parsed ? parsed.format(pattern) : '-'
+}
 
 export default function AdminUserDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [user, setUser] = useState<User | null>(null)
+  const [stats, setStats] = useState<UserStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [postCount, setPostCount] = useState(0)
-  const [reviewCount, setReviewCount] = useState(0)
   const [actionLoading, setActionLoading] = useState(false)
 
   useEffect(() => {
@@ -43,20 +82,12 @@ export default function AdminUserDetailPage() {
   const loadUser = async (userId: number) => {
     try {
       setLoading(true)
-      const userData = await userAdminService.getUser(userId)
+      const [userData, userStats] = await Promise.all([
+        userAdminService.getUser(userId),
+        userAdminService.getUserStats(userId),
+      ])
       setUser(userData)
-
-      // Load post count
-      const postsResult = await postAdminService.getPosts({ page: 1, pageSize: 10000 })
-      const userPosts = postsResult.data.filter((p) => p.authorId === userId)
-      setPostCount(userPosts.length)
-
-      // Load review count
-      const reviewsResult = await reviewAdminService.getReviews({ page: 1, pageSize: 10000 })
-      const userReviews = reviewsResult.data.filter(
-        (r) => r.reviewerId === userId || r.reviewedUserId === userId
-      )
-      setReviewCount(userReviews.length)
+      setStats(userStats)
     } catch (error: any) {
       message.error(error?.message || 'Failed to load user')
       navigate('/users')
@@ -74,6 +105,33 @@ export default function AdminUserDetailPage() {
       navigate('/users')
     } catch (error: any) {
       message.error(error?.message || 'Failed to delete user')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleToggleBlockUser = async () => {
+    if (!user) return
+    const wasBlocked = user.isBlocked
+
+    try {
+      setActionLoading(true)
+      const updatedUser = wasBlocked
+        ? await userAdminService.unblockUser(user.id)
+        : await userAdminService.blockUser(user.id)
+
+      setUser((current) =>
+        current
+          ? {
+              ...current,
+              ...updatedUser,
+              isBlocked: updatedUser?.isBlocked ?? !wasBlocked,
+            }
+          : current
+      )
+      message.success(wasBlocked ? 'Đã mở khóa tài khoản' : 'Đã khóa tài khoản')
+    } catch (error: any) {
+      message.error(error?.message || 'Không thể cập nhật trạng thái tài khoản')
     } finally {
       setActionLoading(false)
     }
@@ -104,6 +162,20 @@ export default function AdminUserDetailPage() {
     )
   }
 
+  const s = stats ?? {
+    totalPostsCreated: 0,
+    totalActivitiesJoined: 0,
+    totalReviewsReceived: 0,
+    totalReportsReceived: 0,
+    confirmedViolations: 0,
+  }
+
+  const allZero =
+    s.totalPostsCreated === 0 &&
+    s.totalActivitiesJoined === 0 &&
+    s.totalReviewsReceived === 0 &&
+    s.totalReportsReceived === 0
+
   return (
     <MainLayout>
       <div className="admin-user-detail-page">
@@ -121,7 +193,12 @@ export default function AdminUserDetailPage() {
         <Card className="user-header-card" style={{ marginBottom: '24px' }}>
           <Row gutter={24}>
             <Col xs={24} sm={6} style={{ textAlign: 'center' }}>
-              <Avatar size={120} src={user.avatarUrl} icon={undefined} className="user-avatar" />
+              <Avatar
+                size={120}
+                src={resolveAvatarUrl(user.avatarUrl)}
+                icon={!user.avatarUrl ? <UserOutlined /> : undefined}
+                className="user-avatar"
+              />
             </Col>
             <Col xs={24} sm={18}>
               <div className="user-header-content">
@@ -149,6 +226,27 @@ export default function AdminUserDetailPage() {
                 {/* Action Buttons */}
                 <Space>
                   <Popconfirm
+                    title={user.isBlocked ? 'Mở khóa tài khoản' : 'Khóa tài khoản'}
+                    description={
+                      user.isBlocked
+                        ? 'Mở khóa tài khoản này để người dùng có thể sử dụng lại hệ thống?'
+                        : 'Khóa tài khoản này trong 7 ngày? Người dùng đang online sẽ bị đăng xuất.'
+                    }
+                    onConfirm={handleToggleBlockUser}
+                    okText={user.isBlocked ? 'Mở khóa' : 'Khóa tài khoản'}
+                    cancelText="Hủy"
+                    okButtonProps={{ danger: !user.isBlocked }}
+                  >
+                    <Button
+                      icon={user.isBlocked ? <UnlockOutlined /> : <LockOutlined />}
+                      loading={actionLoading}
+                      danger={!user.isBlocked}
+                      type={user.isBlocked ? 'primary' : 'default'}
+                    >
+                      {user.isBlocked ? 'Mở khóa tài khoản' : 'Khóa tài khoản'}
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
                     title="Delete User"
                     description="Are you sure you want to delete this user? This action cannot be undone."
                     onConfirm={handleDeleteUser}
@@ -170,37 +268,74 @@ export default function AdminUserDetailPage() {
           </Row>
         </Card>
 
-        {/* Stats Row */}
-        <Row gutter={16} style={{ marginBottom: '24px' }}>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="Total Posts"
-                value={postCount}
-                valueStyle={{ color: '#1890ff' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="Total Reviews"
-                value={reviewCount}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="Rating"
-                value={user.averageRating?.toFixed(1) || 0}
-                suffix="⭐"
-                valueStyle={{ color: '#faad14' }}
-              />
-            </Card>
-          </Col>
-        </Row>
+        {/* Tổng quan */}
+        <Card
+          title="Tổng quan"
+          style={{ marginBottom: '24px' }}
+          bodyStyle={{ paddingBottom: allZero ? '8px' : '24px' }}
+        >
+          <Row gutter={[16, 16]}>
+            {/* Bài viết */}
+            <Col xs={12} sm={6}>
+              <div className="overview-stat-card overview-stat-card--blue">
+                <div className="overview-stat-icon">
+                  <FileTextOutlined />
+                </div>
+                <div className="overview-stat-value">{s.totalPostsCreated}</div>
+                <div className="overview-stat-label">Bài viết đã tạo</div>
+              </div>
+            </Col>
+
+            {/* Hoạt động tham gia */}
+            <Col xs={12} sm={6}>
+              <div className="overview-stat-card overview-stat-card--green">
+                <div className="overview-stat-icon">
+                  <TeamOutlined />
+                </div>
+                <div className="overview-stat-value">{s.totalActivitiesJoined}</div>
+                <div className="overview-stat-label">Hoạt động tham gia</div>
+              </div>
+            </Col>
+
+            {/* Đánh giá đã nhận */}
+            <Col xs={12} sm={6}>
+              <div className="overview-stat-card overview-stat-card--yellow">
+                <div className="overview-stat-icon">
+                  <StarOutlined />
+                </div>
+                <div className="overview-stat-value">{s.totalReviewsReceived}</div>
+                <div className="overview-stat-label">Đánh giá đã nhận</div>
+                {s.totalReviewsReceived > 0 && user.averageRating != null && (
+                  <div className="overview-stat-subtext">
+                    Trung bình: {user.averageRating.toFixed(1)} ★
+                  </div>
+                )}
+              </div>
+            </Col>
+
+            {/* Báo cáo */}
+            <Col xs={12} sm={6}>
+              <div className={`overview-stat-card ${s.totalReportsReceived > 0 ? 'overview-stat-card--red' : 'overview-stat-card--gray'}`}>
+                <div className="overview-stat-icon">
+                  <WarningOutlined />
+                </div>
+                <div className="overview-stat-value">{s.totalReportsReceived}</div>
+                <div className="overview-stat-label">Báo cáo nhận được</div>
+                {s.confirmedViolations > 0 && (
+                  <div className="overview-stat-subtext">
+                    {s.confirmedViolations} vi phạm đã xác nhận
+                  </div>
+                )}
+              </div>
+            </Col>
+          </Row>
+
+          {allZero && (
+            <div className="overview-empty-hint">
+              Người dùng này chưa có hoạt động nào.
+            </div>
+          )}
+        </Card>
 
         {/* Basic Information */}
         <Card title="Basic Information" style={{ marginBottom: '24px' }}>
@@ -210,11 +345,11 @@ export default function AdminUserDetailPage() {
             <Descriptions.Item label="Email">{user.email}</Descriptions.Item>
             <Descriptions.Item label="Gender">{user.gender || '-'}</Descriptions.Item>
             <Descriptions.Item label="Birthday">
-              {user.birthday ? dayjs(user.birthday).format('MMMM DD, YYYY') : '-'}
+              {formatDate(user.birthday)}
             </Descriptions.Item>
             <Descriptions.Item label="Bio">{user.bio || '-'}</Descriptions.Item>
             <Descriptions.Item label="Created At">
-              {dayjs(user.createdAt).format('MMMM DD, YYYY HH:mm')}
+              {formatDate(user.createdAt, 'MMMM DD, YYYY HH:mm')}
             </Descriptions.Item>
           </Descriptions>
         </Card>
@@ -234,13 +369,15 @@ export default function AdminUserDetailPage() {
               />
             </Descriptions.Item>
             <Descriptions.Item label="Average Rating">
-              {user.averageRating?.toFixed(2) || 0} ⭐
+              {user.averageRating != null ? user.averageRating.toFixed(2) : '0'} ⭐
             </Descriptions.Item>
             <Descriptions.Item label="Reputation Score">
-              {user.reputationScore || 0}
+              <strong>{Math.round(user.reputationScore ?? 0)}</strong> / 100 điểm uy tín
             </Descriptions.Item>
-            <Descriptions.Item label="Posts Created">{postCount}</Descriptions.Item>
-            <Descriptions.Item label="Reviews Involved">{reviewCount}</Descriptions.Item>
+            <Descriptions.Item label="Bài viết đã tạo">{s.totalPostsCreated}</Descriptions.Item>
+            <Descriptions.Item label="Hoạt động tham gia">{s.totalActivitiesJoined}</Descriptions.Item>
+            <Descriptions.Item label="Đánh giá đã nhận">{s.totalReviewsReceived}</Descriptions.Item>
+            <Descriptions.Item label="Báo cáo nhận được">{s.totalReportsReceived}</Descriptions.Item>
           </Descriptions>
         </Card>
 
@@ -250,7 +387,7 @@ export default function AdminUserDetailPage() {
             <Space wrap>
               {user.interestTags.map((tag) => (
                 <Tag key={tag} color="blue">
-                  {tag}
+                  {cleanTagText(tag)}
                 </Tag>
               ))}
             </Space>

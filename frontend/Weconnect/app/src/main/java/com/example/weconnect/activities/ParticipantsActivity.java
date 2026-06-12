@@ -52,8 +52,11 @@ public class ParticipantsActivity extends AppCompatActivity {
     }
 
     private void loadMembersFromApi(String postId, String postAuthor, int memberCount) {
+        long authorUserId = getIntent().getLongExtra("author_user_id", -1);
+        String authorAvatarUrl = getIntent().getStringExtra("author_avatar_url");
+
         if (postId == null || postId.isEmpty()) {
-            showFallback(postAuthor, memberCount);
+            showFallback(postAuthor, memberCount, authorUserId, authorAvatarUrl);
             return;
         }
 
@@ -61,14 +64,12 @@ public class ParticipantsActivity extends AppCompatActivity {
         try {
             id = Long.parseLong(postId);
         } catch (NumberFormatException e) {
-            showFallback(postAuthor, memberCount);
+            showFallback(postAuthor, memberCount, authorUserId, authorAvatarUrl);
             return;
         }
 
         RetrofitClient.loadToken(this);
         PostApiService postApi = RetrofitClient.getClient().create(PostApiService.class);
-
-        long authorUserId = getIntent().getLongExtra("author_user_id", -1);
 
         postApi.getMembers(id).enqueue(new Callback<ApiResponse<List<Map<String, Object>>>>() {
             @Override
@@ -104,7 +105,8 @@ public class ParticipantsActivity extends AppCompatActivity {
                         if (!"APPROVED".equalsIgnoreCase(status)) continue;
 
                         // Nhận diện tác giả bằng userId (không dùng tên để tránh trùng tên)
-                        boolean isAuthor = (authorUserId > 0 && memberId == authorUserId)
+                        boolean isAuthor = asBoolean(member.get("isAuthor"))
+                                || (authorUserId > 0 && memberId == authorUserId)
                                 || (authorUserId <= 0 && postAuthor != null && name.equalsIgnoreCase(postAuthor));
                         if (isAuthor) {
                             participants.add(0, new ParticipantAdapter.Participant(
@@ -119,7 +121,8 @@ public class ParticipantsActivity extends AppCompatActivity {
                     // If author wasn't in the members list, add them at the top
                     if (!authorAdded && postAuthor != null && !postAuthor.isEmpty()) {
                         participants.add(0, new ParticipantAdapter.Participant(
-                                postAuthor + " (Người tổ chức)", R.drawable.ic_user_placeholder, authorUserId));
+                                postAuthor + " (Người tổ chức)", R.drawable.ic_user_placeholder,
+                                authorUserId, authorAvatarUrl));
                     }
 
                     // Update count with real data
@@ -134,23 +137,26 @@ public class ParticipantsActivity extends AppCompatActivity {
 
                     rvParticipants.setAdapter(new ParticipantAdapter(ParticipantsActivity.this, participants));
                 } else {
-                    showFallback(postAuthor, getIntent().getIntExtra("member_count", 0));
+                    showFallback(postAuthor, getIntent().getIntExtra("member_count", 0),
+                            authorUserId, authorAvatarUrl);
                 }
             }
 
             @Override
             public void onFailure(Call<ApiResponse<List<Map<String, Object>>>> call, Throwable t) {
-                showFallback(postAuthor, getIntent().getIntExtra("member_count", 0));
+                showFallback(postAuthor, getIntent().getIntExtra("member_count", 0),
+                        authorUserId, authorAvatarUrl);
             }
         });
     }
 
-    private void showFallback(String postAuthor, int memberCount) {
+    private void showFallback(String postAuthor, int memberCount, long authorUserId, String authorAvatarUrl) {
         List<ParticipantAdapter.Participant> participants = new ArrayList<>();
 
         if (postAuthor != null && !postAuthor.isEmpty()) {
             participants.add(new ParticipantAdapter.Participant(
-                    postAuthor + " (Người tổ chức)", R.drawable.ic_user_placeholder));
+                    postAuthor + " (Người tổ chức)", R.drawable.ic_user_placeholder,
+                    authorUserId, authorAvatarUrl));
         }
 
         if (participants.isEmpty()) {
@@ -159,5 +165,9 @@ public class ParticipantsActivity extends AppCompatActivity {
         }
 
         rvParticipants.setAdapter(new ParticipantAdapter(this, participants));
+    }
+
+    private boolean asBoolean(Object value) {
+        return value instanceof Boolean && (Boolean) value;
     }
 }
